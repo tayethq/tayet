@@ -135,4 +135,4 @@ The documents themselves live in the private development repository.
 
 ---
 
-87 architecture decision records, 33 plans, tree 0b1dc2449f0003a0bc37d05c032c2cfafa63b854.
+87 architecture decision records, 33 plans, tree adbf08547d206e80cddc4f8d404ceef956e6682b.
