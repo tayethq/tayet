@@ -14,6 +14,8 @@
 //   ack after the redeliveries: the dispatcher's drop line, and the entry stays.
 // - No socket open → nothing is dispatched: the layer is not a consumer of the bus then, so the bus keeps
 //   the event for the next consumer (slack/router.ts, api/bus.ts).
+// - With `--slack-actions-url`, `dispatchAnswered` is not used: the same payload (`blockActionsOf`) leaves as a
+//   signed HTTP POST (slack/http-actions.ts), whatever the sockets, and no socket gets an `interactive` envelope.
 import { randomBytes } from 'node:crypto'
 import type { ApiEvent, ApiMe, ApiMessage } from '../contract'
 import type { ReadFacade } from '../../core/read'

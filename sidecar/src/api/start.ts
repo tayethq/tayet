@@ -14,7 +14,7 @@ export class AddressInUseError extends Error {
   }
 }
 
-export async function startLocalApi(core: Core, listen: ListenAddress, log: (line: Record<string, unknown>) => void): Promise<ApiServer> {
+export async function startLocalApi(core: Core, listen: ListenAddress, log: (line: Record<string, unknown>) => void, slack: { actionsUrl?: string } = {}): Promise<ApiServer> {
   const api = createApiServer({
     read: core.read,
     write: core.write,
@@ -27,7 +27,8 @@ export async function startLocalApi(core: Core, listen: ListenAddress, log: (lin
     log,
     // The Slack layer (S-f, §0.3.12): its upload staging lives in the store (item 6); so does its file of
     // approval cards (A3-4, slack/cards.ts).
-    slack: { productUrl: core.productUrl, uploadsDir: join(core.storeDir, 'uploads'), cardsFile: join(core.storeDir, FILES.slackCards) },
+    // With `--slack-actions-url`, the clicks leave over HTTP (slack/http-actions.ts).
+    slack: { productUrl: core.productUrl, uploadsDir: join(core.storeDir, 'uploads'), cardsFile: join(core.storeDir, FILES.slackCards), ...(slack.actionsUrl !== undefined && { actionsUrl: slack.actionsUrl }) },
     // The MCP server (S-g1, §0.3.13): `POST /mcp` on this listener.
     mcp: {},
   })

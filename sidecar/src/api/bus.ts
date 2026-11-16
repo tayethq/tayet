@@ -14,7 +14,8 @@
 //   when there is none) and the list empties. A consumer with a cursor of this run gets the ring's replay;
 //   whatever the replay carries leaves the list. A consumer is what `open` returns: the SSE stream, and the
 //   Slack layer while at least one of its sockets is open (A3-4: it opens with no cursor on 0 → 1 sockets
-//   and closes on → 0, api/slack/router.ts); a plain `subscribe` (wait_for_mention) does not count — it is
+//   and closes on → 0, api/slack/router.ts; with the clicks over HTTP, from the layer's start to its end, so
+//   nothing is kept for a later stream); a plain `subscribe` (wait_for_mention) does not count — it is
 //   not someone listening for the answer. At least once, as before.
 import { randomBytes } from 'node:crypto'
 import type { ApiEvent } from './contract'

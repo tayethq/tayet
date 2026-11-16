@@ -7,6 +7,8 @@
 //   GET      /slack/files/<F…>      a file's url_private (S-f3): the bytes of the native GET /v1/files/:id
 //                                   (api/download.ts), with the local token as Bearer; HTTP status codes
 //   GET      /slack/socket?ticket=  the emulated Socket Mode (slack/socket.ts, S-f2): an upgrade only
+// With `actions` (`--slack-actions-url`), the approval card's clicks leave as signed HTTP POSTs to that URL
+// (slack/http-actions.ts) instead of `interactive` envelopes; events and `/` commands stay on the sockets.
 //   POST     /slack/response/<ticket> the response_url of an approval card's click (A3-4, slack/response.ts):
 //                                   NO Bearer — Bolt's respond() sends none; the ticket is the credential
 //                                   (30 min, 5 uses, memory only). JSON `{ replace_original: true, text?,
@@ -37,7 +39,7 @@ import type { Duplex } from 'node:stream'
 import type { ApprovalFacade } from '../../core/approvals'
 import { ReadError, type ReadFacade } from '../../core/read'
 import { WriteError, type WriteFacade } from '../../core/write'
-import type { EventBus, Opened } from '../bus'
+import type { BusEntry, EventBus, Opened } from '../bus'
 import type { ApiMe } from '../contract'
 import { sendDownload } from '../download'
 import { logLeaks, scanEdge, scanWriteProbe } from '../edge'
@@ -49,7 +51,8 @@ import { SOCKET_PATH, SocketTickets } from './connections'
 import { boundaryOf } from './multipart'
 import { createSlackEvents } from './events'
 import { dispatchCommand, replyArgsOf, type ResponseVia } from './commands'
-import { dispatchAnswered } from './interactive'
+import { createHttpActions, type HttpActions } from './http-actions'
+import { blockActionsOf, dispatchAnswered } from './interactive'
 import { ResponseTickets, type CommandTarget } from './response'
 import { createSocketHub, type SocketOptions } from './socket'
 import { MULTIPART_OVERHEAD, UploadStaging } from './staging'
@@ -84,6 +87,9 @@ export interface SlackLayerOptions {
   approvals?: ApprovalFacade
   // `<store>/slack-cards.json` (slack/cards.ts); absent → memory only (tests).
   cardsFile?: string
+  // The clicks over HTTP (`--slack-actions-url`; slack/http-actions.ts): the destination and the signing secret
+  // (the local token). Absent → the clicks go to the sockets, as before.
+  actions?: { url: string; secret: string; redeliveryMs?: number }
 }
 
 // What a method sees: the facades, the agent (cached), and the edge helpers.
@@ -320,6 +326,7 @@ const UPLOAD_STATUS: Partial<Record<SlackErrorCode, number>> = {
   // The response_url (A3-4).
   expired_url: 404,
   invalid_blocks: 400,
+  markdown_text_conflict: 400,
   no_text: 400,
   msg_too_long: 400,
   cant_update_message: 400,
@@ -341,15 +348,29 @@ export function createSlackLayer(opts: SlackLayerOptions, families: readonly Sla
   const tickets = new SocketTickets(now)
   const cards = new SlackCards(opts.cardsFile, log)
   const responses = new ResponseTickets(now)
-  // The Slack bus consumer (A3-4): open while a socket is (slack/socket.ts hooks).
+  // The Slack bus consumer (A3-4): open while a socket is (slack/socket.ts hooks) — or, with the clicks over
+  // HTTP, from the start for as long as the layer lives.
   let consumer: Opened | null = null
+  const httpActions: HttpActions | null =
+    opts.actions !== undefined && opts.approvals !== undefined
+      ? createHttpActions({
+          url: opts.actions.url,
+          secret: opts.actions.secret,
+          log,
+          ...(opts.socket?.clock !== undefined && { clock: opts.socket.clock }),
+          ...(opts.socket?.ackTimeoutMs !== undefined && { ackTimeoutMs: opts.socket.ackTimeoutMs }),
+          ...(opts.actions.redeliveryMs !== undefined && { redeliveryMs: opts.actions.redeliveryMs }),
+        })
+      : null
   const hub = createSocketHub({
     ...opts.socket,
     tickets,
     log,
     appId: () => opts.read.bot(),
     onFirstOpen: () => openConsumer(),
-    onLastClose: () => closeConsumer(),
+    onLastClose: () => {
+      if (httpActions === null) closeConsumer()
+    },
   })
   let meCache: Promise<ApiMe> | null = null
   const me = (): Promise<ApiMe> => {
@@ -400,18 +421,32 @@ export function createSlackLayer(opts: SlackLayerOptions, families: readonly Sla
         reply: async (target, body, via) => void (await replyToCommand(target, body, via)),
       }),
     ...(approvals !== undefined && {
-      answered: (e, agent, bot, view) =>
-        dispatchAnswered(e, agent, bot, view, { read: opts.read, log, cards, tickets: responses, baseUrl: opts.baseUrl, native, broadcast: (type, payload) => hub.broadcast(type, payload) }),
+      answered: (e, agent, bot, view) => {
+        const interactive = { read: opts.read, log, cards, tickets: responses, baseUrl: opts.baseUrl, native }
+        if (httpActions === null) return dispatchAnswered(e, agent, bot, view, { ...interactive, broadcast: (type, payload) => hub.broadcast(type, payload) })
+        return httpActions.deliver({
+          build: async () => (await blockActionsOf(e, agent, bot, view, interactive)) as unknown as Record<string, unknown>,
+          acked: () => cards.remove(e.conversation, e.id),
+        })
+      },
     }),
   })
   // 0 → 1 sockets: the layer becomes a consumer of the bus (api/bus.ts `open`, no cursor) and handles what
   // nobody heard first, in order, then every publish; → 0: the consumer closes, and the bus keeps the next
   // `approval.answered` for whoever opens next (an SSE stream or a socket).
+  // With the clicks over HTTP the consumer opens here, once, and stays open: every `approval.answered` goes to
+  // the HTTP delivery, and the bus keeps none for a later consumer. The other events are handled only while a
+  // socket is open, as without it.
   function openConsumer(): void {
     if (opts.bus === undefined || consumer !== null) return
-    consumer = opts.bus.open(undefined, (entry) => events.push(entry))
-    for (const entry of consumer.unheard) events.push(entry)
+    const push = (entry: BusEntry): void => {
+      if (httpActions !== null && entry.event.type !== 'approval.answered' && hub.connections === 0) return
+      events.push(entry)
+    }
+    consumer = opts.bus.open(undefined, push)
+    for (const entry of consumer.unheard) push(entry)
   }
+  if (httpActions !== null) openConsumer()
   function closeConsumer(): void {
     consumer?.close()
     consumer = null
@@ -419,6 +454,7 @@ export function createSlackLayer(opts: SlackLayerOptions, families: readonly Sla
   const stopEvents = (): void => {
     closeConsumer()
     events.stop()
+    httpActions?.stop()
     responses.clear()
   }
 

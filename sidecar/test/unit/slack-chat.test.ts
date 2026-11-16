@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { ALICE, DM, GENERAL, ME, call, idLeaks, refusal, startSlack, type SlackHarness } from '../support/slack-world'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { ALICE, DM, GENERAL, ME, TOKEN, call, createWorld, idLeaks, refusal, startSlack, type SlackHarness } from '../support/slack-world'
+import { fakeApprovals } from '../support/slack-approvals'
 
 // chat.postMessage / update / delete through the real @slack/web-api (PLANO-AGENTES §0.3.12 items 4, 7, 11).
 
@@ -98,5 +102,100 @@ describe('chat.update / chat.delete', () => {
     expect(h.world.calls.find((c) => c.op === 'remove')).toEqual({ op: 'remove', conversation: GENERAL.id, ts: posted.ts })
     expect(await refusal(h.client(), 'chat.delete', { channel: GENERAL.id, ts: '1730000100.000100' })).toBe('cant_delete_message')
     expect(await refusal(h.client(), 'chat.delete', { channel: GENERAL.id, ts: '1730009999.000999' })).toBe('message_not_found')
+  })
+})
+
+describe('the markdown block and markdown_text', () => {
+  const MD = '**bold** and\n- one\n- two'
+  const RICH = [
+    { t: 'p', children: [{ t: 'strong', children: [{ t: 'text', text: 'bold' }] }, { t: 'text', text: ' and' }] },
+    { t: 'ul', items: [[{ t: 'p', children: [{ t: 'text', text: 'one' }] }], [{ t: 'p', children: [{ t: 'text', text: 'two' }] }]] },
+  ]
+  const SENT = { text: 'bold and\n\n- one\n- two', rich: RICH }
+
+  it('blocks with a markdown block: standard Markdown, no warning', async () => {
+    const res = await ok('chat.postMessage', { channel: GENERAL.id, blocks: [{ type: 'markdown', text: MD }] })
+    expect(posts()).toEqual([{ op: 'post', conversation: GENERAL.id, ...SENT }])
+    expect(res).not.toHaveProperty('response_metadata.warnings')
+  })
+
+  it('text + a markdown block: the block is the content', async () => {
+    await ok('chat.postMessage', { channel: GENERAL.id, text: 'the fallback', blocks: [{ type: 'markdown', text: MD }] })
+    expect(posts()).toEqual([{ op: 'post', conversation: GENERAL.id, ...SENT }])
+  })
+
+  it('text + a section block, no markdown block: the text wins, as before', async () => {
+    await ok('chat.postMessage', { channel: GENERAL.id, text: 'the *text*', blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'the block' } }] })
+    expect(posts()[0]).toMatchObject({ text: 'the text' })
+  })
+
+  it('a mention outside code is resolved into mentions; inside backticks it stays literal', async () => {
+    await ok('chat.postMessage', { channel: GENERAL.id, blocks: [{ type: 'markdown', text: 'hi <@UALICEAAAAA>, see `<@UALICEAAAAA>`' }] })
+    expect(posts()).toEqual([
+      { op: 'post', conversation: GENERAL.id, text: 'hi @Alice Souza, see <@UALICEAAAAA>', rich: [{ t: 'p', children: [{ t: 'text', text: 'hi @Alice Souza, see ' }, { t: 'code', text: '<@UALICEAAAAA>' }] }], mentions: [ALICE.id] },
+    ])
+  })
+
+  it('a markdown block with an empty text as the only content → no_text', async () => {
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, blocks: [{ type: 'markdown', text: '' }] })).toBe('no_text')
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, text: 'x', blocks: [{ type: 'markdown', text: '  ' }] })).toBe('no_text')
+    expect(posts()).toEqual([])
+  })
+
+  it('markdown_text alone: the same content as one markdown block, on chat.postMessage and chat.update', async () => {
+    const posted = await ok('chat.postMessage', { channel: GENERAL.id, markdown_text: MD })
+    expect(posts()).toEqual([{ op: 'post', conversation: GENERAL.id, ...SENT }])
+    await ok('chat.update', { channel: GENERAL.id, ts: posted.ts, markdown_text: MD })
+    expect(h.world.calls.filter((c) => c.op === 'edit')).toEqual([{ op: 'edit', conversation: GENERAL.id, ts: posted.ts, ...SENT }])
+  })
+
+  it('markdown_text with text or with blocks → markdown_text_conflict; not a string → invalid_arguments; nothing sent', async () => {
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, markdown_text: MD, text: 'x' })).toBe('markdown_text_conflict')
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, markdown_text: MD, blocks: [{ type: 'divider' }] })).toBe('markdown_text_conflict')
+    // A non-string only exists in a JSON body (the WebClient's form body turns any value into a string).
+    const json = async (body: Record<string, unknown>) =>
+      (await (await fetch(`${h.url}/slack/api/chat.postMessage`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify(body) })).json()) as Record<string, unknown>
+    expect(await json({ channel: GENERAL.id, markdown_text: 42 })).toEqual({ ok: false, error: 'invalid_arguments' })
+    expect(await json({ channel: GENERAL.id, markdown_text: { text: MD } })).toEqual({ ok: false, error: 'invalid_arguments' })
+    const posted = await ok('chat.postMessage', { channel: GENERAL.id, text: 'draft' })
+    expect(await refusal(h.client(), 'chat.update', { channel: GENERAL.id, ts: posted.ts, markdown_text: MD, text: 'x' })).toBe('markdown_text_conflict')
+    expect(posts()).toHaveLength(1)
+    expect(h.world.calls.filter((c) => c.op === 'edit')).toEqual([])
+  })
+})
+
+describe('the markdown block on an approval card', () => {
+  let dir: string
+  let card: SlackHarness
+  afterEach(async () => {
+    await card.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('text + an actions block + a markdown block: the card request comes from the blocks, not from the text', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'slack-chat-md-'))
+    const world = createWorld()
+    const approvals = fakeApprovals(world)
+    card = await startSlack({ world, approvals, cardsFile: join(dir, 'slack-cards.json') })
+    await call(card.client(), 'chat.postMessage', {
+      channel: GENERAL.id,
+      text: 'the fallback',
+      blocks: [
+        { type: 'markdown', text: 'Ship **2.1**?' },
+        { type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Yes' }, action_id: 'yes' }, { type: 'button', text: { type: 'plain_text', text: 'No' }, action_id: 'no' }] },
+      ],
+    })
+    expect(approvals.calls.filter((c) => c.op === 'request')).toEqual([
+      {
+        op: 'request',
+        conversation: GENERAL.id,
+        text: 'Ship 2.1?',
+        rich: [{ t: 'p', children: [{ t: 'text', text: 'Ship ' }, { t: 'strong', children: [{ t: 'text', text: '2.1' }] }, { t: 'text', text: '?' }] }],
+        options: [
+          { id: 'yes', label: 'Yes' },
+          { id: 'no', label: 'No' },
+        ],
+      },
+    ])
   })
 })

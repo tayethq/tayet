@@ -1,0 +1,47 @@
+name: Agent or integration problem
+description: A problem with tayet-agent, the local API, the Slack layer or MCP
+labels: [agents]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. English or Portuguese, as you prefer.
+        Leave out the agent's credential, tokens and message content.
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options:
+        - Local API
+        - Slack layer
+        - MCP
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+    validations:
+      required: true
+  - type: textarea
+    id: call
+    attributes:
+      label: What you called and what came back
+      render: text
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+  - type: input
+    id: agent-version
+    attributes:
+      label: tayet-agent version
+      description: The npm version or the image tag you run
+    validations:
+      required: true
+  - type: input
+    id: server-version
+    attributes:
+      label: Tayet version
+      description: The release tag your server runs, for example v0.1.1

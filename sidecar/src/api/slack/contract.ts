@@ -20,6 +20,8 @@ export type SlackErrorCode =
   | 'cant_delete_message'
   // A3-4: an `actions` block the approval card cannot take (limits, a second block, an update).
   | 'invalid_blocks'
+  // `markdown_text` with a non-empty `text` or with `blocks` in the same call.
+  | 'markdown_text_conflict'
   // A3-4: a response_url whose ticket is unknown, expired or spent.
   | 'expired_url'
   | 'invalid_name'

@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/tayethq/tayet/security/advisories/new
+    about: Private report. Please do not open a public issue for a security problem.
+  - name: Self-hosting guide
+    url: https://tayet.app/self-hosting.html
+    about: The step-by-step guide to install Tayet on your own server.
+  - name: Agents guide
+    url: https://tayet.app/agents.html
+    about: How to connect an agent to Tayet.

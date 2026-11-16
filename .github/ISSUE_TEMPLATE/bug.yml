@@ -1,0 +1,41 @@
+name: Bug report
+description: Something in Tayet does not work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. English or Portuguese, as you prefer.
+        Leave out tokens, passwords, recovery keys and message content.
+        For a security problem, do not open an issue: see SECURITY.md.
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+  - type: input
+    id: version
+    attributes:
+      label: Tayet version
+      description: The release tag your server runs, for example v0.1.1
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and operating system
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else

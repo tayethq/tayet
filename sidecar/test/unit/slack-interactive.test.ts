@@ -244,6 +244,15 @@ describe('response_url', () => {
     expect(approvals.calls.filter((c) => c.op === 'close')).toEqual([{ op: 'close', conversation: GENERAL.id, ts }])
   })
 
+  it('replace_original with a markdown block → the message edited with the Markdown rendered', async () => {
+    await startClocked()
+    const { url, ts } = await urlOfClick()
+    expect(await post(url, { replace_original: true, blocks: [{ type: 'markdown', text: 'Shipped **2.1**' }] })).toEqual({ status: 200, body: { ok: true } })
+    expect(h!.world.calls.filter((c) => c.op === 'edit')).toEqual([
+      { op: 'edit', conversation: GENERAL.id, ts, text: 'Shipped 2.1', rich: [{ t: 'p', children: [{ t: 'text', text: 'Shipped ' }, { t: 'strong', children: [{ t: 'text', text: '2.1' }] }] }] },
+    ])
+  })
+
   it('no replace_original, or a delete_original → 400 invalid_arguments', async () => {
     await startClocked()
     const { url } = await urlOfClick()

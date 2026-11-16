@@ -1,5 +1,6 @@
 // The emulated Socket Mode (ADR-087 dec. 5; PLANO-AGENTES §0.3.12 items 5, 10, 11, S-f2; §0.3.3 item 6):
-// the only event transport of the Slack layer. A Slack SDK in Socket Mode calls apps.connections.open
+// the event transport of the Slack layer (the approval card's clicks leave over HTTP instead when
+// `--slack-actions-url` is set, slack/http-actions.ts). A Slack SDK in Socket Mode calls apps.connections.open
 // (slack/connections.ts), then opens the `ws://…/slack/socket?ticket=…` it got, on this same listener.
 //
 // The upgrade, in the native order (api/server.ts answers the first three):
@@ -21,7 +22,8 @@
 //   frames a client sends are its acks;
 // - the layer's bus consumer (A3-4, slack/router.ts): the first connection that opens (0 → 1), right after
 //   its `hello`, makes the layer a consumer of the bus (`onFirstOpen`); the last one that closes (→ 0) ends
-//   it (`onLastClose`) — from then on an `approval.answered` is kept by the bus for the next consumer.
+//   it (`onLastClose`) — from then on an `approval.answered` is kept by the bus for the next consumer. With
+//   the clicks over HTTP the layer is a consumer from the start and stays one; the hooks change nothing.
 // - `disconnect` then close: `refresh_requested` on a clean shutdown (the SDK reopens with a new ticket),
 //   `link_disabled` on the revocation (from then on apps.connections.open answers `token_revoked` and
 //   the upgrade 503). A client that does not close within 1 s is cut.

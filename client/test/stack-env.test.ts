@@ -78,6 +78,7 @@ describe('stack-env', () => {
       'http://localhost:8008/_matrix/client/v3/keys/query',
       'http://localhost:8008/_matrix/client/v3/room_keys/keys',
       'http://localhost:8080/oauth2/token',
+      'http://localhost:5173/escrow/v1/sessions',
     ])
     expect(c.AFTER_RELOGIN_404[0]?.pattern?.source).toBe(
       /^http:\/\/localhost:8008\/_matrix\/client\/v3\/room_keys\/keys\/[^/?]+\/[^/?]+\?version=1$/.source,

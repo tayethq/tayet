@@ -37,7 +37,8 @@ running; the `--token` of your configuration then stays only as the seed (see
 | `--store <dir>` | The agent's local directory (default: a per-user data directory). One store per agent. |
 | `--listen <host:port>` | Address of the local API (default `127.0.0.1:7878`). Give each agent on one machine its own port. |
 | `--slack-manifest <file>` | A Slack app manifest in JSON: its slash commands become the agent's commands, declared at every start ([Slash commands](#slash-commands)). |
-| `--rotate-local-token` | Replace the local token and exit (run it with the agent stopped). |
+| `--slack-actions-url <url>` | Deliver the approval card's clicks as signed HTTP POSTs to this URL on this machine, instead of Socket Mode ([Clicks over HTTP](#clicks-over-http)). |
+| `--rotate-local-token` | Replace the local token and exit (run it with the agent stopped). The local token is also the signing secret of `--slack-actions-url`. |
 | `--debug` | Add diagnostics: identifiers in the log lines, library output on stderr. |
 | `--help` | Show the usage. |
 
@@ -174,7 +175,9 @@ before you connect) is kept in memory — at most 200, the oldest dropped first 
 stream that connects **without a cursor of this run** (no `Last-Event-ID`, or one that gets `resync`): right
 after the `resync`, or first when there is none. Those frames carry no `id:` line, so your cursor does not
 move back. A stream that reconnects with a cursor of this run gets the normal replay instead. `GET
-…/approvals/:ts` reads a card's state at any time.
+…/approvals/:ts` reads a card's state at any time. With `--slack-actions-url` the Slack layer hears every
+`approval.answered` from the start (it sends them over HTTP), so none is kept for a stream that connects later
+([Clicks over HTTP](#clicks-over-http)); a stream already connected gets them as always.
 
 ### Pinned panel
 
@@ -283,12 +286,19 @@ The methods (Slack's cut for v1). Ids are the same opaque ids as the native API,
 | `users.list` | **The people of the agent's conversations**, once each, sorted by name (a documented difference: no directory of the whole workspace). `limit`, `cursor`. |
 
 - **Messages.** Text is mrkdwn both ways: mentions are `<@U…>`. Without `text`, `blocks` are turned into
-  text; inputs are dropped and named in `response_metadata.warnings`, and a read never returns `blocks`. `username`, `icon_url`, `icon_emoji`, `as_user` and `reply_broadcast` are ignored
+  text; inputs are dropped and named in `response_metadata.warnings`, and a read never returns `blocks`.
+  A `markdown` block, and the `markdown_text` argument of `chat.postMessage` and `chat.update`, render
+  standard Markdown as `markdown: true` does on the local API: headings and tables come out degraded in the
+  same way (a bold line, a code block). `<@U…>` and `<#C…>` inside it are resolved as in mrkdwn, except in
+  code. When the `blocks` hold a `markdown` block, the blocks are the content and `text` is ignored; with no
+  `markdown` block, `text` wins over `blocks`. `markdown_text` with a non-empty `text` or with `blocks` in
+  the same call → `markdown_text_conflict` (nothing sent). `username`, `icon_url`, `icon_emoji`, `as_user` and `reply_broadcast` are ignored
   with a warning: the agent always speaks as itself.
 - **Buttons are an approval card.** An `actions` block in `chat.postMessage` becomes the product's approval
   card: people see the request with the buttons and answer it in the app; the answer reaches your app as a
-  `block_actions` (Socket Mode, below). The block is read even when the call has `text`, which is then the
-  request; without `text`, the request is the other blocks turned into text. The rules:
+  `block_actions` (Socket Mode below, or an HTTP POST with `--slack-actions-url`). The block is read even when the call has `text`, which is then the
+  request; without `text`, or when the other blocks hold a `markdown` block, the request is the other blocks
+  turned into text. The rules:
   - one `actions` block per message, 1 to 25 `button`s; a label of 1 to 75 characters; `action_id` and
     `block_id` up to 255 characters, `value` up to 2,000, no repeated `action_id`. Breaking one →
     `invalid_blocks`, nothing sent;
@@ -358,8 +368,10 @@ Node verified: `@slack/web-api` 8.3.0.
 
 ## Socket Mode
 
-Events reach a Slack app through Socket Mode, the only event transport: the agent opens the connection, so
-it never opens a port. Point the SDK at the sidecar and put the local token in both token fields:
+Events and slash commands reach a Slack app through Socket Mode, their only transport: your app opens the
+connection, so it needs no open port. So do the clicks on approval cards, unless the agent runs with
+`--slack-actions-url` ([Clicks over HTTP](#clicks-over-http)). Point the SDK at the sidecar and put the local
+token in both token fields:
 
 ```js
 import { App } from '@slack/bolt'
@@ -383,8 +395,8 @@ at once are fine: every event goes to each of them.
   `message_deleted` with `deleted_ts`) and `app_mention`, which comes right after the `message` it belongs
   to. `channel_type` is `channel`, `group` (private), `im` or `mpim` (a group conversation). The agent's
   own messages carry its own user id, so Bolt's `ignoreSelf` drops them. `event_id` is opaque.
-- **Clicks (`block_actions`).** A person's answer to one of your approval cards comes as an `interactive`
-  envelope with a `block_actions` payload: `actions[0]` carries your `action_id`, `block_id` and `value`
+- **Clicks (`block_actions`).** Without `--slack-actions-url`, a person's answer to one of your approval cards
+  comes as an `interactive` envelope with a `block_actions` payload: `actions[0]` carries your `action_id`, `block_id` and `value`
   (Bolt's `app.action(...)` matches on them), `user.id` is the person, `channel.id` and
   `container.message_ts` the card. Ack it (`await ack()`); a response payload in the ack is ignored. An answer
   decided while no socket was open (the sidecar was starting, your app was down) is kept and sent to the
@@ -476,6 +488,67 @@ nothing; `message_ts` and `thread_ts` are extra.
 Node verified: `@slack/bolt` 5.1.0 with `@slack/socket-mode` 3.1.1. Python `slack_sdk`: the `builtin`,
 `aiohttp` and `websockets` adapters; the `websocket-client` adapter is not supported (it sends an `Origin`
 header).
+
+### Clicks over HTTP
+
+An app written for Slack's Request URL (Bolt's HTTP mode) takes clicks only as signed HTTP POSTs. Start the agent
+with `--slack-actions-url` pointing at it, and the clicks on its approval cards go there instead of Socket Mode:
+
+```
+npx tayet-agent --server <your Tayet address> --token <credential> --slack-actions-url http://127.0.0.1:3000/slack/actions
+```
+
+```js
+import { App } from '@slack/bolt'
+const app = new App({
+  token: localToken,
+  signingSecret: localToken,
+  endpoints: '/slack/actions',
+  clientOptions: { slackApiUrl: 'http://127.0.0.1:7878/slack/api/' },
+})
+app.action('approve', async ({ ack, body, respond }) => {
+  await ack()
+  await respond({ replace_original: true, text: `Approved by <@${body.user.id}>` })
+})
+await app.start({ port: 3000, host: '127.0.0.1' })
+```
+
+- **Only clicks.** `block_actions` go over HTTP. Events (`message`, `app_mention`) and slash commands stay on
+  Socket Mode; with the option, no socket gets an `interactive` envelope. Without the option nothing changes.
+- **The request.** `POST`, `Content-Type: application/x-www-form-urlencoded`, one field: `payload`, the same
+  `block_actions` JSON a socket gets (above). Signed as Slack signs: `X-Slack-Request-Timestamp` (seconds) and
+  `X-Slack-Signature: v0=<hex>`, the HMAC-SHA256 of `v0:<timestamp>:<body>`. The signing secret is the local
+  token: give it to your app as `signingSecret`. There is no other secret. Redirects are not followed and no
+  proxy of the environment is used.
+- **On this machine only.** The URL must be `http` with host `127.0.0.1` (or another `127.x.y.z`), `::1` or
+  `localhost`, without user or password; anything else stops the start (exit code 64) with a usage line that
+  names the rule. The URL never appears in the log.
+- **The ack.** Any 2xx within 3 seconds; the body of the answer is ignored. Bolt's `ack()` sends it. The ack
+  removes the card's entry from `<store>/slack-cards.json`, as a socket's ack does.
+- **Retries and redelivery.** No 2xx within 3 seconds (an error status, no answer, a refused connection): the
+  click is sent again at once, up to three times, each with a new timestamp and signature and Slack's headers
+  `X-Slack-Retry-Num` (1, 2, 3) and `X-Slack-Retry-Reason` (`http_timeout`, `http_error`, `connection_failed`;
+  Bolt passes them on as `context.retryNum` and `context.retryReason`). Then the click is kept in memory (at most
+  200; the oldest goes first, with a line) and sent again every 30 seconds, in order. A failure stops that
+  round, so the clicks behind it wait for the next one — except the round in which your app refuses a click for
+  the third time (an error status, or no answer within 3 seconds; a refused connection does not count, since
+  that is your app being down): that click is dropped (`slack-action-dropped` with `reason: 'unaccepted'`; its
+  entry in `<store>/slack-cards.json` stays) and the round goes on with the next click. A button your app has no
+  `app.action` for is such a click: Bolt answers it 404 after about 3 seconds. The immediate retries do not count.
+  Each of these sends carries a new `response_url` and no retry headers. While clicks are kept, a new click waits
+  behind them. Delivered at least once: treat a click as idempotent by `container.message_ts`. The log has one
+  line per delivery (`slack-action-delivered`), retry (`slack-action-retried`), kept click (`slack-action-kept`)
+  and dropped click (`slack-action-dropped`, with `reason`: `full`, `unaccepted` or `leak`), with no id, URL or
+  content.
+- **Restarts.** Kept clicks live in memory only. A card answered while the agent was stopped is sent when it
+  starts again; a click that was decided and sealed but not acked before the agent stopped is not sent again
+  (read the card with `GET /v1/conversations/:id/approvals/:ts`).
+- **`GET /v1/events`.** With the option the Slack layer hears every `approval.answered` from the start, so a
+  `GET /v1/events` stream that connects later does not get the clicks decided before it connected (without the
+  option it gets the ones nobody heard). A stream already connected gets them as always.
+- **Rotation.** `--rotate-local-token` also replaces the signing secret: give your app the new local token.
+
+Node verified: `@slack/bolt` 5.1.0 in HTTP mode (`HTTPReceiver`, `signingSecret`, `endpoints`).
 
 ## MCP
 

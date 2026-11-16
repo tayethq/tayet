@@ -88,6 +88,18 @@ export const AFTER_REVOCATION_401: ReadonlyArray<ExpectedResponse> = [
     per: 'page',
     why: 'refresh of the revoked grant rejected by the MAS',
   },
+  {
+    // The custody GET of the session keys (key-recovery.ts consultCustody) carries the dead token when it
+    // leaves between the revocation and the session-lost flag: once from the first boot's recovery pass
+    // (its last call, right after the m.megolm_backup.v1 write that people.spec waits for), and at most
+    // CUSTODY_RECONSULT_MAX rounds of the per-session re-consult (custody.ts), which stops on the
+    // session-lost flag. The 401 folds into 'unavailable' (a telemetry signal), with no retry of its own.
+    url: `${APP_URL}/escrow/v1/sessions`,
+    status: 401,
+    max: 5,
+    per: 'page',
+    why: 'custody session-key GET with the revoked token: 1 recovery pass + up to CUSTODY_RECONSULT_MAX (4) re-consult rounds',
+  },
 ]
 
 // Expected on the re-login after a revocation (§8.19, measured on a clean stack): the Megolm sessions

@@ -1,7 +1,9 @@
 // chat.postMessage / update / delete (PLANO-AGENTES §0.3.12 items 4, 7, 11; §0.3.17, A3-4).
 // - `text` (mrkdwn unless `mrkdwn: false`) → the product's rich text + mentions (slack/mrkdwn.ts); with no
-//   `text`, `blocks` are flattened (slack/blocks.ts), their warnings in `response_metadata.warnings`.
-//   Neither → `no_text`.
+//   `text`, `blocks` are flattened (slack/blocks.ts), their warnings in `response_metadata.warnings`. With a
+//   `markdown` block among the `blocks`, the blocks are the content and the `text` is ignored.
+//   `markdown_text` is read as a single `markdown` block; with a non-empty `text` or with `blocks` in the same
+//   call → `markdown_text_conflict`, nothing sent. Nothing left → `no_text`.
 // - An `actions` block (A3-4, with the approval facade): chat.postMessage sends an approval card
 //   (slack/actions.ts) — read even when there is `text`, which is then the request; with no `text`, the
 //   request is the other blocks flattened. The card's `action_id`/`block_id`/`value` go to the layer's file
@@ -66,13 +68,23 @@ interface Content extends Parsed {
   card?: CardSpec
 }
 
-// The content of a post or an update: `text` wins; `blocks` only without it. With the approval facade, an
-// `actions` block is read whatever the `text` (A3-4): the card of a post or of an update.
+const hasMarkdownBlock = (blocks: readonly unknown[]): boolean =>
+  blocks.some((b) => b !== null && typeof b === 'object' && (b as { type?: unknown }).type === 'markdown')
+
+// The content of a post or an update: `text` wins over `blocks`, unless the blocks hold a `markdown` block;
+// `markdown_text` stands for one `markdown` block and takes neither `text` nor `blocks` beside it. With the
+// approval facade, an `actions` block is read whatever the `text` (A3-4): the card of a post or of an update.
 function contentOf(args: SlackArgs, ctx: SlackCtx): Content {
   const text = str(args, 'text')
   const resolve = resolverOf(ctx)
-  const raw = nested(args, 'blocks')
+  let raw = nested(args, 'blocks')
   if (raw !== undefined && !Array.isArray(raw)) throw new SlackError('invalid_arguments')
+  const markdown = args.markdown_text
+  if (markdown !== undefined && markdown !== null && typeof markdown !== 'string') throw new SlackError('invalid_arguments')
+  if (typeof markdown === 'string' && markdown !== '') {
+    if (text !== undefined || raw !== undefined) throw new SlackError('markdown_text_conflict')
+    raw = [{ type: 'markdown', text: markdown }]
+  }
   let blocks = raw as unknown[] | undefined
   let actions: ReturnType<typeof readActions> | undefined
   if (ctx.approvals !== undefined && blocks !== undefined) {
@@ -80,7 +92,7 @@ function contentOf(args: SlackArgs, ctx: SlackCtx): Content {
     blocks = actions.rest
   }
   let out: Content
-  if (text !== undefined && text.trim() !== '') {
+  if (text !== undefined && text.trim() !== '' && !(blocks !== undefined && hasMarkdownBlock(blocks))) {
     out = bool(args, 'mrkdwn', true) ? { ...mrkdwnToRich(text, resolve), warnings: [], actions: false } : { text: unescapeMrkdwn(text), mentions: [], warnings: [], actions: false }
   } else {
     if (blocks === undefined) throw new SlackError('no_text')

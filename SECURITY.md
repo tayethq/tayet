@@ -4,8 +4,8 @@
 
 ## Reporting a vulnerability
 
-Email **security@tayet.app**. When GitHub private vulnerability reporting is active on this
-repository, you can use that instead.
+Email **security@tayet.app**, or use GitHub's private vulnerability reporting on this repository
+(the **Report a vulnerability** button on the Security tab).
 
 Please do not open a public issue for a security problem.
 

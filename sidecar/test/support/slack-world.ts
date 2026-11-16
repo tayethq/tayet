@@ -267,6 +267,9 @@ export interface SlackStart {
   approvals?: ApprovalFacade
   cardsFile?: string
   bus?: EventBus
+  // The clicks over HTTP (`--slack-actions-url`) and the period of their redelivery.
+  actionsUrl?: string
+  redeliveryMs?: number
 }
 
 export async function startSlack(opts: SlackStart = {}): Promise<SlackHarness> {
@@ -288,6 +291,8 @@ export async function startSlack(opts: SlackStart = {}): Promise<SlackHarness> {
       ...(opts.socket !== undefined && { socket: opts.socket }),
       ...(opts.uploadsDir !== undefined && { uploadsDir: opts.uploadsDir }),
       ...(opts.methods !== undefined && { methods: opts.methods }),
+      ...(opts.actionsUrl !== undefined && { actionsUrl: opts.actionsUrl }),
+      ...(opts.redeliveryMs !== undefined && { redeliveryMs: opts.redeliveryMs }),
     },
   })
   const url = await api.start()

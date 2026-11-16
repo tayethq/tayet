@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { parseCompose } from '@tayet/shared'
 import { flattenBlocks, type BlockResolve } from '../../src/api/slack/blocks'
 
 // Block Kit → rich (PLANO-AGENTES §0.3.1 S4.3, §0.3.12 item 11): one function per block type.
@@ -98,5 +99,58 @@ describe('flattenBlocks', () => {
 
   it('a prototype key is not a block function', () => {
     expect(flattenBlocks([{ type: 'constructor' }, { type: '__proto__' }], resolve).warnings).toEqual(['blocks_unsupported:constructor', 'blocks_unsupported:__proto__'])
+  })
+})
+
+describe('flattenBlocks — the markdown block', () => {
+  const md = (text: unknown, over: Record<string, unknown> = {}) => ({ type: 'markdown', text, ...over })
+  const BOLD_LIST = [
+    { t: 'p', children: [{ t: 'strong', children: [{ t: 'text', text: 'bold' }] }, { t: 'text', text: ' and' }] },
+    { t: 'ul', items: [[{ t: 'p', children: [{ t: 'text', text: 'one' }] }], [{ t: 'p', children: [{ t: 'text', text: 'two' }] }]] },
+  ]
+
+  it('standard Markdown: bold and a list, with no warning; block_id is ignored', () => {
+    const out = flattenBlocks([md('**bold** and\n- one\n- two', { block_id: 'b1' })], resolve)
+    expect(out.rich).toEqual(BOLD_LIST)
+    expect(out.text).toBe('bold and\n\n- one\n- two')
+    expect(out.warnings).toEqual([])
+  })
+
+  it('a mrkdwn section then a markdown block: both, in order', () => {
+    const out = flattenBlocks([{ type: 'section', text: { type: 'mrkdwn', text: '*first*' } }, md('**second**')], resolve)
+    expect(out.rich).toEqual([
+      { t: 'p', children: [{ t: 'strong', children: [{ t: 'text', text: 'first' }] }] },
+      { t: 'p', children: [{ t: 'strong', children: [{ t: 'text', text: 'second' }] }] },
+    ])
+    expect(out.text).toBe('first\n\nsecond')
+  })
+
+  it('<@U…> and <#C…> outside code are resolved as in mrkdwn; inside a code span or a fenced block they stay literal', () => {
+    const out = flattenBlocks([md('hi <@UALICEAAAAA> in <#CGENERALAAA|x>, not `<@UALICEAAAAA>`\n```\n<#CGENERALAAA>\n```\n<@UNOBODYAAAA|someone>')], resolve)
+    expect(out.rich).toEqual([
+      { t: 'p', children: [{ t: 'text', text: 'hi @Alice Souza in #geral, not ' }, { t: 'code', text: '<@UALICEAAAAA>' }] },
+      { t: 'codeblock', text: '<#CGENERALAAA>' },
+      { t: 'p', children: [{ t: 'text', text: '@someone' }] },
+    ])
+    expect(out.mentions).toEqual(['UALICEAAAAA'])
+  })
+
+  it('plain Markdown (no formatting) is a plain body with its mention', () => {
+    const out = flattenBlocks([md('oi <@UALICEAAAAA>')], resolve)
+    expect(out).toEqual({ text: 'oi @Alice Souza', mentions: ['UALICEAAAAA'], warnings: [] })
+  })
+
+  it('a heading and a table come out as parseCompose renders them (strong line, code block)', () => {
+    const source = '# Report\n\n| a | b |\n|---|---|\n| 1 | 2 |'
+    const out = flattenBlocks([md(source)], resolve)
+    expect(out.rich).toEqual(parseCompose(source).rich)
+    expect(out.rich).toEqual([
+      { t: 'p', children: [{ t: 'strong', children: [{ t: 'text', text: 'Report' }] }] },
+      { t: 'codeblock', text: '| a | b |\n|---|---|\n| 1 | 2 |' },
+    ])
+  })
+
+  it('a missing, non-string or blank text contributes nothing and warns nothing', () => {
+    expect(flattenBlocks([md(undefined), md(42), md('  \n ')], resolve)).toEqual({ text: '', mentions: [], warnings: [] })
   })
 })

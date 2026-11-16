@@ -70,7 +70,7 @@ async function daemon(): Promise<void> {
       const cli = parseCli(argv)
       if (!cli.help) {
         try {
-          api = await startLocalApi(core, cli.listen, log)
+          api = await startLocalApi(core, cli.listen, log, { ...(cli.slackActionsUrl !== undefined && { actionsUrl: cli.slackActionsUrl }) })
         } catch (err) {
           if (!(err instanceof AddressInUseError)) throw err
           log({

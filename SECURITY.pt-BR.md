@@ -4,8 +4,8 @@
 
 ## Como reportar uma vulnerabilidade
 
-Mande um email para **security@tayet.app**. Quando o reporte privado de vulnerabilidades do GitHub
-estiver ativo neste repositório, você pode usá-lo no lugar do email.
+Mande um email para **security@tayet.app**, ou use o reporte privado de vulnerabilidades do GitHub
+neste repositório (o botão **Report a vulnerability** na aba Security).
 
 Por favor, não abra uma issue pública para um problema de segurança.
 

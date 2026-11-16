@@ -2,11 +2,12 @@
 // TAYET_AGENT_TOKEN is the credential's alternative to --token (Docker, systemd: no credential in argv
 // or shell history); with both, --token wins (PLANO-AGENTES §0.3.8 item 3). Neither is ever logged.
 import { parseArgs } from 'node:util'
+import { isLoopback } from './loopback'
 
 export class UsageError extends Error {}
 
 export const USAGE = `Usage: tayet-agent --server <product URL> --token <credential> [--store <dir>] [--listen <host:port>]
-                   [--slack-manifest <file>] [--debug]
+                   [--slack-manifest <file>] [--slack-actions-url <url>] [--debug]
        tayet-agent mcp --store <dir> [--listen <host:port>]
 
   --server   The product URL (for example https://chat.example.com).
@@ -21,6 +22,10 @@ export const USAGE = `Usage: tayet-agent --server <product URL> --token <credent
              A Slack app manifest in JSON (YAML is not accepted): its slash commands become the
              agent's commands, declared at every start. A PUT /v1/commands later holds until the
              next start. A manifest out of the rules stops the start, naming the entry and the rule.
+  --slack-actions-url
+             Deliver the Slack layer's button clicks (block_actions) as signed HTTP POSTs to this URL
+             instead of the Socket Mode: http only, on this machine (127.0.0.1, ::1 or localhost). The
+             signing secret is the local token. Events and / commands stay on the Socket Mode.
   --rotate-local-token
              Replace the local token and exit (run it with the agent stopped).
   --debug    Add diagnostics: device identifiers in the log, library output on stderr.
@@ -54,6 +59,8 @@ export interface CliOptions {
   debug: boolean
   // `--slack-manifest <file>` (PLANO-AGENTES §0.3.25 item 1): read and checked by the boot (slack-manifest.ts).
   slackManifest: string | undefined
+  // `--slack-actions-url <url>`: where the Slack layer POSTs its clicks; absent → the Socket Mode delivers them.
+  slackActionsUrl: string | undefined
 }
 
 
@@ -75,6 +82,7 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
         store: { type: 'string' },
         listen: { type: 'string' },
         'slack-manifest': { type: 'string' },
+        'slack-actions-url': { type: 'string' },
         'rotate-local-token': { type: 'boolean', default: false },
         debug: { type: 'boolean', default: false },
         help: { type: 'boolean', default: false },
@@ -102,6 +110,8 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
   const slackManifest = values['slack-manifest']?.trim()
   if (slackManifest === '') throw new UsageError('--slack-manifest needs a file')
   const listen = values.listen !== undefined ? parseListen(values.listen) : DEFAULT_LISTEN
+  const actions = values['slack-actions-url']
+  const slackActionsUrl = actions !== undefined ? parseActionsUrl(actions) : undefined
   return {
     help: false,
     server,
@@ -111,5 +121,22 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
     rotateLocalToken: values['rotate-local-token'],
     debug: values.debug,
     slackManifest,
+    slackActionsUrl,
   }
+}
+
+// The click destination: http only, on this machine. The error names the rule, never the value.
+export function parseActionsUrl(value: string): string {
+  const raw = value.trim()
+  if (raw === '') throw new UsageError('--slack-actions-url needs a URL')
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new UsageError('--slack-actions-url is not a URL')
+  }
+  if (url.protocol !== 'http:') throw new UsageError('--slack-actions-url must be http (the destination is on this machine)')
+  if (!isLoopback(url.hostname)) throw new UsageError('--slack-actions-url must point at this machine (127.0.0.1, ::1 or localhost)')
+  if (url.username !== '' || url.password !== '') throw new UsageError('--slack-actions-url must not carry credentials')
+  return url.href
 }

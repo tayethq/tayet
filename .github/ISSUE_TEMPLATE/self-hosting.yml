@@ -1,0 +1,39 @@
+name: Installation problem
+description: A step of the self-hosting guide did not work
+labels: [self-hosting]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. English or Portuguese, as you prefer.
+        Leave out the contents of `secrets/`, tokens and passwords. You can replace your domain with example.com.
+  - type: input
+    id: step
+    attributes:
+      label: Step of the guide
+      description: The step number in SELF-HOSTING.md where it went wrong
+    validations:
+      required: true
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Command and output
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Tayet version
+      description: The release tag you installed, for example v0.1.1
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Server
+      description: Operating system and Docker version

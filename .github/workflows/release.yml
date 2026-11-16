@@ -1,9 +1,10 @@
-# Publishes the agent sidecar `tayet-agent` on a v* tag (PLANO-AGENTES §0.3.8 item 4, ADR-087 dec. 11):
+# Publishes the agent sidecar `tayet-agent` on a tayet-agent-v* tag (PLANO-AGENTES §0.3.8 item 4, ADR-087 dec. 11):
 # the npm package by trusted publishing (OIDC: no npm token in this repository; the provenance
 # statement comes with it and points at this public source) and the multi-arch image
 # ghcr.io/tayethq/tayet-agent with the workflow's own GITHUB_TOKEN. The version in sidecar/package.json
 # stays 0.0.0 in the source; the tag stamps it here. The image installs the very tarball the npm job
-# packed. A prerelease tag (v1.2.3-rc.1) goes to the npm dist-tag `next` and gets no `latest` image.
+# packed. A prerelease tag (tayet-agent-v1.2.3-rc.1) goes to the npm dist-tag `next` and gets no `latest`
+# image. The agent has its own tag: a product tag (v*) reaches this repository too and publishes nothing here.
 #
 # Owner prerequisites (outside the code): the name `tayet-agent` reserved on npm, and its trusted
 # publisher set to tayethq/tayet, workflow release.yml, no environment, with `npm publish` ticked
@@ -13,7 +14,7 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['tayet-agent-v*']
 
 concurrency: release
 
@@ -27,7 +28,21 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
+      # The version is the tag minus its prefix; anything that is not semver (optional prerelease) stops here.
+      - name: resolve the version from the tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#tayet-agent-v}"
+          SEMVER='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if [ "$VERSION" = "$GITHUB_REF_NAME" ] || ! [[ "$VERSION" =~ $SEMVER ]]; then
+            echo "::error::tag '$GITHUB_REF_NAME' is not tayet-agent-v<semver> (e.g. tayet-agent-v1.2.3 or tayet-agent-v1.2.3-rc.1)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version $VERSION"
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
@@ -43,13 +58,16 @@ jobs:
           npm run build
       - name: stamp the version from the tag
         working-directory: sidecar
-        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: npm version "$VERSION" --no-git-tag-version
       # The package ships the repository's license (sidecar/ has no copy in the source).
       - run: cp LICENSE sidecar/LICENSE
       - name: publish
         working-directory: sidecar
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           case "$VERSION" in
             *-*) npm publish --access public --tag next ;;
             *) npm publish --access public ;;
@@ -88,8 +106,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: build and push
         working-directory: sidecar
+        env:
+          VERSION: ${{ needs.npm.outputs.version }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           TAGS=(-t "ghcr.io/tayethq/tayet-agent:${VERSION}")
           case "$VERSION" in
             *-*) ;;

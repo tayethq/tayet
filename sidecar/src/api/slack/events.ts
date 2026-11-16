@@ -2,7 +2,8 @@
 // takes the EventBus's entries — never the read facade's: the native edge scan of each event already ran
 // once before `publish` (api/server.ts), for every transport. The layer is a CONSUMER of the bus
 // (`EventBus.open`) only while a socket is open (slack/router.ts): it feeds `push` with the unheard first,
-// then every publish. Each mapped event goes to every open socket as an `events_api` envelope
+// then every publish. With the clicks over HTTP (`--slack-actions-url`) it is a consumer from the start, but
+// pushes only the `approval.answered` while no socket is open. Each mapped event goes to every open socket as an `events_api` envelope
 // (slack/socket.ts, slack/envelopes.ts), each envelope through the Slack edge.
 //
 //   message.received → `message` (channel, channel_type, user, text in mrkdwn, ts, thread_ts, files, event_ts)

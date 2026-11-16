@@ -24,4 +24,16 @@ Cada pacote é independente. Veja o [README](README.pt-BR.md#desenvolvimento) pa
   como `Co-authored-by`, e sai no release seguinte.
 - Fechamos o seu pull request citando a tag desse release. Ele nunca é mergeado no GitHub.
 - Baseie o seu trabalho na tag de release mais recente.
+
+## Issues
+
 - Issues são bem-vindas em inglês ou em português.
+- Use o formulário que couber: bug, problema de instalação, ou problema de agente ou integração.
+  Para pedir uma função ou fazer uma pergunta, abra uma issue em branco.
+- Deixe de fora tokens, senhas, chaves de recuperação e conteúdo de mensagens.
+- Problema de segurança não vai em issue. Veja o [`SECURITY.pt-BR.md`](SECURITY.pt-BR.md).
+- Respondemos na própria issue e pomos um rótulo nela. Uma issue com o rótulo `needs-info` espera a
+  sua resposta; depois de 14 dias sem resposta nós a fechamos, e você pode reabri-la quando tiver a
+  informação.
+- Uma issue com o rótulo `accepted` é fechada quando a mudança sai, citando a tag de release que a
+  leva (`v…` para o produto, `tayet-agent-v…` para o agente).

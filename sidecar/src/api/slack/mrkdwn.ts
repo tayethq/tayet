@@ -68,22 +68,30 @@ function closerOf(s: string, start: number, mark: string): number {
   return -1
 }
 
-function entity(body: string, resolve: MrkdwnResolve, mentions: string[]): RichInline[] {
-  const bar = body.indexOf('|')
-  const target = bar === -1 ? body : body.slice(0, bar)
-  const label = bar === -1 ? undefined : unescapeMrkdwn(body.slice(bar + 1))
+// A person (`@U…`) or a conversation (`#C…`) token as the body shows it, the person added to `mentions`;
+// undefined for any other target.
+export function personOrConversation(target: string, label: string | undefined, resolve: MrkdwnResolve, mentions: string[]): string | undefined {
   if (target.startsWith('@')) {
     const id = target.slice(1)
     const name = PERSON.test(id) ? resolve.person(id) : undefined
-    if (name === undefined) return [{ t: 'text', text: `@${label ?? id}` }]
+    if (name === undefined) return `@${label ?? id}`
     if (!mentions.includes(id)) mentions.push(id)
-    return [{ t: 'text', text: `@${name !== '' ? name : (label ?? '')}` }]
+    return `@${name !== '' ? name : (label ?? '')}`
   }
   if (target.startsWith('#')) {
     const id = target.slice(1)
     const name = CONVERSATION.test(id) ? resolve.conversation(id) : undefined
-    return [{ t: 'text', text: `#${name ?? label ?? id}` }]
+    return `#${name ?? label ?? id}`
   }
+  return undefined
+}
+
+function entity(body: string, resolve: MrkdwnResolve, mentions: string[]): RichInline[] {
+  const bar = body.indexOf('|')
+  const target = bar === -1 ? body : body.slice(0, bar)
+  const label = bar === -1 ? undefined : unescapeMrkdwn(body.slice(bar + 1))
+  const token = personOrConversation(target, label, resolve, mentions)
+  if (token !== undefined) return [{ t: 'text', text: token }]
   if (target.startsWith('!')) {
     const special = target.slice(1)
     if (special === 'here' || special === 'channel' || special === 'everyone') return [{ t: 'text', text: `@${special}` }]

@@ -77,6 +77,7 @@ import { logLeaks, scanApprovalProbe, scanCommandsProbe, scanEdge, scanPanelProb
 import { createMcpLayer, type McpLayer } from './mcp/handler'
 import type { SetTimer } from './mcp/wait'
 import { createSlackLayer, type SlackLayer, type SlackMethods } from './slack/router'
+import { isLoopback } from '../loopback'
 import { SLACK_METHODS } from './slack/methods'
 import { refuseUpgrade, type SocketOptions } from './slack/socket'
 
@@ -111,7 +112,7 @@ export interface ApiServerOptions {
   maxBuffer?: number
   // The Slack layer (S-f, PLANO-AGENTES §0.3.12): absent → no `/slack/…` route. `methods` overrides the
   // method table (tests).
-  slack?: { productUrl: string; uploadsDir?: string; cardsFile?: string; methods?: readonly SlackMethods[]; now?: () => number; socket?: SocketOptions }
+  slack?: { productUrl: string; uploadsDir?: string; cardsFile?: string; methods?: readonly SlackMethods[]; now?: () => number; socket?: SocketOptions; actionsUrl?: string; redeliveryMs?: number }
   // The MCP server (S-g1, §0.3.13): absent → no `/mcp` route. `setTimer` is wait_for_mention's clock (tests).
   mcp?: { setTimer?: SetTimer }
 }
@@ -177,7 +178,6 @@ const MESSAGES: Record<ApiErrorCode, string> = {
   internal: 'internal error',
 }
 
-const isLoopback = (host: string): boolean => host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.')
 const isWildcard = (host: string): boolean => host === '0.0.0.0' || host === '::'
 const hostHeader = (host: string, port: number): string => (host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`)
 const digest = (s: string): Buffer => createHash('sha256').update(s).digest()
@@ -610,6 +610,8 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
             ...(opts.slack.cardsFile !== undefined && { cardsFile: opts.slack.cardsFile }),
             ...(opts.slack.now !== undefined && { now: opts.slack.now }),
             ...(opts.slack.socket !== undefined && { socket: opts.slack.socket }),
+            // The clicks over HTTP (`--slack-actions-url`), signed with the local token.
+            ...(opts.slack.actionsUrl !== undefined && { actions: { url: opts.slack.actionsUrl, secret: opts.token, ...(opts.slack.redeliveryMs !== undefined && { redeliveryMs: opts.slack.redeliveryMs }) } }),
           },
           opts.slack.methods ?? SLACK_METHODS,
         )

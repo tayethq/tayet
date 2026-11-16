@@ -71,6 +71,45 @@ describe('CLI (ADR-087 dec. 1)', () => {
   })
 })
 
+describe('--slack-actions-url', () => {
+  const base = ['--server', 'https://chat.x', '--token', 't']
+  it('absent → undefined', () => {
+    expect(parseCli(base)).toMatchObject({ slackActionsUrl: undefined })
+  })
+  it.each([
+    ['http://127.0.0.1:3000/slack/actions', 'http://127.0.0.1:3000/slack/actions'],
+    ['http://localhost:3000/slack/actions', 'http://localhost:3000/slack/actions'],
+    ['http://[::1]:3000/slack/actions', 'http://[::1]:3000/slack/actions'],
+    ['http://127.0.0.2:8080/', 'http://127.0.0.2:8080/'],
+    ['  http://127.0.0.1:3000/x  ', 'http://127.0.0.1:3000/x'],
+  ])('accepted: %s', (value, href) => {
+    expect(parseCli([...base, '--slack-actions-url', value])).toMatchObject({ slackActionsUrl: href })
+  })
+  it.each([
+    ['https://127.0.0.1:3000/slack/actions', '--slack-actions-url must be http (the destination is on this machine)'],
+    ['ftp://127.0.0.1/x', '--slack-actions-url must be http (the destination is on this machine)'],
+    ['http://govern.example.com/slack/actions', '--slack-actions-url must point at this machine (127.0.0.1, ::1 or localhost)'],
+    ['http://10.0.0.5:3000/slack/actions', '--slack-actions-url must point at this machine (127.0.0.1, ::1 or localhost)'],
+    ['http://127.example.com/slack/actions', '--slack-actions-url must point at this machine (127.0.0.1, ::1 or localhost)'],
+    ['http://0.0.0.0:3000/', '--slack-actions-url must point at this machine (127.0.0.1, ::1 or localhost)'],
+    ['', '--slack-actions-url needs a URL'],
+    ['   ', '--slack-actions-url needs a URL'],
+    ['not a url', '--slack-actions-url is not a URL'],
+    ['127.0.0.1:3000/slack/actions', '--slack-actions-url is not a URL'],
+    ['http://user:pw@127.0.0.1:3000/', '--slack-actions-url must not carry credentials'],
+  ])('refused: %j', (value, message) => {
+    expect(() => parseCli([...base, '--slack-actions-url', value])).toThrow(new UsageError(message))
+  })
+  it('the usage error names the rule, never the value', () => {
+    try {
+      parseCli([...base, '--slack-actions-url', 'https://secret-host-value.example/x'])
+      expect.unreachable()
+    } catch (err) {
+      expect(String(err)).not.toContain('secret-host-value')
+    }
+  })
+})
+
 describe('agent localpart (ADR-086 dec. 1)', () => {
   it.each([
     ['@a-abcdefghijkl:x', true],

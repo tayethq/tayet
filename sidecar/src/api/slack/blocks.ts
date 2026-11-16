@@ -1,16 +1,19 @@
-// Block Kit → the product's rich text (PLANO-AGENTES §0.3.1 S4.3, §0.3.12 item 11). `blocks` are read only
-// when the call has no `text` (with `text`, the text wins; the `actions` block of a card is the exception,
-// A3-4) and are never returned on a read. One function
-// per block type:
+// Block Kit → the product's rich text (PLANO-AGENTES §0.3.1 S4.3, §0.3.12 item 11). `blocks` are read when
+// the call has no `text`, or when they hold a `markdown` block (then the blocks win over the `text`); with
+// `text` and no `markdown` block, the text wins (the `actions` block of a card is the exception, A3-4).
+// Blocks are never returned on a read. One function per block type:
 // - `section` (`text` and `fields`), `context` (texts; images as `[imagem: alt]`), `header` (strong),
 //   `image` (`[imagem: alt]` + its link) and `rich_text` (1:1: sections, lists, preformatted, quotes);
+// - `markdown`: its `text` as standard Markdown, rendered by the same converter as the local API's
+//   `markdown: true` (headings and tables come out degraded, as there); `<@U…>` and `<#C…>` are resolved as
+//   in mrkdwn, except inside code; `block_id` is ignored;
 // - `divider` is dropped;
 // - `actions` and the inputs are dropped with the warning `blocks_unsupported:<type>`; any other type too.
 // `actions` is the approval card (A3-4): with the approval facade, chat.postMessage reads it BEFORE this
 // flattening (slack/actions.ts) — even when the call has `text` — and only the other blocks come here; its
 // click goes out as `block_actions` (slack/interactive.ts). Without the facade it is dropped, as above.
-import type { RichBlock, RichDoc, RichInline } from '@tayet/shared'
-import { mrkdwnToRich, richToPlain, type MrkdwnResolve } from './mrkdwn'
+import { parseCompose, type RichBlock, type RichDoc, type RichInline } from '@tayet/shared'
+import { mrkdwnToRich, personOrConversation, richToPlain, type MrkdwnResolve } from './mrkdwn'
 
 export interface Flattened {
   text: string
@@ -156,6 +159,51 @@ function richText(block: Obj, resolve: BlockResolve): Piece {
   return { doc, mentions }
 }
 
+// ── markdown ─────────────────────────────────────────────────────────────────────────────────────
+
+// The fences and code spans the converter reads verbatim (its rules: a fence indented up to 3 spaces; a
+// span from one backtick to the next on the line, never empty).
+const FENCE_OPEN = /^ {0,3}```\w*\s*$/
+const FENCE_CLOSE = /^ {0,3}```\s*$/
+const TOKEN = /<([@#][^|>\s]+)(?:\|([^>\n]*))?>/g
+
+// `<@U…>`, `<@U…|label>`, `<#C…>` and `<#C…|label>` outside code → the body's `@name` / `#name`.
+function markdownTokens(source: string, resolve: BlockResolve, mentions: string[]): string {
+  const outside = (s: string): string => s.replace(TOKEN, (whole, target: string, label: string | undefined) => personOrConversation(target, label, resolve, mentions) ?? whole)
+  let fenced = false
+  return source
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => {
+      if (fenced) {
+        if (FENCE_CLOSE.test(line)) fenced = false
+        return line
+      }
+      if (FENCE_OPEN.test(line)) {
+        fenced = true
+        return line
+      }
+      let out = ''
+      let from = 0
+      for (let i = line.indexOf('`'); i !== -1; i = line.indexOf('`', from)) {
+        const end = line.indexOf('`', i + 1)
+        if (end === -1) break
+        out += outside(line.slice(from, i)) + line.slice(i, end + 1)
+        from = end + 1
+      }
+      return out + outside(line.slice(from))
+    })
+    .join('\n')
+}
+
+function markdownBlock(block: Obj, resolve: BlockResolve): Piece {
+  const source = string(block.text)
+  if (source.trim() === '') return { doc: [], mentions: [] }
+  const mentions: string[] = []
+  const text = markdownTokens(source, resolve, mentions)
+  return { doc: parseCompose(text).rich ?? [{ t: 'p', children: [{ t: 'text', text }] }], mentions }
+}
+
 // ── The block functions ──────────────────────────────────────────────────────────────────────────
 
 type BlockFn = (block: Obj, resolve: BlockResolve, warn: (type: string) => void) => Piece
@@ -185,6 +233,7 @@ const BLOCKS: Readonly<Record<string, BlockFn>> = {
     return { doc: [{ t: 'p', children }], mentions: [] }
   },
   rich_text: (b, resolve) => richText(b, resolve),
+  markdown: (b, resolve) => markdownBlock(b, resolve),
   divider: () => ({ doc: [], mentions: [] }),
 }
 
