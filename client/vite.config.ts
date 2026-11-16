@@ -78,6 +78,10 @@ export default defineConfig({
     // The DOM render-scan (P1 on screen) opts into jsdom via a `// @vitest-environment jsdom`
     // docblock at the top of its file.
     include: ['test/**/*.test.{ts,tsx}'],
+    // The machine's time zone never reaches a test: every run (private CI on America/Sao_Paulo, the
+    // public CI on UTC, `npm test` anywhere) formats dates in UTC. Here, not in a CI step, so that a
+    // local run and both CIs see the same clock. A test that needs another zone declares it itself.
+    env: { TZ: 'UTC' },
     // Runs once per test file, inside its environment. Shims jsdom's missing layout engine so the
     // real TipTap editor (rich-composer) doesn't emit unhandled getClientRects errors. Inert in
     // the node-environment integration files (guarded by `typeof Element`). See test/setup.ts.

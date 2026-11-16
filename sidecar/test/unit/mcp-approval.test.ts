@@ -124,8 +124,20 @@ describe.each<Era>(['legacy', 'modern'])('approval card tools (%s era)', (era) =
       [{ id: 'a', label: '  ' }],
     ]
     for (const options of bad) expect(refused(await callTool(c, 'request_approval', { conversation: GENERAL.id, text: 'Publicar?', options }))).toBe('invalid_argument')
+    // 26 options: refused by the tool's input schema, before the handler.
+    const many = Array.from({ length: 26 }, (_, n) => ({ id: `o${n}`, label: `O${n}` }))
+    expect(refused(await callTool(c, 'request_approval', { conversation: GENERAL.id, text: 'Publicar?', options: many }))).toMatch(/options: Too big/)
     expect(refused(await callTool(c, 'request_approval', { conversation: GENERAL.id, text: '  ', options: OPTIONS }))).toBe('invalid_argument')
     expect(f.calls).toEqual([])
+  })
+
+  it('request_approval: 25 options pass to the facade', async () => {
+    const f = fakeApprovals()
+    h = await startMcp({ approvals: f.approvals })
+    const c = await h.client(era)
+    const options = Array.from({ length: 25 }, (_, n) => ({ id: `o${n}`, label: `O${n}` }))
+    ok(await callTool(c, 'request_approval', { conversation: GENERAL.id, text: 'Qual?', options }))
+    expect(f.calls).toHaveLength(1)
   })
 
   it('request_approval: a protocol id in a label is refused before any effect (internal, leak line)', async () => {

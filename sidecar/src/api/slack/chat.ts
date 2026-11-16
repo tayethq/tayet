@@ -8,10 +8,22 @@
 //   (slack/cards.ts) before the answer. Preflight before any effect: the card's probe (request + options) and
 //   the content scan of every `action_id`, `value` and `block_id`. Without the facade, `actions` is dropped
 //   with `blocks_unsupported:actions`, as before.
-// - chat.update with an `actions` block → `invalid_blocks` (with the facade). On one of the agent's own
-//   cards: the request is edited (the core keeps the close as it is), then the card is closed when it is
-//   still open (after the automatic seal, it is only the edit). The response_url (slack/router.ts) takes
-//   this same path.
+// - chat.update on one of the agent's own cards, no `actions` block: the request is edited (the core keeps
+//   the close as it is), then the card is closed when it is still open (after the automatic seal, it is only
+//   the edit). The response_url (slack/router.ts) takes this same path.
+// - chat.update with an `actions` block (with the facade), on one of the agent's own cards:
+//   - the card is open (no valid answer) and the buttons give the same options (id, label and style, in
+//     order): the request is edited and the card stays open; the card's entry in the layer's file takes the
+//     new `action_id`/`block_id`/`value`;
+//   - otherwise (answered, closed, or other options): the card is closed if still open (the core's close,
+//     which never hides an answer) and a NEW card is posted with the call's request and buttons, in the same
+//     place (the origin's thread, or the root), by the chat.postMessage path (preflight, content scan, the
+//     file's entry before the answer). The old card is not edited.
+//   - The first card's `ts` (the chain's origin) then stands for the live card (slack/cards.ts aliases):
+//     chat.update and the response_url on the origin or on any card of the chain act on the live card;
+//     chat.update answers the `ts` the app passed, with the live card in `message`. chat.delete acts on the
+//     literal `ts`.
+//   On any other message, an `actions` block → `invalid_blocks`.
 // - `thread_ts` → the native `thread` (a reply's ts names its thread, as the native write does).
 // - `reply_broadcast`, `username`, `icon_url`, `icon_emoji` and `as_user` are ignored with a warning: the
 //   agent always speaks as itself, marked as an agent (P6, ADR-086 dec. 6).
@@ -48,15 +60,15 @@ export function resolverOf(ctx: SlackCtx): BlockResolve {
 
 interface Content extends Parsed {
   warnings: string[]
-  // The approval card of an `actions` block (chat.postMessage with the facade, A3-4).
+  // Whether the call had an `actions` block (read only with the facade).
+  actions: boolean
+  // The approval card of an `actions` block (with the facade, A3-4).
   card?: CardSpec
 }
 
-const isActions = (b: unknown): boolean => b !== null && typeof b === 'object' && (b as { type?: unknown }).type === 'actions'
-
 // The content of a post or an update: `text` wins; `blocks` only without it. With the approval facade, an
-// `actions` block is read whatever the `text` (A3-4): a post's card; an update's → `invalid_blocks`.
-function contentOf(args: SlackArgs, ctx: SlackCtx, kind: 'post' | 'update'): Content {
+// `actions` block is read whatever the `text` (A3-4): the card of a post or of an update.
+function contentOf(args: SlackArgs, ctx: SlackCtx): Content {
   const text = str(args, 'text')
   const resolve = resolverOf(ctx)
   const raw = nested(args, 'blocks')
@@ -64,18 +76,17 @@ function contentOf(args: SlackArgs, ctx: SlackCtx, kind: 'post' | 'update'): Con
   let blocks = raw as unknown[] | undefined
   let actions: ReturnType<typeof readActions> | undefined
   if (ctx.approvals !== undefined && blocks !== undefined) {
-    if (kind === 'update' && blocks.some(isActions)) throw new SlackError('invalid_blocks')
     actions = readActions(blocks)
     blocks = actions.rest
   }
   let out: Content
   if (text !== undefined && text.trim() !== '') {
-    out = bool(args, 'mrkdwn', true) ? { ...mrkdwnToRich(text, resolve), warnings: [] } : { text: unescapeMrkdwn(text), mentions: [], warnings: [] }
+    out = bool(args, 'mrkdwn', true) ? { ...mrkdwnToRich(text, resolve), warnings: [], actions: false } : { text: unescapeMrkdwn(text), mentions: [], warnings: [], actions: false }
   } else {
     if (blocks === undefined) throw new SlackError('no_text')
-    out = flattenBlocks(blocks, resolve)
+    out = { ...flattenBlocks(blocks, resolve), actions: false }
   }
-  if (actions !== undefined) out = { ...out, warnings: [...out.warnings, ...actions.warnings], ...(actions.card !== undefined && { card: actions.card }) }
+  if (actions !== undefined) out = { ...out, warnings: [...out.warnings, ...actions.warnings], actions: actions.present, ...(actions.card !== undefined && { card: actions.card }) }
   if (out.text.trim() === '') throw new SlackError('no_text')
   if (Buffer.byteLength(out.text, 'utf8') > SLACK_TEXT_MAX) throw new SlackError('msg_too_long')
   return out
@@ -104,12 +115,13 @@ function preflightCard(ctx: SlackCtx, channel: string, text: string, card: CardS
   }
 }
 
-// chat.postMessage with a card: the facade's request, then the layer's file, then the answer.
-async function postCard(ctx: SlackCtx, channel: string, content: Content & { card: CardSpec }, thread: string | undefined, warnings: string[]) {
+const entryOf = (card: CardSpec) => card.buttons.map((b) => ({ option: b.option.id, action_id: b.action_id, ...(b.value !== undefined && { value: b.value }) }))
+
+// A card through the facade, then its entry in the layer's file (before the caller answers).
+async function sendCard(ctx: SlackCtx, channel: string, content: Content & { card: CardSpec }, thread: string | undefined): Promise<ApiMessage> {
   const approvals = ctx.approvals
   if (approvals === undefined) throw new SlackError('internal_error')
   const { card } = content
-  preflightCard(ctx, channel, content.text, card)
   let sent: ApiMessage
   try {
     sent = await approvals.request(channel, {
@@ -123,31 +135,76 @@ async function postCard(ctx: SlackCtx, channel: string, content: Content & { car
     if (thread !== undefined && err instanceof ReadError && err.code === 'message_not_found') throw new SlackError('thread_not_found')
     throw err
   }
-  await ctx.cards.add({
-    conversation: channel,
-    id: sent.id,
-    block_id: card.block_id,
-    actions: card.buttons.map((b) => ({ option: b.option.id, action_id: b.action_id, ...(b.value !== undefined && { value: b.value }) })),
-    at: ctx.now(),
-  })
+  await ctx.cards.add({ conversation: channel, id: sent.id, block_id: card.block_id, actions: entryOf(card), at: ctx.now() })
+  return sent
+}
+
+// chat.postMessage with a card: the preflight, the facade's request, then the layer's file, then the answer.
+async function postCard(ctx: SlackCtx, channel: string, content: Content & { card: CardSpec }, thread: string | undefined, warnings: string[]) {
+  preflightCard(ctx, channel, content.text, content.card)
+  const sent = await sendCard(ctx, channel, content, thread)
   return { channel, ts: sent.id, message: await shown(ctx, sent, 'chat.postMessage'), ...metadata(warnings) }
 }
 
-// Whether the target is one of the agent's own cards (a read that fails leaves it to the edit's errors).
-async function ownCard(ctx: SlackCtx, channel: string, ts: string): Promise<boolean> {
-  if (ctx.approvals === undefined) return false
+// The target when it is one of the agent's own cards (a read that fails leaves it to the edit's errors).
+async function ownCard(ctx: SlackCtx, channel: string, ts: string): Promise<ApiMessage | undefined> {
+  if (ctx.approvals === undefined) return undefined
   try {
     const m = await ctx.read.message(channel, ts)
-    return m.approval !== undefined && m.author === (await ctx.me()).id
+    return m.approval !== undefined && m.author === (await ctx.me()).id ? m : undefined
   } catch {
-    return false
+    return undefined
   }
+}
+
+type Option = CardSpec['buttons'][number]['option']
+const sameOptions = (a: readonly Option[], b: readonly Option[]): boolean =>
+  a.length === b.length && a.every((o, i) => o.id === b[i]?.id && o.label === b[i]?.label && o.style === b[i]?.style)
+
+// chat.update with buttons on one of the agent's own cards (`live`, the chain's live card; `ts`, what the
+// app passed). Preflight before any effect.
+async function updateCard(ctx: SlackCtx, channel: string, ts: string, live: ApiMessage, content: Content & { card: CardSpec }) {
+  const approvals = ctx.approvals
+  if (approvals === undefined) throw new SlackError('internal_error')
+  const { card } = content
+  preflightCard(ctx, channel, content.text, card)
+  const options = card.buttons.map((b) => b.option)
+  const status = (await approvals.state(channel, live.id)).approval
+  if (status.state === 'open' && sameOptions(status.options, options)) {
+    // The same card, still open: edit the request in place; the click gives back the new fields.
+    const edited = await ctx.write.edit(channel, live.id, content.text, content.rich)
+    const entry = ctx.cards.get(channel, live.id)
+    const actions = entryOf(card)
+    if (entry === undefined || entry.block_id !== card.block_id || JSON.stringify(entry.actions) !== JSON.stringify(actions)) {
+      await ctx.cards.add({ conversation: channel, id: live.id, block_id: card.block_id, actions, at: entry?.at ?? ctx.now() })
+    }
+    const message = await shown(ctx, edited, 'chat.update')
+    return { channel, ts, text: message.text, message, ...metadata(content.warnings) }
+  }
+  // Another card: close this one if still open (an answer is never hidden), then a new one in its place.
+  if (status.state === 'open') {
+    const closed = await approvals.close(channel, live.id)
+    if (closed.approval?.state === 'closed') await ctx.cards.remove(channel, live.id)
+  }
+  const origin = ctx.cards.originOf(channel, live.id)
+  let thread = live.thread
+  if (origin !== live.id) {
+    try {
+      thread = (await ctx.read.message(channel, origin)).thread
+    } catch {
+      // The origin is gone (chat.delete acts on the literal ts): every card of a chain shares its thread.
+    }
+  }
+  const sent = await sendCard(ctx, channel, content, thread)
+  await ctx.cards.alias({ conversation: channel, origin, live: sent.id, at: ctx.now() })
+  const message = await shown(ctx, sent, 'chat.update')
+  return { channel, ts, text: message.text, message, ...metadata(content.warnings) }
 }
 
 export const CHAT_METHODS: SlackMethods = {
   'chat.postMessage': async (args, ctx) => {
     const channel = required(args, 'channel', 'channel_not_found')
-    const content = contentOf(args, ctx, 'post')
+    const content = contentOf(args, ctx)
     const warnings = [...content.warnings, ...IGNORED.filter((k) => args[k] !== undefined && args[k] !== '').map((k) => `ignored_argument:${k}`)]
     const thread = str(args, 'thread_ts')
     if (content.card !== undefined) return postCard(ctx, channel, content as Content & { card: CardSpec }, thread, warnings)
@@ -170,15 +227,20 @@ export const CHAT_METHODS: SlackMethods = {
   'chat.update': async (args, ctx) => {
     const channel = required(args, 'channel', 'channel_not_found')
     const ts = required(args, 'ts', 'message_not_found')
-    const content = contentOf(args, ctx, 'update')
+    const content = contentOf(args, ctx)
     ctx.preflight('chat.update', channel, content.text)
-    const card = await ownCard(ctx, channel, ts)
-    const edited = await ctx.write.edit(channel, ts, content.text, content.rich)
+    // The origin of a chain, or any card of it, stands for the live card.
+    await ctx.cards.load()
+    const target = ctx.cards.liveOf(channel, ts)
+    const card = await ownCard(ctx, channel, target)
+    if (content.actions && card === undefined) throw new SlackError('invalid_blocks')
+    if (card !== undefined && content.card !== undefined) return updateCard(ctx, channel, ts, card, content as Content & { card: CardSpec })
+    const edited = await ctx.write.edit(channel, target, content.text, content.rich)
     // A card the layer closes leaves its file (no click can come any more); one an answer reached first stays
     // until the click is acked.
-    if (card && ctx.approvals !== undefined && (await ctx.approvals.state(channel, ts)).approval.state === 'open') {
-      const closed = await ctx.approvals.close(channel, ts)
-      if (closed.approval?.state === 'closed') await ctx.cards.remove(channel, ts)
+    if (card !== undefined && ctx.approvals !== undefined && (await ctx.approvals.state(channel, target)).approval.state === 'open') {
+      const closed = await ctx.approvals.close(channel, target)
+      if (closed.approval?.state === 'closed') await ctx.cards.remove(channel, target)
     }
     const message = await shown(ctx, edited, 'chat.update')
     return { channel, ts, text: message.text, message, ...metadata(content.warnings) }

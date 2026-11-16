@@ -18,7 +18,7 @@ import type {
 import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
 import { HOMESERVER, synapseReachable, mintToken } from '../support/synapse'
 import { until } from '../support/until'
-import { copy } from '../support/copy'
+import { copy, fill } from '../support/copy'
 
 // ── P1 gate #2 (PLANO-FASE-1-TRADUTORES §4.2): the render-scan the Element doesn't have.
 // Mount the UI and scan the rendered DOM for protocol shapes. This is P1 about what reaches the
@@ -133,7 +133,14 @@ describe('DOM render-scan (P1 on screen)', () => {
     expect(text).toContain('#engineering')
     expect(text).toContain('Alice Anderson')
     expect(text).toContain('Hello team')
-    expect(text).toContain('3') // unread badge
+    // The unread badge, found by its element on the #engineering row: the pill shows the mentions
+    // (1 in the fixture), not the count (3). A bare digit in the page text matched the timestamps.
+    const engineering = Array.from(container.querySelectorAll('button.channel')).find((b) =>
+      b.textContent?.includes('#engineering'),
+    )
+    const pill = engineering?.querySelector('.badge--mention')
+    expect(pill?.textContent).toBe('1')
+    expect(pill?.getAttribute('aria-label')).toBe(fill(copy.list.mentions.one, { n: 1 }))
     expect(text).toContain(copy.timeline.edited)
     // ADR-015: the unavailable placeholder renders as a normal message body — visible, neutral,
     // never blocking the timeline (P4). The leak-scan below proves no crypto vocabulary leaks.

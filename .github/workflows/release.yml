@@ -6,7 +6,9 @@
 # packed. A prerelease tag (v1.2.3-rc.1) goes to the npm dist-tag `next` and gets no `latest` image.
 #
 # Owner prerequisites (outside the code): the name `tayet-agent` reserved on npm, and its trusted
-# publisher set to tayethq/tayet, workflow release.yml, no environment.
+# publisher set to tayethq/tayet, workflow release.yml, no environment, with `npm publish` ticked
+# under Allowed actions. A configuration created after 2026-09-03 allows only `npm stage publish` by
+# default, and a new configuration expires unless its first publish lands within 2 days.
 name: Release
 
 on:

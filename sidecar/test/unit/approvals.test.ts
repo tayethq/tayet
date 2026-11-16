@@ -111,18 +111,19 @@ describe('approvalOptionsOf (§0.3.16 item 12)', () => {
     }
   }
 
-  it('1 to 3 options; id [a-z0-9_-]{1,32}, unique; label non-empty, ≤ 75 characters; style primary|danger; one primary', () => {
+  it('1 to 25 options; id [a-z0-9_-]{1,32}, unique; label non-empty, ≤ 75 characters; style primary|danger; one primary', () => {
     expect(approvalOptionsOf([{ id: 'ok_1-x', label: 'OK', style: 'primary' }, { id: 'no', label: 'Não', style: 'danger' }, { id: 'later', label: 'Depois' }])).toEqual([
       { id: 'ok_1-x', label: 'OK', style: 'primary' },
       { id: 'no', label: 'Não', style: 'danger' },
       { id: 'later', label: 'Depois' },
     ])
     expect(approvalOptionsOf([{ id: 'x'.repeat(32), label: '🙂'.repeat(75) }])).toHaveLength(1)
+    expect(approvalOptionsOf(Array.from({ length: 25 }, (_, n) => ({ id: `o${n}`, label: 'L' })))).toHaveLength(25)
     for (const raw of [
       null,
       {},
       [],
-      [1, 2, 3, 4].map((n) => ({ id: `o${n}`, label: 'L' })),
+      Array.from({ length: 26 }, (_, n) => ({ id: `o${n}`, label: 'L' })),
       [{ id: '', label: 'L' }],
       [{ id: 'Upper', label: 'L' }],
       [{ id: 'x'.repeat(33), label: 'L' }],

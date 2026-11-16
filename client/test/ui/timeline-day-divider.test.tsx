@@ -36,6 +36,9 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  // The unmount scheduled the editor's destroy on the fake clock (@tiptap/react, 1 ms timer): run it
+  // before the real timers come back, or the editor is never destroyed.
+  vi.runOnlyPendingTimers()
   vi.useRealTimers()
 })
 

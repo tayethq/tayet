@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest'
-import { render, cleanup, within } from '@testing-library/react'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { render, cleanup, fireEvent, within } from '@testing-library/react'
 import { Timeline, excerptOf } from '../../src/ui/components/Timeline'
 import { ThreadPanel } from '../../src/ui/components/ThreadPanel'
 import { previewOf } from '../../src/ui/notifier'
@@ -72,6 +72,20 @@ describe('ApprovalCard — states', () => {
     expect(buttons.every((b) => !b.hasAttribute('title'))).toBe(true)
     expect(container.querySelector('.approval__pill')).toBeNull()
     expect(findProtocolLeaksInText(container.innerHTML)).toEqual([])
+  })
+
+  it('25 options (ADR-101 dec. 1): 25 buttons in the row; clicking the 25th answers with its id', () => {
+    const many: Approval['options'] = Array.from({ length: 25 }, (_, i) => ({ id: `o${i + 1}`, label: `Opção ${i + 1}` }))
+    const m = card({ kind: 'open' })
+    const onAnswer = vi.fn()
+    const many25: Message = { ...m, body: { ...(m.body as Approval), options: many } }
+    const { getByRole } = render(<Timeline messages={[many25]} usersById={usersById} selfId={ME.id} onAnswer={onAnswer} />)
+    const group = getByRole('group', { name: copy.approval.title })
+    const buttons = within(group).getAllByRole('button')
+    expect(buttons.map((b) => b.textContent)).toEqual(many.map((o) => o.label))
+    fireEvent.click(within(group).getByRole('button', { name: 'Opção 25' }))
+    expect(onAnswer).toHaveBeenCalledTimes(1)
+    expect(onAnswer).toHaveBeenCalledWith(many25, 'o25')
   })
 
   it('answered: the option in a pill + "{nome} às {hora}" from the real author', () => {

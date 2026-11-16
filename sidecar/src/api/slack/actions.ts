@@ -7,12 +7,12 @@
 //   a `button` with a `url` is dropped (`blocks_unsupported:button_url`); any other element is dropped
 //   (`blocks_unsupported:<type>`); a button's `confirm` is ignored (`blocks_unsupported:confirm`). No button
 //   left → no card: an ordinary message, with the warnings.
-// - `invalid_blocks`: more than 3 buttons; a label empty or over 75 characters; an `action_id` or a
+// - `invalid_blocks`: more than 25 buttons; a label empty or over 75 characters; an `action_id` or a
 //   `block_id` over 255; a `value` over 2,000; a repeated `action_id`.
 // - More than one `primary`: the first stays, the others become secondary (`approval_primary_demoted`).
 // - The option ids (the §0.3.16 item 14 erratum): every button's `action_id` matches the option rule
 //   (`[a-z0-9_-]{1,32}`) → the ids are the `action_id`s; one does not match or is missing → ALL become
-//   positional (`b1`, `b2`, `b3`). A button with no `action_id` gets a minted one (opaque, kept per card in
+//   positional (`b1`, `b2`, … `b25`). A button with no `action_id` gets a minted one (opaque, kept per card in
 //   slack-cards.json), which is what the click returns; a missing `block_id` is minted the same way.
 import { randomBytes } from 'node:crypto'
 import { APPROVAL_LABEL_MAX, APPROVAL_MAX_OPTIONS, APPROVAL_OPTION_ID } from '../../core/approval-limits'

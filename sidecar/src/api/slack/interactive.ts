@@ -8,6 +8,8 @@
 // - `action_id`, `block_id` and `value` come from the layer's own file (slack/cards.ts). A card with no entry
 //   there (sent by the native API or the MCP, or an entry lost or evicted): `action_id` = the option's id,
 //   `block_id` = `approval`, no `value`, and one `slack-card-unknown` line (no id).
+// - A card of a chain (a chat.update with buttons posted it in place of another, slack/cards.ts): the click's
+//   `container.message_ts` is the chain's origin, the `ts` the app knows; `message` is the card answered.
 // - A socket's ack removes the entry; a response payload in the ack is ignored (`ack-payload-ignored`). No
 //   ack after the redeliveries: the dispatcher's drop line, and the entry stays.
 // - No socket open → nothing is dispatched: the layer is not a consumer of the bus then, so the bus keeps
@@ -80,7 +82,7 @@ export async function blockActionsOf(e: Answered, me: ApiMe, bot: string, view: 
     is_enterprise_install: false,
     user: { id: e.by, username: name, name, team_id: me.workspace },
     channel: { id: e.conversation, name: nameOr(() => opts.read.conversation(e.conversation).name) },
-    container: { type: 'message', message_ts: e.id, channel_id: e.conversation, is_ephemeral: false },
+    container: { type: 'message', message_ts: opts.cards.originOf(e.conversation, e.id), channel_id: e.conversation, is_ephemeral: false },
     message,
     state: { values: {} },
     trigger_id: randomBytes(16).toString('hex'),

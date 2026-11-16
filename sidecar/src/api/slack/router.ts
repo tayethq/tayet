@@ -10,10 +10,10 @@
 //   POST     /slack/response/<ticket> the response_url of an approval card's click (A3-4, slack/response.ts):
 //                                   NO Bearer — Bolt's respond() sends none; the ticket is the credential
 //                                   (30 min, 5 uses, memory only). JSON `{ replace_original: true, text?,
-//                                   blocks? }` → the chat.update path → HTTP 200 `{ ok: true }`; HTTP status
-//                                   codes otherwise: no `replace_original` or a `delete_original` → 400
-//                                   `invalid_arguments`; an `actions` block → 400 `invalid_blocks`; unknown,
-//                                   expired or spent → 404 `expired_url`; revoked → 503.
+//                                   blocks? }` → the chat.update path (an `actions` block included) →
+//                                   HTTP 200 `{ ok: true }`; HTTP status codes otherwise: no
+//                                   `replace_original` or a `delete_original` → 400 `invalid_arguments`;
+//                                   unknown, expired or spent → 404 `expired_url`; revoked → 503.
 //                                   The response_url of a `/` command (A4-3, slack/commands.ts), same ticket
 //                                   rules: JSON `{ text?, blocks? }` → a reply in the command's thread by the
 //                                   chat.postMessage path → HTTP 200 `{ ok: true }` (nothing to write → 200,

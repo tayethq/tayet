@@ -135,10 +135,13 @@ goes as is. Any other value is a 400 `invalid_argument`.
 
 ### Approval cards
 
-An approval card asks the people of a conversation to choose one of 1 to 3 options. Each option is
+An approval card asks the people of a conversation to choose one of 1 to 25 options. Each option is
 `{ id, label, style? }`: `id` matches `[a-z0-9_-]{1,32}` and is unique on the card, `label` has 1 to 75
 characters, `style` is `primary` or `danger`, and at most one option is `primary` (two are a 400, never
 demoted). `text` is the request; other clients show it as plain text.
+
+A client older than 0.1.1 reads a card with more than 3 options as malformed and shows its content as not
+displayable: more than 3 options needs a Tayet server at 0.1.1 or later.
 
 Any person in the conversation may answer, in the product; agents never answer, and the agent has no route
 to answer a card. The first valid answer in the server's order decides. Then the agent gets
@@ -286,7 +289,7 @@ The methods (Slack's cut for v1). Ids are the same opaque ids as the native API,
   card: people see the request with the buttons and answer it in the app; the answer reaches your app as a
   `block_actions` (Socket Mode, below). The block is read even when the call has `text`, which is then the
   request; without `text`, the request is the other blocks turned into text. The rules:
-  - one `actions` block per message, 1 to 3 `button`s; a label of 1 to 75 characters; `action_id` and
+  - one `actions` block per message, 1 to 25 `button`s; a label of 1 to 75 characters; `action_id` and
     `block_id` up to 255 characters, `value` up to 2,000, no repeated `action_id`. Breaking one →
     `invalid_blocks`, nothing sent;
   - a button with a `url`, any other element (selects, date pickers, overflow…) and a button's `confirm` are
@@ -300,9 +303,21 @@ The methods (Slack's cut for v1). Ids are the same opaque ids as the native API,
     sidecar seals it); there is no second click.
 
   `chat.update` on one of your cards changes the request and closes the card if it is still open (usually
-  the seal has closed it already, and it is only the edit). An `actions` block in `chat.update` is
-  `invalid_blocks`, on a card or on any message. A card posted through the native API or the MCP also sends
-  its click here, with `action_id` = the option's id, `block_id: 'approval'` and no `value`.
+  the seal has closed it already, and it is only the edit). With an `actions` block, on one of your cards:
+  - the card is still open (nobody answered) and the buttons give the same options (id, label and style, in
+    order): the request is edited and the card stays open; new `action_id`, `block_id` or `value` replace the
+    ones kept for the click;
+  - otherwise (answered, closed, or other options): the card is closed if still open (an answer is never
+    hidden) and a **new card** is posted with the request and buttons of the call, in the same place (the same
+    thread, or the conversation's root). The old card is not edited. This is how a second person approves:
+    update the card after the first answer, with the same buttons.
+
+  The first card's `ts` then stands for the newest card of the chain: a click on any card of it comes with
+  `container.message_ts` = that first `ts`, and `chat.update` or the `response_url` on that `ts` (or on any
+  card of the chain) act on the newest card. `chat.update` answers the `ts` you passed, with the newest card
+  in `message`. `chat.delete` acts on the literal `ts`. On any other message an `actions` block is
+  `invalid_blocks`. A card posted through the native API or the MCP also sends its click here, with
+  `action_id` = the option's id, `block_id: 'approval'` and no `value`.
 - **Reactions.** `name` is a Slack emoji name (the iamcal set Slack uses, `thumbsup`/`+1`,
   `wave::skin-tone-3`) or the emoji itself. An unknown name is `invalid_name`; adding a reaction the agent
   already has is `already_reacted`; removing one it does not have is `no_reaction`. A read shows a
@@ -333,6 +348,11 @@ The methods (Slack's cut for v1). Ids are the same opaque ids as the native API,
   true for agents. `deleted` is always false, and there is never an `email`.
 - **Answers.** HTTP 200 `{ ok }`, except the limit: HTTP 429 with `Retry-After`, which the Slack SDKs wait
   out. The upload and download URLs answer with HTTP status codes, as a file host does.
+- **Fixed Slack domains.** An app that checks Slack's domains in its code must also accept the sidecar's
+  addresses: the `response_url` is on this listener (`<api.json url>/slack/response/…`, not
+  `https://hooks.slack.com`), and so is the `upload_url` of upload v2 (not `files.slack.com`). A button whose
+  click opens a form (`views.open`) shows on the card and its click arrives, but the form does not open
+  (`views.*` is under "Not supported", in Socket Mode below).
 
 Node verified: `@slack/web-api` 8.3.0.
 
@@ -380,9 +400,10 @@ at once are fine: every event goes to each of them.
 - **`respond()` and `response_url`.** The `response_url` is on this listener
   (`<api.json url>/slack/response/…`), valid for 30 minutes and 5 calls, with no token: the URL is the
   credential, so keep it out of your logs. Only `replace_original: true` with `text` and/or `blocks` is
-  supported: it takes the `chat.update` path above (changes the request; closes the card if still open).
-  Without `replace_original`, or with `delete_original` → HTTP 400 `invalid_arguments`; an `actions` block →
-  400 `invalid_blocks`; an unknown, expired or used-up URL → 404 `expired_url`.
+  supported: it takes the `chat.update` path above (changes the request; closes the card if still open; with
+  an `actions` block, edits the open card or posts a new one in its place). Without `replace_original`, or
+  with `delete_original` → HTTP 400 `invalid_arguments`; an unknown, expired or used-up URL → 404
+  `expired_url`.
 - **Slash commands.** A person's `/` command to your app comes as a `slash_commands` envelope (below).
 - **Not supported:** `views.*` (modals, App Home), ephemeral messages (`response_type: 'ephemeral'`,
   `chat.postEphemeral`), selects and other inputs, `trigger_id` (sent, opaque, opens nothing).
@@ -482,7 +503,7 @@ const { structuredContent } = await mcp.callTool({ name: 'wait_for_mention', arg
 | `react` | `conversation`, `message` (the `ts`), `emoji` (the character) | `{ changed }` |
 | `get_person` | `id` (`U…`) | the person |
 | `wait_for_mention` | `timeout_s?`, `after?` (a cursor) | `{ mention: { conversation, message }, cursor }`, `{ timedOut: true, cursor }` or `{ resync: true, cursor }` |
-| `request_approval` | `conversation`, `text`, `options` (1–3 `{ id, label, style? }`), `thread?`, `mentions?`, `markdown?` (default `true`) | the card (a message with `approval`) |
+| `request_approval` | `conversation`, `text`, `options` (1–25 `{ id, label, style? }`), `thread?`, `mentions?`, `markdown?` (default `true`) | the card (a message with `approval`) |
 | `wait_for_approval` | `conversation`, `id` (the card's `ts`), `timeout_s?` | `{ conversation, id, approval }` once answered or closed, or `{ conversation, id, timedOut: true }` |
 | `close_approval` | `conversation`, `id`, `text?`, `markdown?` | `{ conversation, id, approval }` — `closed`, or `answered` |
 | `set_panel` | `conversation`, `text`, `title?`, `markdown?` (default `true`) | `{ conversation, pending: true }` |

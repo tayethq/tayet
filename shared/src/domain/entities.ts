@@ -230,7 +230,7 @@ export type UnsupportedShape = { msgtype?: string; eventType: string }
 // true-later — the next consult (next access/boot) corrects it via import.
 // ADR-091: an approval card — a request an agent puts to the people of a conversation. `text`
 // is the plain fallback, `request` the formatted request (the same RichDoc as a text message), `options`
-// the card's ORIGINAL choices (an edit never changes them; 1 to 3, at most one 'primary'), `state` what
+// the card's ORIGINAL choices (an edit never changes them; 1 to 25, at most one 'primary'), `state` what
 // the product aggregated from the people's answers (never text the agent wrote — P6). The answer itself
 // is never a Message: it folds into the card.
 export type MessageBody =

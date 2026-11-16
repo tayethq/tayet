@@ -1,3 +1,5 @@
+import { afterAll } from 'vitest'
+
 // Vitest global setup — runs once per test file, inside that file's environment (node or jsdom).
 // Purpose: make the real TipTap/ProseMirror editor survive jsdom, which has no layout engine.
 // Product code is untouched; these are ambient environment shims for the test host only.
@@ -37,4 +39,17 @@ if (typeof Element !== 'undefined') {
     Range.prototype.getClientRects = emptyRectList
     Range.prototype.getBoundingClientRect = zeroRect
   }
+}
+
+// @tiptap/react does not destroy an editor on unmount: it schedules `editor.destroy()` on a 1 ms
+// setTimeout (EditorInstanceManager.scheduleDestroy). After the last test's cleanup that timer can
+// still be pending when the file's jsdom environment is torn down, and the destroy then throws
+// "window is not defined" as an unhandled error (public CI run 43862011014). This hook runs after
+// every afterAll of the test file (sequence.hooks "stack": setup hooks are registered first, so they
+// run last) and waits one 1 ms timer: Node fires timers of equal duration in insertion order, so every
+// destroy the file's unmounts scheduled has finished before the environment goes away. The real
+// setTimeout is captured here, before any test can install fake timers.
+if (typeof Element !== 'undefined') {
+  const realSetTimeout = globalThis.setTimeout
+  afterAll(() => new Promise<void>((resolve) => realSetTimeout(resolve, 1)))
 }

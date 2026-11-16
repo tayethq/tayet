@@ -95,6 +95,7 @@ The documents themselves live in the private development repository.
 - ADR-095 — Deploy parametrizado por domínio: um domínio base por deployment, cinco hosts derivados, valor persistido e imutável (Aceito)
 - ADR-096 — Export de dados: formato aberto em pasta e export por pessoa no app (Aceito)
 - ADR-100 — A conversa aberta é lida conforme as mensagens chegam: recibo na chegada com a conversa à vista, na thread aberta e na volta da aba (Aceito)
+- ADR-101 — Cartão de aprovação com até 25 opções e edição com botões pela camada Slack (Aceito)
 
 ## Plans
 
@@ -134,4 +135,4 @@ The documents themselves live in the private development repository.
 
 ---
 
-86 architecture decision records, 33 plans, tree f3c3e737e49fd56303193a2b15afbeea5a051d75.
+87 architecture decision records, 33 plans, tree 8cb9dc2eed56ec59795d88fe1557a2196e79005b.

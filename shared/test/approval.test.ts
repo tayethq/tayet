@@ -135,10 +135,10 @@ describe('approval card — reading the block', () => {
     expect(options).toEqual([{ id: 'a', label: 'A', style: 'primary' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }])
   })
 
-  it('more than 3 options → malformed', () => {
-    const four = [1, 2, 3, 4].map((n) => ({ id: `o${n}`, label: `O${n}` }))
-    expect(readApprovalOptions(cardContent({ options: four }))).toBeUndefined()
-    expect(readApprovalOptions(cardContent({ options: four.slice(0, 3) }))).toHaveLength(3)
+  it('25 options are accepted; 26 → malformed', () => {
+    const many = Array.from({ length: 26 }, (_, i) => ({ id: `o${i + 1}`, label: `O${i + 1}` }))
+    expect(readApprovalOptions(cardContent({ options: many }))).toBeUndefined()
+    expect(readApprovalOptions(cardContent({ options: many.slice(0, 25) }))).toEqual(many.slice(0, 25))
   })
 
   it('a 75-character label is accepted (characters, not UTF-16 units)', () => {

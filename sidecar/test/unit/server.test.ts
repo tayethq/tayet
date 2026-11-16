@@ -794,7 +794,7 @@ describe('write routes: approval cards (A3-3)', () => {
     for (const options of [
       undefined,
       [],
-      [o('a'), o('b'), o('c'), o('d')],
+      Array.from({ length: 26 }, (_, n) => o(`o${n}`)),
       [o('A')],
       [o('a b')],
       [o('x'.repeat(33))],
@@ -813,8 +813,12 @@ describe('write routes: approval cards (A3-3)', () => {
     // 75 characters (by code point) and 32-character ids are the limits, not past them.
     const edge = await send(port, path, { method: 'POST', ...json({ text: 'x', options: [o('x'.repeat(32), 'ç'.repeat(75))] }) })
     expect(edge.status).toBe(200)
+    // 25 options are the limit (26 is refused above).
+    const many = Array.from({ length: 25 }, (_, n) => o(`o${n}`))
+    expect((await send(port, path, { method: 'POST', ...json({ text: 'x', options: many }) })).status).toBe(200)
+    expect(a.calls.at(-1)).toEqual(['request', 'CAAAAAAAAAA', { text: 'x', options: many }])
     expect((await send(port, path, { method: 'POST', ...json({ text: 'x', options: [o('a')], replyTo: '1.1' }) })).status).toBe(400)
-    expect(a.calls).toHaveLength(1)
+    expect(a.calls).toHaveLength(2)
   })
 
   it('an id shape in a label is refused BEFORE the send (500 internal, leak-blocked, facade untouched)', async () => {

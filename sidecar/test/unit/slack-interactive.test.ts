@@ -184,6 +184,37 @@ describe('block_actions — the envelope', () => {
   })
 })
 
+describe('block_actions — a card of a chain', () => {
+  it('the click on the 2nd and 3rd cards comes with container.message_ts = the origin; message is the card answered; its response_url acts on the live card', async () => {
+    await start()
+    const s = await sock()
+    const origin = await card()
+    answer(origin, 'b1')
+    const first = await s.next((x) => x.type === 'interactive')
+    expect(payloadOf(first).container).toMatchObject({ message_ts: origin })
+    s.send({ envelope_id: first.envelope_id })
+    const blocks = (n: number) => [{ type: 'actions', block_id: 'release', elements: [button('Aprovar', { action_id: `Approve.${n}` }), button('Rejeitar', { action_id: `Reject.${n}` })] }]
+    const second = ((await call(h!.client(), 'chat.update', { channel: GENERAL.id, ts: origin, text: 'Segunda?', blocks: blocks(2) })).message as { ts: string }).ts
+    answer(second, 'b2')
+    const click2 = await s.next((x) => x.type === 'interactive' && x.envelope_id !== first.envelope_id)
+    s.send({ envelope_id: click2.envelope_id })
+    const p2 = payloadOf(click2)
+    expect(p2.container).toEqual({ type: 'message', message_ts: origin, channel_id: GENERAL.id, is_ephemeral: false })
+    expect(p2.message).toMatchObject({ ts: second, text: 'Segunda?' })
+    expect((p2.actions as Array<Record<string, unknown>>)[0]).toMatchObject({ action_id: 'Reject.2', block_id: 'release' })
+    expect(idLeaks(p2)).toEqual([])
+    const third = ((await call(h!.client(), 'chat.update', { channel: GENERAL.id, ts: origin, text: 'Terceira?', blocks: blocks(3) })).message as { ts: string }).ts
+    answer(third, 'b1')
+    const click3 = await s.next((x) => x.type === 'interactive' && x.envelope_id !== first.envelope_id && x.envelope_id !== click2.envelope_id)
+    s.send({ envelope_id: click3.envelope_id })
+    expect(payloadOf(click3).container).toMatchObject({ message_ts: origin })
+    // The 2nd card's response_url (an older card of the chain) acts on the live card (the 3rd).
+    const res = await fetch(p2.response_url as string, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ replace_original: true, text: 'Fim' }) })
+    expect(res.status).toBe(200)
+    expect(h!.world.calls.filter((c) => c.op === 'edit')).toEqual([expect.objectContaining({ ts: third, text: 'Fim' })])
+  })
+})
+
 describe('response_url', () => {
   let clock = 1_000_000
   const startClocked = () => start({ now: () => clock })
@@ -213,13 +244,25 @@ describe('response_url', () => {
     expect(approvals.calls.filter((c) => c.op === 'close')).toEqual([{ op: 'close', conversation: GENERAL.id, ts }])
   })
 
-  it('no replace_original, or a delete_original → 400 invalid_arguments; an actions block → 400 invalid_blocks', async () => {
+  it('no replace_original, or a delete_original → 400 invalid_arguments', async () => {
     await startClocked()
     const { url } = await urlOfClick()
     expect(await post(url, { text: 'x' })).toEqual({ status: 400, body: { ok: false, error: 'invalid_arguments' } })
     expect(await post(url, { replace_original: true, delete_original: true, text: 'x' })).toEqual({ status: 400, body: { ok: false, error: 'invalid_arguments' } })
-    expect(await post(url, { replace_original: true, text: 'x', blocks: [{ type: 'actions', elements: [button('Sim')] }] })).toEqual({ status: 400, body: { ok: false, error: 'invalid_blocks' } })
     expect(h!.world.calls.filter((c) => c.op === 'edit')).toEqual([])
+  })
+
+  it('replace_original with an actions block → the chat.update path: an answered card gets a new card in its place', async () => {
+    await startClocked()
+    const { url, ts } = await urlOfClick()
+    const blocks = [{ type: 'actions', block_id: 'release', elements: [button('Aprovar', { action_id: 'Approve.Release', style: 'primary' }), button('Rejeitar', { action_id: 'Reject.Release', style: 'danger' })] }]
+    expect(await post(url, { replace_original: true, text: 'Segunda aprovação?', blocks })).toEqual({ status: 200, body: { ok: true } })
+    const requests = approvals.calls.filter((c) => c.op === 'request')
+    expect(requests).toHaveLength(2)
+    expect(requests[1]).toMatchObject({ text: 'Segunda aprovação?', options: [{ id: 'b1' }, { id: 'b2' }] })
+    expect(h!.world.calls.filter((c) => c.op === 'edit')).toEqual([])
+    const aliases = (JSON.parse(await readFile(file, 'utf8')) as { aliases: Array<{ origin: string }> }).aliases
+    expect(aliases.map((a) => a.origin)).toEqual([ts])
   })
 
   it('an unknown ticket → 404 expired_url', async () => {

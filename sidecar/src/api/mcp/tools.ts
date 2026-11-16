@@ -14,6 +14,7 @@ import { z } from 'zod'
 import { parseCompose } from '@tayet/shared'
 import { PAGE_MAX, ReadError, type ReadFacade } from '../../core/read'
 import { WriteError, type WriteFacade } from '../../core/write'
+import { APPROVAL_MAX_OPTIONS } from '../../core/approval-limits'
 import { approvalOptionsOf, type ApprovalFacade } from '../../core/approvals'
 import { PANEL_TEXT_MAX, type PanelFacade } from '../../core/panels'
 import { validateCommands, type CommandsFacade } from '../../core/commands'
@@ -134,7 +135,7 @@ export const TOOL_SPECS = {
   },
   request_approval: {
     description:
-      'Ask the people of a conversation to choose one of 1–3 options (an approval card). Answers the card; its `id` (ts) is what wait_for_approval and close_approval take. ' +
+      'Ask the people of a conversation to choose one of 1–25 options (an approval card). Answers the card; its `id` (ts) is what wait_for_approval and close_approval take. ' +
       'Only a person (member or guest) can answer, and only the first valid answer counts; the card then closes by itself.',
     inputSchema: z.object({
       conversation,
@@ -148,8 +149,8 @@ export const TOOL_SPECS = {
           }),
         )
         .min(1)
-        .max(3)
-        .describe('The options, 1 to 3.'),
+        .max(APPROVAL_MAX_OPTIONS)
+        .describe('The options, 1 to 25.'),
       thread: ts('The ts of the first message of a thread: ask in that thread.').optional(),
       mentions: z.array(z.string().min(1)).max(MENTIONS_MAX).optional().describe('People to mention (U… ids), at most 100.'),
       markdown: z.boolean().optional().describe('Render text as Markdown (default true). Set false to send the text literally.'),

@@ -79,7 +79,7 @@ describe('readActions — the rules (pure)', () => {
   })
 
   it.each([
-    ['four buttons', [actions([button('1'), button('2'), button('3'), button('4')])]],
+    ['26 buttons', [actions(Array.from({ length: 26 }, (_, i) => button(String(i + 1))))]],
     ['a second actions block', [actions([button('1')]), actions([button('2')])]],
     ['an empty label', [actions([button('  ')])]],
     ['a label over 75 characters', [actions([button('x'.repeat(76))])]],
@@ -91,9 +91,15 @@ describe('readActions — the rules (pure)', () => {
     expect(() => readActions(blocks)).toThrow('invalid_blocks')
   })
 
-  it('the limits themselves pass: 75 characters, 255, 2,000, three buttons', () => {
-    const r = readActions([actions([button('x'.repeat(75), { action_id: 'a'.repeat(255), value: 'v'.repeat(2000) }), button('2'), button('3')], { block_id: 'b'.repeat(255) })])
-    expect(r.card?.buttons).toHaveLength(3)
+  it('the limits themselves pass: 75 characters, 255, 2,000, 25 buttons', () => {
+    const r = readActions([actions([button('x'.repeat(75), { action_id: 'a'.repeat(255), value: 'v'.repeat(2000) }), ...Array.from({ length: 24 }, (_, i) => button(String(i + 2)))], { block_id: 'b'.repeat(255) })])
+    expect(r.card?.buttons).toHaveLength(25)
+  })
+
+  it('25 buttons with an action_id off the rule → positional ids b1…b25', () => {
+    const r = readActions([actions(Array.from({ length: 25 }, (_, i) => button(`B${i + 1}`, { action_id: `Act.${i + 1}` })))])
+    expect(r.card?.buttons.map((b) => b.option.id)).toEqual(Array.from({ length: 25 }, (_, i) => `b${i + 1}`))
+    expect(r.card?.buttons.at(-1)?.action_id).toBe('Act.25')
   })
 })
 
@@ -120,6 +126,7 @@ describe('chat.postMessage with actions → the card', () => {
     expect(h.world.calls.filter((c) => c.op === 'post')).toEqual([])
     // The answer came after the write: the file already holds the card.
     expect(await saved()).toEqual({
+      aliases: [],
       cards: [
         {
           conversation: GENERAL.id,
@@ -133,6 +140,14 @@ describe('chat.postMessage with actions → the card', () => {
         },
       ],
     })
+  })
+
+  it('25 buttons: the card carries 25 options, positional up to b25, and the file keeps every action_id', async () => {
+    const res = await post({ text: 'Qual ambiente?', blocks: [actions(Array.from({ length: 25 }, (_, i) => button(`Env ${i + 1}`, { action_id: `env.${i + 1}`, value: `v${i + 1}` })))] })
+    expect(requests()[0]?.options).toEqual(Array.from({ length: 25 }, (_, i) => ({ id: `b${i + 1}`, label: `Env ${i + 1}` })))
+    const entry = (await saved()).cards.find((c) => c.id === res.ts)
+    expect(entry?.actions).toHaveLength(25)
+    expect((entry?.actions as unknown[] | undefined)?.at(-1)).toEqual({ option: 'b25', action_id: 'env.25', value: 'v25' })
   })
 
   it('no text: the request is the other blocks flattened; thread_ts and mentions as in a message', async () => {
@@ -176,7 +191,7 @@ describe('chat.postMessage with actions → the card', () => {
 
   it('refusals before any effect: invalid_blocks; no request → no_text; an unknown thread → thread_not_found', async () => {
     const c = h.client()
-    expect(await refusal(c, 'chat.postMessage', { channel: GENERAL.id, text: 'x', blocks: [actions([button('1'), button('2'), button('3'), button('4')])] })).toBe('invalid_blocks')
+    expect(await refusal(c, 'chat.postMessage', { channel: GENERAL.id, text: 'x', blocks: [actions(Array.from({ length: 26 }, (_, i) => button(String(i + 1))))] })).toBe('invalid_blocks')
     expect(await refusal(c, 'chat.postMessage', { channel: GENERAL.id, text: 'x', blocks: [actions([button('1')]), actions([button('2')])] })).toBe('invalid_blocks')
     expect(await refusal(c, 'chat.postMessage', { channel: GENERAL.id, blocks: [actions([button('1')])] })).toBe('no_text')
     expect(await refusal(c, 'chat.postMessage', { channel: GENERAL.id, text: 'x', thread_ts: '1.000000', blocks: [actions([button('1')])] })).toBe('thread_not_found')
@@ -248,13 +263,13 @@ describe('chat.update on a card', () => {
     expect(approvals.calls).toEqual([])
   })
 
-  it('an actions block → invalid_blocks, on a card and on an ordinary message; nothing edited', async () => {
-    const ts = await card()
+  it('an actions block on a message that is not one of the agent\'s cards → invalid_blocks; nothing edited', async () => {
     const plain = (await post({ text: 'comum' })).ts as string
-    for (const target of [ts, plain]) {
-      expect(await refusal(h.client(), 'chat.update', { channel: GENERAL.id, ts: target, text: 'x', blocks: [actions([button('Sim')])] })).toBe('invalid_blocks')
-    }
+    expect(await refusal(h.client(), 'chat.update', { channel: GENERAL.id, ts: plain, text: 'x', blocks: [actions([button('Sim')])] })).toBe('invalid_blocks')
+    // Another person's message: invalid_blocks too, before the ownership error.
+    expect(await refusal(h.client(), 'chat.update', { channel: GENERAL.id, ts: '1730000100.000100', text: 'x', blocks: [actions([button('Sim')])] })).toBe('invalid_blocks')
     expect(h.world.calls.filter((c) => c.op === 'edit')).toEqual([])
+    expect(requests()).toHaveLength(0)
   })
 
   it('an ordinary message: as before (edit, no close)', async () => {
@@ -262,5 +277,128 @@ describe('chat.update on a card', () => {
     await call(h.client(), 'chat.update', { channel: GENERAL.id, ts: plain, text: 'editada' })
     expect(h.world.calls.filter((c) => c.op === 'edit')).toEqual([{ op: 'edit', conversation: GENERAL.id, ts: plain, text: 'editada' }])
     expect(approvals.calls.filter((c) => c.op === 'close')).toEqual([])
+  })
+})
+
+describe('chat.update with buttons on a card (chains)', () => {
+  // Positional ids (action_ids off the option rule): new action_ids keep the same options.
+  const yesNo = (n: number, over: Record<string, unknown> = {}) => [actions([button('Sim', { action_id: `Yes.${n}`, value: `y${n}` }), button('Não', { action_id: `No.${n}` })], over)]
+  const origin = async (extra: Record<string, unknown> = {}): Promise<string> => (await post({ text: 'Publicar?', blocks: yesNo(1, { block_id: 'release' }), ...extra })).ts as string
+  const update = (ts: string, args: Record<string, unknown>) => call(h.client(), 'chat.update', { channel: GENERAL.id, ts, ...args })
+  const stateOf = async (ts: string) => (await approvals.state(GENERAL.id, ts)).approval.state
+  const aliases = async () => (JSON.parse(await readFile(file, 'utf8')) as { aliases: Array<Record<string, unknown>> }).aliases
+
+  it('open card, same options → the request edited in place, the card stays open; new action_id/value/block_id swap its entry', async () => {
+    const ts = await origin()
+    const res = await update(ts, { text: 'Publicar *já*?', blocks: yesNo(2, { block_id: 'release-2' }) })
+    expect(idLeaks(res)).toEqual([])
+    expect(res).toMatchObject({ channel: GENERAL.id, ts, message: { ts, text: 'Publicar *já*?' } })
+    expect(h.world.calls.filter((c) => c.op === 'edit')).toEqual([expect.objectContaining({ op: 'edit', conversation: GENERAL.id, ts, text: 'Publicar já?' })])
+    expect(requests()).toHaveLength(1)
+    expect(approvals.calls.filter((c) => c.op === 'close')).toEqual([])
+    expect(await stateOf(ts)).toBe('open')
+    const entry = (await saved()).cards.find((c) => c.id === ts)
+    expect(entry).toMatchObject({ block_id: 'release-2', actions: [{ option: 'b1', action_id: 'Yes.2', value: 'y2' }, { option: 'b2', action_id: 'No.2' }] })
+    expect(await aliases()).toEqual([])
+  })
+
+  it('open card, other options → closed, and a new card in its place; the answer keeps the ts passed, the new card in message', async () => {
+    const ts = await origin()
+    const res = await update(ts, { text: 'E agora?', blocks: [actions([button('Agora', { action_id: 'now' }), button('Depois', { action_id: 'later' })])] })
+    expect(idLeaks(res)).toEqual([])
+    expect(approvals.calls.filter((c) => c.op === 'close')).toEqual([{ op: 'close', conversation: GENERAL.id, ts }])
+    expect(requests()).toHaveLength(2)
+    const second = requests()[1]
+    expect(second).toEqual({ op: 'request', conversation: GENERAL.id, text: 'E agora?', options: [{ id: 'now', label: 'Agora' }, { id: 'later', label: 'Depois' }] })
+    const live = (res.message as { ts: string }).ts
+    expect(res).toMatchObject({ channel: GENERAL.id, ts, text: 'E agora?' })
+    expect(live).not.toBe(ts)
+    // The old card is not edited; its entry left with the layer's close; the new one is in the file.
+    expect(h.world.calls.filter((c) => c.op === 'edit')).toEqual([])
+    expect((await saved()).cards.map((c) => c.id)).toEqual([live])
+    expect(await aliases()).toEqual([{ conversation: GENERAL.id, origin: ts, live, at: expect.any(Number) as number }])
+  })
+
+  it('answered card, same options → no close, a new card; the answered entry stays for its click', async () => {
+    const ts = await origin()
+    approvals.answer(GENERAL.id, ts, 'b1', ALICE.id, 1_732_000_000_000)
+    const res = await update(ts, { text: 'Segunda aprovação?', blocks: yesNo(1, { block_id: 'release' }) })
+    expect(approvals.calls.filter((c) => c.op === 'close')).toEqual([])
+    expect(requests()).toHaveLength(2)
+    const live = (res.message as { ts: string }).ts
+    expect((await saved()).cards.map((c) => c.id).sort()).toEqual([ts, live].sort())
+    expect(await stateOf(ts)).toBe('answered')
+    expect(await stateOf(live)).toBe('open')
+  })
+
+  it('closed card with no answer → no close, a new card', async () => {
+    const ts = await origin()
+    await approvals.close(GENERAL.id, ts)
+    approvals.calls.length = 0
+    const res = await update(ts, { text: 'De novo?', blocks: yesNo(1) })
+    expect(approvals.calls.filter((c) => c.op === 'close')).toEqual([])
+    expect(requests()).toHaveLength(1)
+    expect((res.message as { ts: string }).ts).not.toBe(ts)
+  })
+
+  it('a card in a thread → the new card in the same thread', async () => {
+    const root = (await post({ text: 'raiz' })).ts as string
+    const ts = await origin({ thread_ts: root })
+    approvals.answer(GENERAL.id, ts, 'b1', ALICE.id, 1_732_000_000_000)
+    await update(ts, { text: 'De novo?', blocks: yesNo(1) })
+    expect(requests()[1]).toMatchObject({ thread: root })
+  })
+
+  it('a chain of three (origin → 2nd → 3rd): chat.update on the origin or on the 2nd acts on the live card; text only closes it', async () => {
+    const ts = await origin()
+    approvals.answer(GENERAL.id, ts, 'b1', ALICE.id, 1_732_000_000_000)
+    const second = ((await update(ts, { text: 'Segunda?', blocks: yesNo(1) })).message as { ts: string }).ts
+    approvals.answer(GENERAL.id, second, 'b2', ALICE.id, 1_732_000_000_001)
+    // Through the 2nd card (any card of the chain): a 3rd card, in the origin's place.
+    const third = ((await update(second, { text: 'Terceira?', blocks: yesNo(1) })).message as { ts: string }).ts
+    expect(new Set([ts, second, third]).size).toBe(3)
+    expect((await aliases()).map((a) => [a.origin, a.live])).toEqual([
+      [ts, second],
+      [ts, third],
+    ])
+    // Through the origin, no actions: the live card is edited and closed.
+    const res = await update(ts, { text: 'Encerrado' })
+    expect(res).toMatchObject({ ts, message: { ts: third, text: 'Encerrado' } })
+    expect(h.world.calls.filter((c) => c.op === 'edit')).toEqual([expect.objectContaining({ ts: third, text: 'Encerrado' })])
+    expect(approvals.calls.filter((c) => c.op === 'close')).toEqual([{ op: 'close', conversation: GENERAL.id, ts: third }])
+    expect(await stateOf(ts)).toBe('answered')
+    expect(await stateOf(second)).toBe('answered')
+  })
+
+  it('chat.delete on the origin acts on the literal ts; the chain still answers on it', async () => {
+    const ts = await origin()
+    approvals.answer(GENERAL.id, ts, 'b1', ALICE.id, 1_732_000_000_000)
+    const live = ((await update(ts, { text: 'Segunda?', blocks: yesNo(1) })).message as { ts: string }).ts
+    await call(h.client(), 'chat.delete', { channel: GENERAL.id, ts })
+    expect(h.world.calls.filter((c) => c.op === 'remove')).toEqual([{ op: 'remove', conversation: GENERAL.id, ts }])
+    // The live card is untouched; the origin's ts still reaches it (the thread comes from the live card).
+    await update(ts, { text: 'Encerrado' })
+    expect(h.world.calls.filter((c) => c.op === 'edit')).toEqual([expect.objectContaining({ ts: live })])
+  })
+
+  it('preflight before any effect: an id shape in a new value → internal_error, nothing closed or sent', async () => {
+    const ts = await origin()
+    const id = '@u-abcdefghijkl:chat.example.com'
+    expect(await refusal(h.client(), 'chat.update', { channel: GENERAL.id, ts, text: 'x', blocks: [actions([button('Ok', { value: id })])] })).toBe('internal_error')
+    expect(approvals.calls.filter((c) => c.op === 'close')).toEqual([])
+    expect(requests()).toHaveLength(1)
+    expect(h.world.calls.filter((c) => c.op === 'edit')).toEqual([])
+  })
+
+  it('the chain is read back from the file after the layer restarts', async () => {
+    const ts = await origin()
+    approvals.answer(GENERAL.id, ts, 'b1', ALICE.id, 1_732_000_000_000)
+    const live = ((await update(ts, { text: 'Segunda?', blocks: yesNo(1) })).message as { ts: string }).ts
+    const world = h.world
+    await h.close()
+    h = await startSlack({ world, approvals, cardsFile: file })
+    const res = await update(ts, { text: 'Encerrado' })
+    expect(res).toMatchObject({ ts, message: { ts: live } })
+    expect(world.calls.filter((c) => c.op === 'edit')).toEqual([expect.objectContaining({ ts: live })])
   })
 })

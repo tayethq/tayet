@@ -218,7 +218,7 @@ export interface ApiPostMessage {
 }
 
 // POST /v1/conversations/:id/approvals — an approval card: `text` is the request (`markdown` as in the
-// message POST), `options` 1–3 (ApiApprovalOption; more than one `primary` is refused, never demoted).
+// message POST), `options` 1–25 (ApiApprovalOption; more than one `primary` is refused, never demoted).
 export interface ApiPostApproval {
   text: string
   markdown?: boolean

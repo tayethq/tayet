@@ -9,13 +9,20 @@
 //   only the lock holder runs the API, so only it writes. Unreadable → an empty set and one line.
 // - An entry leaves when a socket acks the card's `block_actions`, or when the layer itself closes the card
 //   (chat.update / response_url). At most 500: the oldest leaves first, with one line.
-// - Lines carry no id: `slack-cards-unreadable`, `slack-card-evicted`, `slack-cards-file-error`.
+// - The chains (`aliases`, a list of its own in the same file): a chat.update with buttons that cannot edit
+//   the card in place posts a new card, and the first card's `ts` (the chain's origin) then stands for the
+//   newest one (the live card). One row per card the layer posted this way: `{ conversation, origin, live,
+//   at }`, API tokens only; the live card of an origin is its newest row. A row never leaves on a click's ack.
+//   At most 500: the oldest leaves first, with one line. A file without the list reads as an empty one.
+// - Lines carry no id: `slack-cards-unreadable`, `slack-card-evicted`, `slack-alias-evicted`,
+//   `slack-cards-file-error`.
 import { readFile } from 'node:fs/promises'
 import { writeJsonAtomic } from '../../store'
 
 type Log = (line: Record<string, unknown>) => void
 
 export const SLACK_CARDS_MAX = 500
+export const SLACK_ALIASES_MAX = 500
 
 export interface CardAction {
   option: string
@@ -31,7 +38,20 @@ export interface SlackCard {
   at: number
 }
 
+// One card of a chain: `live` is a card the layer posted in place of `origin`'s chain.
+export interface CardAlias {
+  conversation: string
+  origin: string
+  live: string
+  at: number
+}
+
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+function aliasOf(v: unknown): CardAlias | undefined {
+  if (!isRecord(v) || typeof v.conversation !== 'string' || typeof v.origin !== 'string' || typeof v.live !== 'string' || typeof v.at !== 'number') return undefined
+  return { conversation: v.conversation, origin: v.origin, live: v.live, at: v.at }
+}
 
 function cardOf(v: unknown): SlackCard | undefined {
   if (!isRecord(v) || typeof v.conversation !== 'string' || typeof v.id !== 'string' || typeof v.block_id !== 'string' || typeof v.at !== 'number' || !Array.isArray(v.actions)) return undefined
@@ -48,6 +68,8 @@ const keyOf = (conversation: string, id: string): string => `${conversation} ${i
 export class SlackCards {
   // Insertion order = age (the oldest first).
   private readonly cards = new Map<string, SlackCard>()
+  // Insertion order = age (the oldest first).
+  private readonly aliases: CardAlias[] = []
   private saving: Promise<void> = Promise.resolve()
   private loading: Promise<void> | null = null
 
@@ -56,6 +78,7 @@ export class SlackCards {
     private readonly file: string | undefined,
     private readonly log: Log,
     private readonly max = SLACK_CARDS_MAX,
+    private readonly aliasMax = SLACK_ALIASES_MAX,
   ) {}
 
   // Once; every other call waits for it.
@@ -80,6 +103,13 @@ export class SlackCards {
     for (const item of raw.cards) {
       const card = cardOf(item)
       if (card !== undefined) this.cards.set(keyOf(card.conversation, card.id), card)
+    }
+    // A file written before the chains has no list: an empty one.
+    if (Array.isArray(raw.aliases)) {
+      for (const item of raw.aliases) {
+        const alias = aliasOf(item)
+        if (alias !== undefined) this.aliases.push(alias)
+      }
     }
   }
 
@@ -109,6 +139,40 @@ export class SlackCards {
     await this.persist()
   }
 
+  get aliasCount(): number {
+    return this.aliases.length
+  }
+
+  // The origin of the chain a card belongs to; a card in no chain is its own origin. Call after load().
+  originOf(conversation: string, ts: string): string {
+    for (let i = this.aliases.length - 1; i >= 0; i--) {
+      const a = this.aliases[i] as CardAlias
+      if (a.conversation === conversation && a.live === ts) return a.origin
+    }
+    return ts
+  }
+
+  // The live card of the chain `ts` belongs to (the origin or any card of the chain); `ts` itself otherwise.
+  liveOf(conversation: string, ts: string): string {
+    const origin = this.originOf(conversation, ts)
+    for (let i = this.aliases.length - 1; i >= 0; i--) {
+      const a = this.aliases[i] as CardAlias
+      if (a.conversation === conversation && a.origin === origin) return a.live
+    }
+    return ts
+  }
+
+  // On disk before it resolves (the update answers after it).
+  async alias(alias: CardAlias): Promise<void> {
+    await this.load()
+    this.aliases.push({ ...alias })
+    while (this.aliases.length > this.aliasMax) {
+      this.aliases.shift()
+      this.log({ evt: 'slack-alias-evicted' })
+    }
+    await this.persist()
+  }
+
   saved(): Promise<void> {
     return this.saving
   }
@@ -116,7 +180,7 @@ export class SlackCards {
   private persist(): Promise<void> {
     const file = this.file
     if (file === undefined) return this.saving
-    this.saving = this.saving.then(() => writeJsonAtomic(file, { cards: [...this.cards.values()] })).catch(() => this.log({ evt: 'slack-cards-file-error' }))
+    this.saving = this.saving.then(() => writeJsonAtomic(file, { cards: [...this.cards.values()], aliases: [...this.aliases] })).catch(() => this.log({ evt: 'slack-cards-file-error' }))
     return this.saving
   }
 }

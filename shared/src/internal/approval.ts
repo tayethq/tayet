@@ -5,7 +5,7 @@ import type { ApprovalOption, ApprovalState, Timestamp } from '../domain'
 import { APPROVAL_BLOCK, APPROVAL_RESPONSE_BLOCK } from './product-events'
 import { brandUserId } from './protocol-ids'
 
-export const APPROVAL_MAX_OPTIONS = 3
+export const APPROVAL_MAX_OPTIONS = 25
 export const APPROVAL_LABEL_MAX = 75
 // An option's id (§0.3.16 item 12): the sidecar validates the same on write.
 export const APPROVAL_OPTION_ID = /^[a-z0-9_-]{1,32}$/
@@ -18,9 +18,10 @@ const localpartOf = (userId: string): string => userId.slice(1, userId.includes(
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 // Defensive read of the card's options (§0.3.16 item 12; the sidecar validates the same on write): 1 to
-// 3, `id` matching [a-z0-9_-]{1,32} and unique, `label` non-empty with at most 75 characters. An unknown
-// `style` is ignored (the option is secondary); a second `primary` is demoted to secondary. Anything
-// else → undefined: the card is malformed and the translator degrades it like an unknown type.
+// 25 (ADR-101 dec. 1), `id` matching [a-z0-9_-]{1,32} and unique, `label` non-empty with at most 75
+// characters. An unknown `style` is ignored (the option is secondary); a second `primary` is demoted to
+// secondary. Anything else → undefined: the card is malformed and the translator degrades it like an
+// unknown type.
 export function readApprovalOptions(content: Record<string, unknown>): ApprovalOption[] | undefined {
   const block = content[APPROVAL_BLOCK]
   if (!isRecord(block) || !Array.isArray(block.options)) return undefined

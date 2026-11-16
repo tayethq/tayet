@@ -74,7 +74,7 @@ export type McpWaitForMentionResult =
 
 // ── Approval cards (A3-3b; ADR-091, Proposto; PLANO-AGENTES §0.3.16 item 13) ──────────────────────
 
-// `markdown`: default true, as send_message. `options`: 1 to 3, `id` [a-z0-9_-]{1,32} unique, at most one
+// `markdown`: default true, as send_message. `options`: 1 to 25, `id` [a-z0-9_-]{1,32} unique, at most one
 // `primary` (the native POST's rules). Answers the card as a message (`approval.state: 'open'`).
 export interface McpRequestApprovalArgs {
   conversation: string
