@@ -1,0 +1,7 @@
+# Site institucional estático no apex (ADR-050) — overlay OPT-IN do compose.yaml.
+# O deploy.sh inclui este arquivo (`-f`) apenas quando ../../site existe; sem o mount, o
+# Caddy responde o .well-known normalmente e 404 no resto do apex (sem 5xx).
+services:
+  caddy:
+    volumes:
+      - ../../site:/srv/site:ro

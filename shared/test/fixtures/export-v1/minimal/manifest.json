@@ -1,0 +1,33 @@
+{
+  "format": "tayet-export",
+  "formatVersion": 1,
+  "scope": "person",
+  "createdAt": "2026-11-13T21:30:00.000Z",
+  "subject": "p1",
+  "people": [
+    {
+      "id": "p1",
+      "name": "Lia Souza",
+      "kind": "guest"
+    }
+  ],
+  "conversations": [
+    {
+      "id": "c1",
+      "file": "conversations/c1.json",
+      "name": "convidados",
+      "kind": "private",
+      "messages": 0,
+      "deleted": 0,
+      "attachments": 0,
+      "gaps": 0
+    }
+  ],
+  "totals": {
+    "conversations": 1,
+    "messages": 0,
+    "deleted": 0,
+    "attachments": 0,
+    "gaps": 0
+  }
+}

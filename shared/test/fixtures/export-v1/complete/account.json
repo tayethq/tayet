@@ -1,0 +1,28 @@
+{
+  "formatVersion": 1,
+  "profile": {
+    "fullName": "Marina Alves",
+    "nickname": "Mari",
+    "pronouns": "ela",
+    "note": "De férias até segunda.",
+    "jobTitle": "Produto",
+    "workEmail": "marina@vereda.example",
+    "avatar": "attachments/account/avatar.webp"
+  },
+  "accesses": [
+    {
+      "name": "Chrome no macOS",
+      "lastSeenAt": "2026-11-13T20:00:00.000Z",
+      "current": true
+    },
+    {
+      "name": "Safari no iPhone",
+      "current": false
+    }
+  ],
+  "agents": [
+    {
+      "person": "p2"
+    }
+  ]
+}

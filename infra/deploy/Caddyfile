@@ -1,0 +1,73 @@
+# Caddy — reverse proxy + TLS automático (ACME) do deployment de referência (ADR-046/048).
+# Cinco hosts. TLS é resolvido pelo Caddy automaticamente por host (Let's Encrypt) na
+# primeira subida com DNS apontando para o VPS (Fatia 3). Este arquivo é validável a
+# frio com `caddy validate` sem DNS (gate da Fatia 1).
+
+{$TAYET_DOMAIN} {
+    # ADR-023/046: o apex é comprometido com estes dois paths. JSON inline, estático.
+    handle /.well-known/matrix/server {
+        header Content-Type application/json
+        respond `{"m.server": "matrix.{$TAYET_DOMAIN}:443"}` 200
+    }
+    handle /.well-known/matrix/client {
+        header Content-Type application/json
+        # CORS exigido pela spec Matrix no well-known de client.
+        header Access-Control-Allow-Origin *
+        respond `{"m.homeserver": {"base_url": "https://matrix.{$TAYET_DOMAIN}"}}` 200
+    }
+    # Site institucional (ADR-050): catch-all estático servido do mount /srv/site (opt-in,
+    # compose.site.yaml; sem o mount o file_server responde 404, nunca 5xx). Os handles
+    # de well-known acima (paths específicos) ganham por especificidade; este handle sem
+    # matcher pega o resto. file_server puro — 404 real, SEM try_files/SPA-fallback (não é SPA).
+    handle {
+        root * /srv/site
+        file_server
+    }
+}
+
+chat.{$TAYET_DOMAIN} {
+    # Compressão (§8.16 do PLANO-RELEASE-PUBLICA): sem `encode`, o JS de 1,8 MB e o wasm de
+    # 5,6 MB iam crus a SP. Primeira diretiva: cobre o file_server E o proxy do escrow.
+    encode zstd gzip
+
+    # Escrow same-origin (ADR-046/047). handle_path STRIPPA /escrow — espelho exato
+    # do rewrite do proxy de dev do Vite (§0.4). NUNCA trocar por `handle`.
+    handle_path /escrow/* {
+        reverse_proxy escrow:8090
+    }
+    # ADR-087 dec. 2: descoberta do sidecar pela URL do produto. JSON inline, estático.
+    handle /.well-known/tayet/agent {
+        header Content-Type application/json
+        respond `{"server": "https://matrix.{$TAYET_DOMAIN}", "account": "/escrow"}` 200
+    }
+    handle {
+        root * /srv/app
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+matrix.{$TAYET_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy synapse:8008
+}
+
+auth.{$TAYET_DOMAIN} {
+    encode zstd gzip
+    # Fonte dos templates próprios do MAS (ADR-084 dec. 3); o resto vai ao MAS. handle_path
+    # STRIPPA /fonts; file_server puro, 404 real.
+    handle_path /fonts/* {
+        root * /srv/mas-templates/_generated/fonts
+        file_server
+    }
+    handle {
+        reverse_proxy mas:8080
+    }
+}
+
+login.{$TAYET_DOMAIN} {
+    # IdP do dogfood (ADR-048): stand-in OIDC do seam agnóstico. Host neutro por decisão
+    # — a implementação não vaza no hostname (extensão de P1). Só o browser (fluxo de
+    # autorização) e o MAS (que também alcança dex:5556 pela rede interna) o veem.
+    reverse_proxy dex:5556
+}

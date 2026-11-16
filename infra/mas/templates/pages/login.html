@@ -1,0 +1,185 @@
+{#
+Copyright 2024, 2025 New Vector Ltd.
+Copyright 2021-2024 The Matrix.org Foundation C.I.C.
+
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+Please see LICENSE files in the repository root for full details.
+
+Modified by Tayet (first on 2026-11-03, last on 2026-11-15): the choice of sign-in provider. The copy is
+literal. The password form stays behind `features.password_login` (on only in the dev stack); the
+names `csrf`/`username`/`password` are the contract of the headless sign-in the tests use
+(client/test/support/mint-oidc.ts and escrow/test/support/mint-oidc.ts).
+The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and infra/mas/NOTICE.md.
+-#}
+
+{% set tayet_page = true %}
+
+{% extends "base.html" %}
+
+{% from "components/idp_brand.html" import logo %}
+
+{% block tayet_style %}
+      .mas-page {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: var(--space-24) var(--space-16);
+      }
+      .mas-card {
+        width: 100%;
+        max-width: 400px;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-20);
+        padding: var(--space-24) var(--space-24) var(--space-20);
+        background: var(--color-surface-raised);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-overlay);
+      }
+      .mas-wordmark {
+        display: flex;
+        align-items: center;
+        gap: var(--space-8);
+        font-size: var(--font-size-title);
+        line-height: var(--font-line-height-title);
+        font-weight: var(--font-weight-medium);
+      }
+      .mas-wordmark__dot {
+        width: var(--space-12);
+        height: var(--space-12);
+        border-radius: var(--radius-full);
+        background: var(--color-accent);
+      }
+      .mas-heading { display: flex; flex-direction: column; gap: var(--space-8); }
+      .mas-heading h1 {
+        margin: 0;
+        font-size: var(--font-size-display);
+        line-height: var(--font-line-height-display);
+        font-weight: var(--font-weight-medium);
+      }
+      .mas-heading p, .mas-meta {
+        margin: 0;
+        color: var(--color-muted);
+      }
+      .mas-heading p { font-size: var(--font-size-body); line-height: var(--font-line-height-body); }
+      .mas-meta { font-size: var(--font-size-meta); line-height: var(--font-line-height-meta); }
+      .mas-stack { display: flex; flex-direction: column; gap: var(--space-12); }
+      .mas-button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: var(--space-12);
+        width: 100%;
+        min-height: var(--density-touch-floor);
+        padding: 0 var(--space-16);
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        color: var(--color-text);
+        font-family: var(--font-family-sans);
+        font-size: var(--font-size-ui);
+        line-height: var(--font-line-height-ui);
+        font-weight: var(--font-weight-medium);
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .mas-button:hover { background: var(--color-surface-raised); }
+      .mas-button:active { border-color: var(--color-border-strong); }
+      .mas-button:focus-visible, .mas-link:focus-visible, .mas-field input:focus-visible {
+        outline: 2px solid var(--color-accent);
+        outline-offset: 2px;
+      }
+      .mas-error { color: var(--color-danger); font-size: var(--font-size-ui); line-height: var(--font-line-height-ui); }
+      .cpd-form-field { display: flex; flex-direction: column; gap: var(--space-4); }
+      .cpd-form-label { font-size: var(--font-size-ui); line-height: var(--font-line-height-ui); font-weight: var(--font-weight-medium); }
+      .cpd-form-message { color: var(--color-danger); font-size: var(--font-size-meta); line-height: var(--font-line-height-meta); }
+      .mas-field input {
+        min-height: var(--density-touch-floor);
+        padding: 0 var(--space-12);
+        background: var(--color-surface);
+        border: 1px solid var(--color-border-strong);
+        border-radius: var(--radius-md);
+        color: var(--color-text);
+        font-family: var(--font-family-sans);
+        font-size: var(--font-size-ui);
+      }
+      .mas-link {
+        align-self: center;
+        color: var(--color-accent);
+        font-size: var(--font-size-ui);
+        line-height: var(--font-line-height-ui);
+      }
+      .mas-separator { margin: 0; border: 0; border-top: 1px solid var(--color-border); }
+{% endblock tayet_style %}
+
+{% block tayet_content %}
+  <div class="mas-page">
+    <main class="mas-card">
+      <div class="mas-wordmark"><span class="mas-wordmark__dot" aria-hidden="true"></span>tayet</div>
+
+      <div class="mas-heading">
+        <h1>Entre no Tayet</h1>
+        {% if next and next.kind == "link_upstream" %}
+          {% set name = provider.human_name or (provider.issuer | simplify_url(keep_path=True)) or provider.id %}
+          <p>Entre para vincular {{ name }}.</p>
+        {% else %}
+          <p>Escolha como você entra.</p>
+        {% endif %}
+      </div>
+
+      <form method="POST" class="mas-stack">
+        {% if form.errors is not empty %}
+          {% for error in form.errors %}
+            <div class="mas-error">{{ errors.form_error_message(error=error) }}</div>
+          {% endfor %}
+        {% endif %}
+
+        <input type="hidden" name="csrf" value="{{ csrf_token }}" />
+
+        {% if features.password_login %}
+          <div class="mas-field mas-stack">
+            {% call(f) field.field(label="Usuário", name="username", form_state=form) %}
+              <input {{ field.attributes(f) }} type="text" autocomplete="username" autocorrect="off" autocapitalize="off" required />
+            {% endcall %}
+            {% call(f) field.field(label="Senha", name="password", form_state=form) %}
+              <input {{ field.attributes(f) }} type="password" autocomplete="password" required />
+            {% endcall %}
+          </div>
+          <button type="submit" class="mas-button">Continuar</button>
+          {% if features.account_recovery %}
+            <a class="mas-link" href="{{ '/recover' | prefix_url }}">Esqueci a senha</a>
+          {% endif %}
+          {% if providers %}
+            <hr class="mas-separator" />
+          {% endif %}
+        {% endif %}
+
+        {% if providers %}
+          {% set params = next["params"] | default({}) | to_params(prefix="?") %}
+          {% for provider in providers %}
+            {% set name = provider.human_name or (provider.issuer | simplify_url(keep_path=True)) or provider.id %}
+            <a class="mas-button" href="{{ ('/upstream/authorize/' ~ provider.id ~ params) | prefix_url }}">
+              {{- logo(provider.brand_name) -}}
+              Continuar com {{ name }}
+            </a>
+          {% endfor %}
+        {% endif %}
+
+        {% if not providers and not features.password_login %}
+          <p class="mas-meta">Nenhuma forma de entrar está disponível.</p>
+        {% endif %}
+      </form>
+
+      {% if (not next or next.kind != "link_upstream") and features.password_registration %}
+        {% set params = next["params"] | default({}) | to_params(prefix="?") %}
+        <a class="mas-link" href="{{ ('/register' ~ params) | prefix_url }}">Criar conta</a>
+      {% endif %}
+
+      {% if providers %}
+        <p class="mas-meta">Você vai até o provedor e volta para o Tayet automaticamente.</p>
+      {% endif %}
+    </main>
+  </div>
+{% endblock tayet_content %}

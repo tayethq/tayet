@@ -1,0 +1,9 @@
+# Diretório organizacional (ADR-054 dec. 4). A ESPINHA é a allowlist do Dex
+# (dex/config.yaml.tmpl); este arquivo é a TABELA DE ATRIBUTOS, join por `username`.
+# Campo vazio = ausência declarada (o sync apaga a chave no servidor).
+# Separador: TAB. Referência: seção "Identity" de infra/deploy/README.md.
+# Só o cabeçalho é versionado. As linhas vêm no `deploy.sh secrets`/`render`: a do admin de
+# bootstrap das variáveis BOOTSTRAP_ADMIN_*, as demais de secrets/directory.extra.tsv (gitignored,
+# mesmo formato, sem cabeçalho; cada username com entrada em secrets/dex-users.yaml) — juntas em
+# secrets/rendered/directory.tsv, a cópia que o `up` sincroniza.
+#username	full_name	job_title	work_email

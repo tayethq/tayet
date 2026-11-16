@@ -1,0 +1,3 @@
+# Only the packed tarball enters the build context.
+*
+!tayet-agent.tgz

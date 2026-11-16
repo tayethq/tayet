@@ -1,0 +1,9 @@
+.env.local
+
+# Style Dictionary scratch dir (per-theme CSS written here, then concatenated into
+# src/ui/tokens/tokens.css and removed). Never committed — see style-dictionary.config.mjs.
+.sd-tmp/
+
+# Playwright (browser E2E tier, ADR-060): run output and HTML report — never committed.
+test-results/
+playwright-report/

@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# dev-stack runtime (regenerado no `up`; nunca commitar)
+infra/dev-stack/synapse/tayet.local.signing.key
+infra/dev-stack/synapse/media_store/
+infra/dev-stack/synapse/*.pid
+infra/dev-stack/escrow.secret.env
+infra/dev-stack/agent.secret.env
+infra/dev-stack/agent-token.secret
+infra/dev-stack/agent-token.*.secret
+infra/dev-stack/.render/
+infra/dev-stack/mas/secrets/

@@ -1,0 +1,62 @@
+{
+  "font": {
+    "style": {
+      "$type": "typography",
+      "$description": "Estilos de texto: a combinação ratificada de família, tamanho, peso e entrelinha (owner, 20/Out/2026). Composto de aliases; não vira variável pública do client.",
+      "display": {
+        "$description": "Nome em destaque (o nome no perfil).",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "{font.size.display}",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": "{font.line-height.display}"
+        }
+      },
+      "title": {
+        "$description": "Título de painel, cabeçalho de canal e de dialog.",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "{font.size.title}",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": "{font.line-height.title}"
+        }
+      },
+      "body": {
+        "$description": "Texto da mensagem e corpo de leitura.",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "{font.size.body}",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": "{font.line-height.body}"
+        }
+      },
+      "ui": {
+        "$description": "Chrome da interface: lista de canais, botões, campos.",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "{font.size.ui}",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": "{font.line-height.ui}"
+        }
+      },
+      "meta": {
+        "$description": "Metadado: hora, status, rótulo de seção, badge.",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "{font.size.meta}",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": "{font.line-height.meta}"
+        }
+      },
+      "mono": {
+        "$description": "Código e bloco pré-formatado.",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "{font.size.mono}",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": "{font.line-height.mono}"
+        }
+      }
+    }
+  }
+}

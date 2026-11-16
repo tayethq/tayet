@@ -1,0 +1,232 @@
+# Tayet — stack de PRODUÇÃO sob o domínio base do deployment (ADR-095; o de referência usa `tayet.app`)
+# (ADR-046 topologia, ADR-047 forma operacional do escrow). Paralela ao dev-stack,
+# NUNCA um substituto: o dev-stack segue no seu server_name de dev, intocado (não-decisão
+# do ADR-046). O upstream OIDC do dogfood é o Dex em `login.<domínio base>` — stand-in do seam
+# agnóstico do MAS (ADR-048, revisa a cláusula de upstream do ADR-046).
+#
+# Digests pinados VERBATIM do dev-stack (infra/dev-stack/compose.yaml): mesma imagem,
+# mesma versão, zero mismatch silencioso entre dev e prod. O único digest novo é o do
+# Caddy (não existe no dev-stack) — pinado na Fatia 1 e registrado no corpo do PR.
+#
+# Project name `tayet`: o padrão do nome dos containers/volumes, independente do dir. O
+# deploy.sh passa `-p` com TAYET_COMPOSE_PROJECT (padrão `tayet`, PLANO-DEPLOY-DOMINIO §0.3.3),
+# que vence este campo. As portas do host leem TAYET_HS_PORT, TAYET_HTTP_PORT e TAYET_HTTPS_PORT.
+#
+# Política de restart (Ago/2026): `unless-stopped` em todos os serviços — reboot do
+# host religa a stack sozinho; `docker compose stop` manual continua respeitado.
+# Promovida de omissão a decisão após o reboot de Ago/2026 deixar a produção parada
+# (a política não existia). Espelha o serviço `agent` do dev-stack.
+name: tayet
+
+services:
+  postgres:
+    # postgres:16 — mesmo digest do dev-stack.
+    image: postgres@sha256:4b7183ac05f8ef417db21fd72d71047a4238340c261d3cc3ddb6d579ab5071ae
+    restart: unless-stopped
+    environment:
+      # Credenciais da REDE INTERNA do compose: o Postgres não publica porta nenhuma,
+      # logo só é alcançável de dentro da rede (quem tem root no host — o mesmo operador
+      # que já detém HS/MAS/escrow, ADR-047). Não são secret de superfície pública; por
+      # isso não entram no `deploy.sh secrets` (que cobre só o material foreclosante).
+      POSTGRES_USER: synapse
+      POSTGRES_PASSWORD: synapse
+      POSTGRES_DB: synapse
+      # Synapse exige locale C no DB.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # initdb só roda em volume VIRGEM (primeira subida). Cria o banco `mas` que a uri
+      # do MAS espera; owner = POSTGRES_USER `synapse`, o mesmo da uri — correto.
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapse -d synapse"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  synapse:
+    # ghcr.io/element-hq/synapse:v1.163.0 — mesmo digest do dev-stack.
+    image: ghcr.io/element-hq/synapse@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # A config renderizada (com os secrets frescos) sobrepõe o arquivo dentro do
+      # volume persistente; a signing key AUSENTE é auto-gerada pelo Synapse no primeiro
+      # boot em /data/<domínio base>.signing.key (verificação da Fatia 3, ver README). O log
+      # config é estático (sem secret) e vem versionado do repo — o Synapse NÃO o
+      # auto-gera em modo server, então precisa existir no boot.
+      - ./secrets/rendered/homeserver.yaml:/data/homeserver.yaml:ro
+      - ./synapse/log.config:/data/${TAYET_DOMAIN:?use ./deploy.sh ou --env-file secrets/deployment.env}.log.config:ro
+      - synapsedata:/data
+    ports:
+      # SOMENTE loopback do host: ops (o seed do `#all` e probes de admin do deploy.sh)
+      # alcançam aqui; o tráfego PÚBLICO entra por matrix.<domínio base> via Caddy.
+      - "127.0.0.1:${TAYET_HS_PORT:-8008}:8008"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8008/health').read()==b'OK' else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mas:
+    # ghcr.io/element-hq/matrix-authentication-service:1.27.0 — digest fixado em TRÊS lugares: aqui,
+    # infra/dev-stack/compose.yaml e infra/deploy/deploy.sh (MAS_IMAGE).
+    image: ghcr.io/element-hq/matrix-authentication-service@sha256:085e37263957b3b79be85de9cfda1980b97e9653f284fba0c902445e06c200b8
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Variante A (§0.3 confirmou `--config` repetido e merge): a config principal
+    # renderizada NÃO carrega a seção `secrets:`; as chaves de assinatura vêm do
+    # arquivo gerado por `mas-cli config generate`, mesclado no boot.
+    command: ["--config", "/config/config.yaml", "--config", "/config/secrets.yaml", "server"]
+    volumes:
+      - ./secrets/rendered/mas-config.yaml:/config/config.yaml:ro
+      - ./secrets/mas-secrets.yaml:/config/secrets.yaml:ro
+      # Templates próprios (ADR-084): o diretório, para o `_generated/` regenerado pelo prepare.sh
+      # aparecer sem recriar o container (o restart vem do marcador do `up`).
+      - ../mas/templates:/templates:ro
+    # Sem porta publicada: o Caddy (auth.<domínio base>) e a rede interna (escrow, synapse)
+    # bastam. O bind é 0.0.0.0:8080 na config (§0.6) para ser alcançável na rede.
+
+  dex:
+    # Stand-in OIDC do dogfood (ADR-048): o seam canônico de identidade é o
+    # `upstream_oauth2` do MAS; o Dex prova esse seam sob TLS/subdomínio reais como IdP
+    # mínimo (allowlist estática, sem connectors). Publicado SÓ via Caddy em
+    # login.<domínio base>; nenhuma porta no host — a rede interna o alcança como dex:5556.
+    # Digest pinado VERBATIM do dev-stack (infra/dev-stack/compose.yaml): mesma imagem,
+    # zero mismatch silencioso.
+    # ghcr.io/dexidp/dex (master)
+    image: ghcr.io/dexidp/dex@sha256:dbff0aafbc0b0020c61e5a07411c087494a2da1ca9658c65598ba266e476c95b
+    restart: unless-stopped
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    volumes:
+      # Config renderizada com os secrets frescos (client secret MAS↔Dex + hash bcrypt
+      # da allowlist), gerada pelo deploy.sh secrets. Storage em memória (mesma forma do
+      # dev-stack, §0.3) → sem volume persistente.
+      - ./secrets/rendered/dex-config.yaml:/etc/dex/config.yaml:ro
+
+  escrow:
+    # Fase 2 — serviço de escrow do APP REAL (ADR-021/047). Roda da FONTE, zero
+    # build, mesmo entrypoint e contrato de env do dev-stack. Um processo por tenant,
+    # co-locado (ADR-047), alcançável SÓ same-origin via /escrow no Caddy — sem endpoint
+    # público próprio, sem porta publicada. node:22-bookworm-slim, mesmo digest do dev.
+    image: node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752  # node:22-bookworm-slim
+    restart: unless-stopped
+    depends_on:
+      mas:
+        condition: service_started
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "src/server.ts"]
+    # SIGTERM → drain das requests em voo + exit 0 (server.ts, teto 5 s). A janela de graça é
+    # contrato: menor que o teto = request cortada e SIGKILL no stop rotineiro. Explícita porque o
+    # default efetivo varia por host (medido 3 s no Mac, §8.41).
+    stop_grace_period: 10s
+    volumes:
+      - ../../escrow:/app:ro      # fonte do escrow (raiz do repo), read-only
+      - escrowdata:/data          # store persistente de depósitos — estado crítico (§5)
+    environment:
+      ESCROW_PORT: "8090"
+      # 0.0.0.0 SÓ no container (ADR-021): o Caddy o alcança pela rede interna como
+      # escrow:8090. Nenhuma porta publicada — o público entra só via chat.<domínio base>/escrow.
+      ESCROW_BIND: 0.0.0.0
+      ESCROW_STORE_DIR: /data
+      # Introspecção (RFC 7662, ADR-017) contra o MAS DO PRÓPRIO tenant, rede interna.
+      ESCROW_INTROSPECTION_URL: http://mas:8080/oauth2/introspect
+      ESCROW_CLIENT_ID: "00000000000000000000ESCR0W"
+      # ADR-082 dec. 3: admin API do MAS no listener interno, rede interna. Nunca pelo Caddy.
+      ESCROW_MAS_ADMIN_URL: http://mas:8081
+      ESCROW_MAS_ADMIN_CLIENT_ID: "000000000000000000ESCADM1N"
+      # ADR-083: Synapse pela rede interna; o provider é o Google de mas/config.yaml.tmpl.
+      ESCROW_HS_URL: http://synapse:8008
+      ESCROW_SERVER_NAME: ${TAYET_DOMAIN:?use ./deploy.sh ou --env-file secrets/deployment.env}
+      ESCROW_PEOPLE_PROVIDER_ID: 01M6EV4GP9QK3T7YH2ZD8NXGG1
+    # ESCROW_ORG_KEY, ESCROW_CLIENT_SECRET e ESCROW_MAS_ADMIN_CLIENT_SECRET vêm do env-file
+    # gitignored, gerado uma vez pelo `deploy.sh secrets`. Os dois secrets de client casam com
+    # os clients `00000000000000000000ESCR0W` e `000000000000000000ESCADM1N` no MAS (mesmo valor
+    # renderizado nos dois lados).
+    env_file:
+      - ./secrets/deploy.env
+    healthcheck:
+      # /healthz é dep-free (server.ts). Liveness pura, no loopback DO CONTAINER.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  agent:
+    # Agente de custódia `cofre` (ADR-057 dec. 5; forma operacional no ADR-069). Mesmo regime do
+    # escrow: roda da FONTE com strip-types, mesmo digest. Sem porta publicada — fala com synapse e
+    # escrow pela rede interna. node_modules NÃO vem do host do dev: o `deploy.sh build` roda
+    # `npm ci --omit=dev` DENTRO desta mesma imagem (deps Linux-nativas, sem depender do Node do VPS).
+    # O `deploy.sh up` só sobe este serviço numa SEGUNDA fase, depois de provisionar o cofre e cunhar o
+    # token; com o opt-out do ADR-069 dec. 11 (secrets/agent.disabled) ele fica parado.
+    image: node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752  # node:22-bookworm-slim
+    restart: unless-stopped
+    depends_on:
+      synapse:
+        condition: service_healthy
+      escrow:
+        condition: service_healthy
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "src/main.ts"]
+    # SIGTERM → flush do Level + checkpoint (agent/src/main.ts). A janela de graça é contrato:
+    # menos que o flush = store rasgado no stop rotineiro.
+    stop_grace_period: 15s
+    volumes:
+      - ../../agent:/app:ro       # fonte do agente (raiz do repo) + node_modules do build, read-only
+      # Store cripto + checkpoint. FORA do backup por decisão (ADR-069 dec. 5): restaurar um store
+      # antigo ressuscita o zumbi; perda do volume = remediação F8 (device novo).
+      - agentdata:/data
+      # mct_ do cofre, cunhado pelo `up` (ADR-069 dec. 3). O arquivo PRECISA existir antes do
+      # container (senão o docker cria um DIRETÓRIO no bind); o `up` garante.
+      - ./secrets/agent-token.secret:/secrets/token:ro
+    environment:
+      AGENT_HS_URL: http://synapse:8008
+      AGENT_ESCROW_URL: http://escrow:8090
+      AGENT_TOKEN_FILE: /secrets/token
+      AGENT_STORE_DIR: /data
+    # AGENT_STORAGE_KEY (32 bytes base64; cifra o store), gerada uma vez pelo `deploy.sh up` (ADR-069
+    # dec. 4). Arquivo ausente quebra TODO comando do compose — o deploy.sh o garante antes.
+    env_file:
+      - ./secrets/agent.env
+
+  caddy:
+    # Reverse proxy + TLS automático (ACME) — ADR-046. Digest pinado na Fatia 1
+    # (caddy:2 → v2.11.4; ver corpo do PR). Único ponto de entrada público: 80/443.
+    image: caddy@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d  # caddy:2
+    restart: unless-stopped
+    depends_on:
+      - synapse
+      - mas
+      - dex
+      - escrow
+    ports:
+      - "${TAYET_HTTP_PORT:-80}:80"
+      - "${TAYET_HTTPS_PORT:-443}:443"
+    # Domínio base do deployment (ADR-095): os hosts do Caddyfile leem {$TAYET_DOMAIN}.
+    environment:
+      TAYET_DOMAIN: ${TAYET_DOMAIN:?use ./deploy.sh ou --env-file secrets/deployment.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # O SPA assado (`deploy.sh build`) servido estático em chat.<domínio base>.
+      - ../../client/dist:/srv/app:ro
+      # Fonte da página do MAS (ADR-084 dec. 3), servida em auth.<domínio base>/fonts/: o diretório pai,
+      # não o _generated/fonts, porque o prepare.sh recria o conteúdo e um mount do filho ficaria no
+      # inode velho.
+      - ../mas/templates:/srv/mas-templates:ro
+      # Site institucional (ADR-050): mount OPT-IN em compose.site.yaml — o deploy.sh o
+      # inclui só se ../../site existir. Sem ele o apex serve só o .well-known (resto 404).
+      # Persistência dos certs ACME + estado do autosave do Caddy.
+      - caddydata:/data
+      - caddyconfig:/config
+
+volumes:
+  pgdata:
+  synapsedata:
+  escrowdata:
+  agentdata:
+  caddydata:
+  caddyconfig:

@@ -1,0 +1,70 @@
+{
+  "name": "tayet-agent",
+  "version": "0.0.0",
+  "private": false,
+  "type": "module",
+  "description": "Tayet agent sidecar: runs an agent account on the operator's machine.",
+  "license": "BUSL-1.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tayethq/tayet.git",
+    "directory": "sidecar"
+  },
+  "homepage": "https://github.com/tayethq/tayet/tree/main/sidecar#readme",
+  "keywords": [
+    "tayet",
+    "agent",
+    "chat",
+    "bot",
+    "sidecar"
+  ],
+  "bin": {
+    "tayet-agent": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "build:watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "pretest": "npm run build",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run lint && npm run test"
+  },
+  "dependencies": {
+    "@matrix-org/matrix-sdk-crypto-wasm": "18.3.1",
+    "@modelcontextprotocol/client": "2.4.0",
+    "@modelcontextprotocol/server": "2.4.0",
+    "classic-level": "1.4.1",
+    "matrix-js-sdk": "41.6.0",
+    "node-indexeddb": "6.0.3",
+    "ws": "8.22.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@slack/bolt": "5.1.0",
+    "@slack/socket-mode": "3.1.1",
+    "@slack/web-api": "8.3.0",
+    "@tayet/shared": "file:../shared",
+    "@types/node": "25.9.2",
+    "@types/ws": "8.18.2",
+    "emojibase-data": "18.0.0",
+    "esbuild": "0.28.2",
+    "eslint": "10.4.1",
+    "globals": "17.6.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.60.1",
+    "vitest": "4.1.12"
+  },
+  "allowScripts": {
+    "classic-level@1.4.1": true,
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.3": true
+  }
+}

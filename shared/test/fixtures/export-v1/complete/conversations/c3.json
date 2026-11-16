@@ -1,0 +1,23 @@
+{
+  "formatVersion": 1,
+  "conversation": "c3",
+  "items": [
+    {
+      "type": "message",
+      "id": "m16",
+      "sentAt": "2026-11-12T19:00:00.000Z",
+      "text": "Segue a planilha, Lucas.",
+      "mentions": [
+        "p5"
+      ],
+      "attachment": {
+        "file": "attachments/c3/m16-Plano Q4final.xlsx",
+        "name": "Plano Q4/final.xlsx",
+        "mimetype": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "size": 9120
+      },
+      "inThread": false,
+      "isReply": false
+    }
+  ]
+}

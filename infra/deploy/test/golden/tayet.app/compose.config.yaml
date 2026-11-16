@@ -1,0 +1,269 @@
+name: tayet
+services:
+  agent:
+    restart: unless-stopped
+    command:
+      - node
+      - --experimental-strip-types
+      - src/main.ts
+    environment:
+      AGENT_ESCROW_URL: http://escrow:8090
+      AGENT_HS_URL: http://synapse:8008
+      AGENT_STORAGE_KEY: fake-agent-storage-00000000000000
+      AGENT_STORE_DIR: /data
+      AGENT_TOKEN_FILE: /secrets/token
+    image: node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752
+    networks:
+      default: null
+    stop_grace_period: 15s
+    volumes:
+      - type: bind
+        source: /__REPO__/agent
+        target: /app
+        read_only: true
+        bind: {}
+      - type: volume
+        source: agentdata
+        target: /data
+        volume: {}
+      - type: bind
+        source: /__REPO__/infra/deploy/secrets/agent-token.secret
+        target: /secrets/token
+        read_only: true
+        bind: {}
+    working_dir: /app
+    depends_on:
+      escrow:
+        condition: service_healthy
+        required: true
+      synapse:
+        condition: service_healthy
+        required: true
+  caddy:
+    restart: unless-stopped
+    environment:
+      TAYET_DOMAIN: tayet.app
+    image: caddy@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d
+    networks:
+      default: null
+    volumes:
+      - type: bind
+        source: /__REPO__/infra/deploy/Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind: {}
+      - type: bind
+        source: /__REPO__/client/dist
+        target: /srv/app
+        read_only: true
+        bind: {}
+      - type: bind
+        source: /__REPO__/infra/mas/templates
+        target: /srv/mas-templates
+        read_only: true
+        bind: {}
+      - type: volume
+        source: caddydata
+        target: /data
+        volume: {}
+      - type: volume
+        source: caddyconfig
+        target: /config
+        volume: {}
+    depends_on:
+      dex:
+        condition: service_started
+        required: true
+      escrow:
+        condition: service_started
+        required: true
+      mas:
+        condition: service_started
+        required: true
+      synapse:
+        condition: service_started
+        required: true
+    ports:
+      - mode: ingress
+        target: 80
+        published: "80"
+        protocol: tcp
+      - mode: ingress
+        target: 443
+        published: "443"
+        protocol: tcp
+  dex:
+    restart: unless-stopped
+    command:
+      - dex
+      - serve
+      - /etc/dex/config.yaml
+    image: ghcr.io/dexidp/dex@sha256:dbff0aafbc0b0020c61e5a07411c087494a2da1ca9658c65598ba266e476c95b
+    networks:
+      default: null
+    volumes:
+      - type: bind
+        source: /__REPO__/infra/deploy/secrets/rendered/dex-config.yaml
+        target: /etc/dex/config.yaml
+        read_only: true
+        bind: {}
+  escrow:
+    restart: unless-stopped
+    command:
+      - node
+      - --experimental-strip-types
+      - src/server.ts
+    environment:
+      ESCROW_BIND: 0.0.0.0
+      ESCROW_CLIENT_ID: 00000000000000000000ESCR0W
+      ESCROW_CLIENT_SECRET: fake-escrow-client-0000000000000
+      ESCROW_HS_URL: http://synapse:8008
+      ESCROW_INTROSPECTION_URL: http://mas:8080/oauth2/introspect
+      ESCROW_MAS_ADMIN_CLIENT_ID: 000000000000000000ESCADM1N
+      ESCROW_MAS_ADMIN_CLIENT_SECRET: fake-escrow-admin-0000000000000
+      ESCROW_MAS_ADMIN_URL: http://mas:8081
+      ESCROW_ORG_KEY: fake-org-key-0000000000000000000
+      ESCROW_PEOPLE_PROVIDER_ID: 01M6EV4GP9QK3T7YH2ZD8NXGG1
+      ESCROW_PORT: "8090"
+      ESCROW_SERVER_NAME: tayet.app
+      ESCROW_STORE_DIR: /data
+    image: node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752
+    networks:
+      default: null
+    stop_grace_period: 10s
+    volumes:
+      - type: bind
+        source: /__REPO__/escrow
+        target: /app
+        read_only: true
+        bind: {}
+      - type: volume
+        source: escrowdata
+        target: /data
+        volume: {}
+    working_dir: /app
+    depends_on:
+      mas:
+        condition: service_started
+        required: true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://localhost:8090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      timeout: 5s
+      interval: 5s
+      retries: 20
+  mas:
+    restart: unless-stopped
+    command:
+      - --config
+      - /config/config.yaml
+      - --config
+      - /config/secrets.yaml
+      - server
+    image: ghcr.io/element-hq/matrix-authentication-service@sha256:085e37263957b3b79be85de9cfda1980b97e9653f284fba0c902445e06c200b8
+    networks:
+      default: null
+    volumes:
+      - type: bind
+        source: /__REPO__/infra/deploy/secrets/rendered/mas-config.yaml
+        target: /config/config.yaml
+        read_only: true
+        bind: {}
+      - type: bind
+        source: /__REPO__/infra/deploy/secrets/mas-secrets.yaml
+        target: /config/secrets.yaml
+        read_only: true
+        bind: {}
+      - type: bind
+        source: /__REPO__/infra/mas/templates
+        target: /templates
+        read_only: true
+        bind: {}
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: true
+  postgres:
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: synapse
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --lc-collate=C --lc-ctype=C
+      POSTGRES_PASSWORD: synapse
+      POSTGRES_USER: synapse
+    image: postgres@sha256:4b7183ac05f8ef417db21fd72d71047a4238340c261d3cc3ddb6d579ab5071ae
+    networks:
+      default: null
+    volumes:
+      - type: volume
+        source: pgdata
+        target: /var/lib/postgresql/data
+        volume: {}
+      - type: bind
+        source: /__REPO__/infra/deploy/postgres-init
+        target: /docker-entrypoint-initdb.d
+        read_only: true
+        bind: {}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U synapse -d synapse
+      timeout: 3s
+      interval: 3s
+      retries: 20
+  synapse:
+    restart: unless-stopped
+    image: ghcr.io/element-hq/synapse@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6
+    networks:
+      default: null
+    volumes:
+      - type: bind
+        source: /__REPO__/infra/deploy/secrets/rendered/homeserver.yaml
+        target: /data/homeserver.yaml
+        read_only: true
+        bind: {}
+      - type: bind
+        source: /__REPO__/infra/deploy/synapse/log.config
+        target: /data/tayet.app.log.config
+        read_only: true
+        bind: {}
+      - type: volume
+        source: synapsedata
+        target: /data
+        volume: {}
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8008/health').read()==b'OK'
+          else 1)"
+      timeout: 5s
+      interval: 5s
+      retries: 20
+    ports:
+      - mode: ingress
+        host_ip: 127.0.0.1
+        target: 8008
+        published: "8008"
+        protocol: tcp
+networks:
+  default:
+    name: tayet_default
+volumes:
+  agentdata:
+    name: tayet_agentdata
+  caddyconfig:
+    name: tayet_caddyconfig
+  caddydata:
+    name: tayet_caddydata
+  escrowdata:
+    name: tayet_escrowdata
+  pgdata:
+    name: tayet_pgdata
+  synapsedata:
+    name: tayet_synapsedata

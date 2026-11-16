@@ -1,0 +1,54 @@
+# Diretório organizacional do dev-stack (ADR-054 dec. 4). Espinha = staticPasswords
+# de dex/config.yaml. Campo vazio = ausência declarada. Separador: TAB.
+#username	full_name	job_title	work_email
+alice	Alice Alves	Engenheira de Plataforma	alice@tayet.local
+bob	Bob Barros		bob@tayet.local
+carol	Carol Costa	Designer	carol@tayet.local
+erin	Erin Esteves	QA	erin@tayet.local
+frank	Frank Freitas		frank@tayet.local
+gina	Gina Gomes		gina@tayet.local
+hana	Hana Honda		hana@tayet.local
+ivo	Ivo Inácio		ivo@tayet.local
+jade	Jade Jardim		jade@tayet.local
+kai	Kai Kato		kai@tayet.local
+lia	Lia Lima		lia@tayet.local
+mia	Mia Mota		mia@tayet.local
+noa	Noa Nunes		noa@tayet.local
+oto	Oto Orlando		oto@tayet.local
+pia	Pia Pires		pia@tayet.local
+quim	Quim Quaresma		quim@tayet.local
+rita	Rita Ramos		rita@tayet.local
+sol	Sol Santana		sol@tayet.local
+tom	Tom Tavares		tom@tayet.local
+una	Una Uchoa		una@tayet.local
+vic	Vic Vieira		vic@tayet.local
+wal	Wal Wanderley	Analista de Suporte	wal@tayet.local
+xan	Xan Xavier	Analista Financeiro	xan@tayet.local
+yan	Yan Yamada	Redator	yan@tayet.local
+zoe	Zoe Zanetti	Gerente de Produto	zoe@tayet.local
+ari	Ari Andrade	Coordenadora de Operações	ari@tayet.local
+bel	Bel Bastos	Analista de Dados	bel@tayet.local
+cid	Cid Cardoso	Engenheiro de Software	cid@tayet.local
+deb	Deb Duarte	Gerente de Contas	deb@tayet.local
+eli	Eli Esteves	Designer de Produto	eli@tayet.local
+fay	Fay Fonseca	Analista Financeira	fay@tayet.local
+gus	Gus Gomes	Analista de Suporte	gus@tayet.local
+hal	Hal Henriques	Coordenador de Operações	hal@tayet.local
+ian	Ian Ibarra	Analista de Segurança	ian@tayet.local
+jon	Jon Jardim	Especialista de Compras	jon@tayet.local
+kim	Kim Kato		kim@tayet.local
+lua	Lua Lemos		lua@tayet.local
+mel	Mel Moura		mel@tayet.local
+nic	Nic Nunes		nic@tayet.local
+gho	Gho Gomes		gho@tayet.local
+fal	Fal Farias		fal@tayet.local
+ada	Ada Aguiar		ada@tayet.local
+bea	Bea Borges		bea@tayet.local
+rae	Rae Ramos		rae@tayet.local
+sam	Sam Souto		sam@tayet.local
+tai	Tai Teles		tai@tayet.local
+ugo	Ugo Uchoa		ugo@tayet.local
+val	Val Valente		val@tayet.local
+wes	Wes Werneck		wes@tayet.local
+xin	Xin Xisto		xin@tayet.local
+dave	Dave Dias	Fantasma	dave@tayet.local

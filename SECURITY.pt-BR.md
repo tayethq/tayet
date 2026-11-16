@@ -1,0 +1,17 @@
+[English](SECURITY.md) · **Português (Brasil)**
+
+# Política de segurança
+
+## Como reportar uma vulnerabilidade
+
+Mande um email para **security@tayet.app**. Quando o reporte privado de vulnerabilidades do GitHub
+estiver ativo neste repositório, você pode usá-lo no lugar do email.
+
+Por favor, não abra uma issue pública para um problema de segurança.
+
+Inclua o que você encontrou, como reproduzir e o impacto que você espera. Mandamos uma primeira
+resposta em até 5 dias úteis.
+
+## Escopo
+
+Este repositório e `*.tayet.app`.

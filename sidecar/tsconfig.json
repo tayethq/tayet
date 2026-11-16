@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    // Mirrors the client (ADR-088 dec. 1, §0.3.5 adj. 1): @tayet/shared is consumed from source
+    // through file:../shared; esbuild bundles it into dist/cli.js. tsc only type-checks.
+    "moduleResolution": "Bundler",
+    "preserveSymlinks": true,
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    // The MCP server's version is the package's (api/mcp/handler.ts); esbuild inlines only that field.
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": ["src", "test", "build.mjs", "contract-vocabulary.mjs", "scripts/gen-emoji.mjs", "vitest.config.ts", "eslint.config.js"]
+}

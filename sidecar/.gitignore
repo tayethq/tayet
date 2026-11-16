@@ -1,0 +1,4 @@
+dist/
+.smoke/
+# npm pack output (the Docker build context and the release workflow make it; never committed).
+*.tgz

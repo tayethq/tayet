@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    // ADR-088: @tayet/shared is a file: link; resolve its imports (matrix-js-sdk) from the link
+    // path under client/node_modules, not from the real path in ../shared (which has no deps in CI).
+    "preserveSymlinks": true,
+    "paths": {
+      "@tayet/client": ["./src/acl/index.ts"]
+    }
+  },
+  "include": ["src", "test", "e2e", "eslint.config.js", "vite.config.ts", "playwright.config.ts"]
+}

@@ -1,0 +1,177 @@
+{
+  "formatVersion": 1,
+  "conversation": "c1",
+  "items": [
+    {
+      "type": "message",
+      "id": "m1",
+      "sentAt": "2026-11-10T13:00:00.000Z",
+      "text": "Bom dia, pessoal.",
+      "inThread": false,
+      "isReply": false
+    },
+    {
+      "type": "message",
+      "id": "m2",
+      "sentAt": "2026-11-10T13:05:00.000Z",
+      "editedAt": "2026-11-10T13:07:30.000Z",
+      "text": "Pauta de amanhã: orçamento e contratações.",
+      "rich": [
+        {
+          "t": "p",
+          "children": [
+            {
+              "t": "text",
+              "text": "Pauta de "
+            },
+            {
+              "t": "strong",
+              "children": [
+                {
+                  "t": "text",
+                  "text": "amanhã"
+                }
+              ]
+            },
+            {
+              "t": "text",
+              "text": ":"
+            }
+          ]
+        },
+        {
+          "t": "ul",
+          "items": [
+            [
+              {
+                "t": "p",
+                "children": [
+                  {
+                    "t": "text",
+                    "text": "orçamento"
+                  }
+                ]
+              }
+            ],
+            [
+              {
+                "t": "p",
+                "children": [
+                  {
+                    "t": "text",
+                    "text": "contratações"
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "inThread": false,
+      "isReply": false
+    },
+    {
+      "type": "message",
+      "id": "m3",
+      "sentAt": "2026-11-10T14:00:00.000Z",
+      "text": "Atlas e Bruno, podem revisar o resumo?",
+      "mentions": [
+        "p2",
+        "p3"
+      ],
+      "inThread": false,
+      "isReply": false
+    },
+    {
+      "type": "message",
+      "id": "m4",
+      "sentAt": "2026-11-10T15:00:00.000Z",
+      "text": "Abro uma thread para o orçamento.",
+      "inThread": false,
+      "isReply": false
+    },
+    {
+      "type": "message",
+      "id": "m5",
+      "sentAt": "2026-11-10T15:10:00.000Z",
+      "text": "Primeiro número: dentro do previsto.",
+      "inThread": true,
+      "threadRoot": "m4",
+      "isReply": false
+    },
+    {
+      "type": "message",
+      "id": "m6",
+      "sentAt": "2026-11-10T15:20:00.000Z",
+      "text": "Concordo com a proposta.",
+      "inThread": true,
+      "isReply": false
+    },
+    {
+      "type": "message",
+      "id": "m7",
+      "sentAt": "2026-11-10T16:00:00.000Z",
+      "text": "Pode ser na quinta.",
+      "inThread": false,
+      "isReply": true
+    },
+    {
+      "type": "message",
+      "id": "m8",
+      "sentAt": "2026-11-10T16:05:00.000Z",
+      "text": "Corrigindo: na sexta.",
+      "inThread": false,
+      "isReply": true,
+      "replyTo": "m7"
+    },
+    {
+      "type": "message",
+      "id": "m9",
+      "sentAt": "2026-11-11T10:00:00.000Z",
+      "text": "",
+      "attachment": {
+        "file": "attachments/c1/m9-relatorio.pdf",
+        "name": "relatorio.pdf",
+        "mimetype": "application/pdf",
+        "size": 48213
+      },
+      "inThread": false,
+      "isReply": false
+    },
+    {
+      "type": "message",
+      "id": "m10",
+      "sentAt": "2026-11-11T10:01:00.000Z",
+      "text": "",
+      "attachment": {
+        "name": "foto.png",
+        "mimetype": "image/png",
+        "missing": true
+      },
+      "inThread": false,
+      "isReply": false
+    },
+    {
+      "type": "deleted",
+      "id": "m11",
+      "sentAt": "2026-11-11T11:00:00.000Z"
+    },
+    {
+      "type": "unreadable",
+      "id": "m12",
+      "sentAt": "2026-11-11T11:30:00.000Z"
+    },
+    {
+      "type": "unsupported",
+      "id": "m13",
+      "sentAt": "2026-11-11T11:45:00.000Z"
+    },
+    {
+      "type": "approvalResponse",
+      "id": "m14",
+      "sentAt": "2026-11-12T09:00:00.000Z",
+      "option": "Aprovar",
+      "requestedBy": "p4"
+    }
+  ]
+}

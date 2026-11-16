@@ -1,0 +1,4730 @@
+/* Tayet UI — token-driven styling. The visual layer of ADR-027 ("calor contido") materialised
+   through the design-system tokens (ADR-028). LIGHT is primary; DARK is an authored peer, switched
+   by `[data-theme="dark"]` on the root (default = light, i.e. no attribute). EVERY colour/raio/
+   espaço/tipo/movimento here is a semantic token var — NO raw hex (enforced by the C6 grep-gate).
+   Densidade `cotidiano` veste esta espinha (PLANO §0.2); o regime `gestao` é da Track U. */
+@import './tokens/tokens.css';
+
+:root {
+  color-scheme: light;
+}
+[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* UA default: form controls do not inherit the page font. One reset for every surface. */
+button, input, select, textarea { font-family: inherit; }
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family-sans);
+  /* Base = the message size (a fala, conforto); chrome steps down to --font-size-ui per component. */
+  font-size: var(--font-size-body);
+  line-height: var(--font-line-height-body);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  /* Single implicit row was auto (content-sized) and overflowed 100dvh — the page scrolled
+     and pushed the composer below the fold, and the thread panel (same row) grew with it.
+     minmax(0, 1fr) pins the row to the viewport (plain 1fr is minmax(auto, 1fr) and would
+     still grow with content). Scrolling lives ONLY in inner containers: .timeline and the
+     thread panel's own scrollers below. */
+  grid-template-rows: minmax(0, 1fr);
+  height: 100dvh;
+  /* Anchor for the compose dialog's scrim (Track U/U3): absolute-within-a-relative, mirroring the
+     manage dialog's idiom — never position: fixed. */
+  position: relative;
+}
+
+.sidebar {
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  /* Each block carries its own padding (workspace.md §6.6). */
+  padding: 0;
+  overflow-y: auto;
+  /* Column so the identity footer can be pushed to the bottom (margin-top: auto). */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Anel do dot de presença casa com a superfície local (workspace.md §7 item 4): a sidebar é
+     --color-surface, então o anel deixa o default raised e lê a superfície daqui. */
+  --presence-ring: var(--color-surface);
+}
+
+/* Self footer (ADR-038/039; workspace.md §13 item 6): the whole row is the button that opens the
+   account modal. margin-top: auto pins it to the bottom of the sidebar regardless of list length. */
+.sidebar__footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-8);
+  width: 100%;
+  margin-top: auto;
+  padding: var(--space-8) var(--space-12);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar__footer:hover {
+  background: var(--color-bg);
+}
+.sidebar__footer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+}
+.sidebar__footer-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--color-muted);
+}
+
+/* Brand block (workspace.md §13 items 1–2): the tile and the h1 of the screen, not a button; the
+   connection line lives under the name and only off `connected`. */
+.sidebar__brand {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-12);
+  border-bottom: 1px solid var(--color-border);
+}
+.sidebar__brand-tile {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+.sidebar__brand-text {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar__brand-name {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Linha de conexão (workspace.md §14 item 6, §6.7; forks 5 e 6 do §8.18): 2 cru acima, entrelinha meta. */
+.connection {
+  margin: 2px 0 0;
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+}
+/* Offline is a functional problem state (not accent): the calm danger, never an alarm. */
+.connection--offline {
+  color: var(--color-danger);
+}
+
+.channel-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Sectioned list (Track U/U3, F3): a quiet meta-sized header groups Channels / Direct messages. */
+/* "Sua equipe" do modo DM da nova conversa (new-conversation.md §10.2, adjudicação de 12/Nov): o mesmo
+   título de seção, sem receita nova. */
+.channel-list__section-title,
+.compose-dialog__team-title {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Section header (Track U/U3, F3): the meta-sized title + a quiet per-section "+" that seeds the
+   compose intent; the empty-state line for an always-present section. */
+/* ── Search (ADR-074; manifest workspace.md §4.7/§8, ritmo adjudicado em §6.1) ───────────────
+   The block under the brand carries the export's field-block edges itself (§6.1). */
+.search {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-12) var(--space-8);
+}
+.search__field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: var(--density-cotidiano-row-height);
+  padding: var(--space-8) var(--space-8) var(--space-8) var(--space-12);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-mono);
+}
+/* Focused (§8 item 1): the border takes the accent — the field's focus indication. */
+.search__field:focus-within {
+  border-color: var(--color-accent);
+}
+.search__icon {
+  display: inline-flex;
+  flex: none;
+}
+.search__input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-overflow: ellipsis;
+  outline: none;
+}
+.search__input::placeholder {
+  color: var(--color-muted);
+}
+.search__kbd {
+  flex: none;
+  padding: 1px var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+}
+/* "nesta conversa" (§8 item 2): off = quiet outline; on = the selected wash. */
+.search__chip {
+  flex: none;
+  padding: 2px var(--space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-muted);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.search__chip[aria-pressed='true'] {
+  border-color: var(--color-accent-wash);
+  background: var(--color-accent-wash);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
+}
+/* ✕ — the quiet icon-button idiom of the section "+" (padding --space-4, --radius-sm). */
+.search__clear {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+  line-height: 1;
+  cursor: pointer;
+}
+.search__clear:hover {
+  color: var(--color-text);
+}
+.search__hint {
+  margin: 0;
+  padding: 0 2px;
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+
+.channel-list__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-12) var(--space-8) var(--space-4);
+}
+.channel-list__section:first-of-type .channel-list__section-header {
+  padding-top: var(--space-8);
+}
+.channel-list__section-add {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--color-muted);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.channel-list__section-add:hover {
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+.channel-list__empty {
+  margin: 0 var(--space-8);
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+
+/* Archived section (ADR-076, manifest workspace.md §9): the whole label is the toggle — same metrics
+   as the section header, muted at rest, text on hover; the chevron points down and turns when
+   expanded. Rows mirror the channel row's density but are not buttons (no hover, no selection). */
+.channel-list__archived-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: calc(100% - 2 * var(--space-8));
+  /* The 12 above is the section header's (§6.6): the toggle keeps its metrics (§9). */
+  margin: var(--space-12) var(--space-8) var(--space-4);
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--color-muted);
+  cursor: pointer;
+  text-align: left;
+}
+.channel-list__archived-toggle:hover {
+  color: var(--color-text);
+}
+.channel-list__archived-toggle .channel-list__section-title {
+  color: inherit;
+}
+.channel-list__archived-chevron {
+  display: inline-flex;
+  transition: transform var(--motion-duration-fast) var(--motion-ease-entrada);
+}
+.channel-list__archived-toggle[aria-expanded='true'] .channel-list__archived-chevron {
+  transform: rotate(180deg);
+}
+.channel-list__archived-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--density-cotidiano-row-height);
+  padding: var(--density-cotidiano-row-padding);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-ui);
+}
+.channel-list__archived-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.channel__name--archived {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-muted);
+}
+/* Restore: composes Button (ghost, gestao) — only the text-action metrics are surface-specific
+   (precedent: .ui-button.channel-management-panel__footer-action). Disabled keeps the primitive's state. */
+.ui-button.channel-list__restore {
+  padding: 0 var(--space-8);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+/* The text action drops the gestao row height (it sits inside the row) — but never under the touch
+   floor (ADR-036 dec. 5): on a coarse pointer the primitive's 44 still applies. [data-size] beats
+   .ui-button[data-size='gestao'], which comes later in the file. */
+@media not all and (pointer: coarse) {
+  .ui-button[data-size].channel-list__restore {
+    min-height: 0;
+  }
+}
+.channel-list__restore-error {
+  font-size: var(--font-size-meta);
+  color: var(--color-danger);
+}
+
+/* Notifications permission notice (ADR-073 dec. 6; manifest workspace.md §14 item 3, §6.7): above the
+   first section. A column (text + the small fill action) with the dismiss beside it. */
+.channel-list__notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  /* workspace.md §6.7: margem 4 4 8, padding 8 8 8 12, fundo --color-bg (fork 6 do §8.18). */
+  margin: var(--space-4) var(--space-4) var(--space-8);
+  padding: var(--space-8) var(--space-8) var(--space-8) var(--space-12);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+/* Coluna: texto + botão (fork 7); o ✕ fica ao lado. */
+.channel-list__notice-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.channel-list__notice-text {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-text);
+}
+.channel-list__notice .ui-button {
+  align-self: flex-start;
+}
+/* ✕ = ícone Close em caixa 22 (= `+` de seção, fork 4). */
+.channel-list__notice-dismiss {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.channel-list__notice-dismiss:hover {
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+/* The conversation list is the sidebar's scroller, so what sits under it — the coverage line of the
+   search (§8 item 8) and the identity footer — stays fixed, outside the scroll. */
+.channel-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-4) var(--space-8);
+}
+
+/* Search results (manifest workspace.md §8 items 4–8): in the list's place, same scroll and rhythm. The
+   header reuses the section header; "limpar" reuses the section "+" button (owner, §6.1). The list's
+   section padding (§6.6) stops here: §8 keeps its rhythm, and "limpar" is a word, not a 22 box. */
+.search-results .channel-list__section-header {
+  padding: 0 var(--space-8) var(--space-4);
+}
+.search-results__clear {
+  width: auto;
+  height: auto;
+  padding: var(--space-4);
+  font-family: inherit;
+  font-size: var(--font-size-meta);
+}
+.search-results__preparing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-8) 0;
+}
+.search-results__note {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-ui);
+  color: var(--color-muted);
+}
+.search-results__empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-24) var(--space-12) var(--space-8);
+}
+.search-results__empty-title {
+  margin: 0;
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+}
+/* Indeterminate progress (§8 items 7 and 10): a 2px track and a 25% sweep (motion-duration-sweep,
+   §6.1). prefers-reduced-motion leaves the bar still (foot of this file). */
+.sweep {
+  position: relative;
+  display: block;
+  height: 2px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--color-border);
+}
+.sweep__bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 25%;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  animation: sweep var(--motion-duration-sweep) linear infinite;
+}
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}
+/* A hit (§8 item 5): the channel-row idiom — cotidiano padding and height, --space-8 like .channel--dm. */
+.search-hit {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  width: 100%;
+  min-height: var(--density-cotidiano-row-height);
+  padding: var(--density-cotidiano-row-padding);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-duration-fast) var(--motion-ease-entrada);
+}
+.search-hit:hover {
+  background: var(--color-surface-raised);
+}
+.search-hit--selected,
+.search-hit--selected:hover {
+  background: var(--color-accent-wash);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+.search-hit .ui-avatar {
+  flex: none;
+}
+.search-hit__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.search-hit__meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+  min-width: 0;
+}
+/* The author truncates first; the conversation keeps a 6ch floor (manifest §6.1, 24/Out). */
+.search-hit__author {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.search-hit__where {
+  flex: 0 1 auto;
+  min-width: 6ch;
+  overflow: hidden;
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.search-hit__when {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.search-hit__excerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-meta);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+/* The term (§8 item 5, §6.1): the "está aqui" wash, no radius. */
+.search-hit mark {
+  padding: 0 1px;
+  background: var(--color-highlight-wash);
+  color: inherit;
+}
+.search-hit__thread {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.search-hit__failed {
+  font-size: var(--font-size-meta);
+  color: var(--color-danger);
+}
+/* Partial coverage (§8 item 8): under the list, outside its scroll. */
+.sidebar__coverage {
+  flex: none;
+  margin: 0;
+  padding: var(--space-8) var(--space-12);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-ui);
+  color: var(--color-muted);
+}
+
+/* Channel row — `cotidiano` density (PLANO §0.2). */
+.channel {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-8);
+  width: 100%;
+  min-height: var(--density-cotidiano-row-height);
+  background: transparent;
+  border: 0;
+  color: var(--color-text);
+  padding: var(--density-cotidiano-row-padding);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--font-size-ui);
+  text-align: left;
+  transition: background var(--motion-duration-fast) var(--motion-ease-entrada);
+}
+.channel:hover {
+  background: var(--color-surface-raised);
+}
+/* Selected (emphasis ladder §0.2): accent-wash fill + a 3px accent side bar (inset → no layout shift). */
+.channel--selected,
+.channel--selected:hover {
+  background: var(--color-accent-wash);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+/* DM row (PR-β — manifest workspace §2): peer avatar (cotidiano 28) + name + unread mark. The
+   presence dot lives inside the Avatar primitive; its ring reads the .sidebar --presence-ring
+   override (§7 item 4). Channel rows keep the '#' idiom — no avatar (ratified). The name sits at the
+   same x in both sections: the channel mark is a column as wide as the avatar, and since it lives
+   inside the name its margin is the row's gap (§13 item 4). Only in the list: the header and the
+   other ChannelLabel consumers keep the base mark. */
+.channel .channel-label__mark,
+.channel .channel-label__lock {
+  margin-right: var(--space-8);
+  color: var(--color-muted);
+}
+/* The '#' stays INLINE: any other display breaks the accessible name ("# all", not "#all"). In a mono
+   face 1ch is the glyph, so the padding completes the 28 column around it. */
+.channel .channel-label__mark {
+  padding: 0 calc((var(--density-cotidiano-avatar) - 1ch) / 2);
+  font-family: var(--font-family-mono);
+}
+.channel .channel-label__lock {
+  justify-content: center;
+  width: 28px;
+}
+/* Read rest: regular + muted (§13 item 4). */
+.channel .channel__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-regular);
+  color: var(--color-muted);
+}
+/* Unread: the name carries weight 500 and the text color. `:has()` keeps it markup-free (the unread
+   state is the presence of the dot or the pill). */
+.channel:has(.badge, .channel__unread-dot) .channel__name {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+.channel--selected .channel__name {
+  color: var(--color-text);
+}
+/* A group with nobody else (workspace.md §22.1 item 5, §22.2): "Só você", quiet in every state. */
+.channel .channel__name.channel__name--alone {
+  color: var(--color-muted);
+}
+
+/* Group conversation block (ADR-094; workspace.md §22.2): the DM avatar's place, with the number of
+   participants. The Avatar's background, border and monogram colour (§4.2: the canvas greige does not
+   land; the border is §22.5's erratum), the number in mono at meta size and medium weight. 28 in the
+   list (the cotidiano avatar), 30 raw in the header (§22.2). The agent's dot is the AgentAvatar
+   indicator's idiom at the presence dot's place (§22.5 item 1): 9, ring 2 reading --presence-ring
+   (§7 item 4), -1/-1. */
+.group-block-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.group-block {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--density-cotidiano-avatar);
+  height: var(--density-cotidiano-avatar);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+.group-block[data-size='header'] {
+  width: 30px;
+  height: 30px;
+}
+.group-block__agent {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: var(--color-agent-mark);
+  border: 2px solid var(--presence-ring);
+}
+
+/* Unread without a mention (§13 item 5): 7, the sidebar's dot — not ADR-067's thread .unread-dot. */
+.channel__unread-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+/* Mention (emphasis ladder §0.2; §13 item 5): the filled pill with the mention count. */
+.badge--mention {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.channel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-16);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+.channel-header__heading {
+  flex: 1;
+  min-width: 0;
+}
+/* Name and topic cut with an ellipsis, never wrap (manifest workspace.md §12 item 1). */
+.channel-header__name,
+.channel-header__topic {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.channel-header__name {
+  margin: 0;
+  font-size: var(--font-size-title);
+  font-weight: var(--font-weight-medium);
+}
+/* Header de canal privado (workspace.md §14 item 5, §6.7; fork 6 do §8.18): cadeado 14 em muted, gap
+   --space-4 (a margem do mark, abaixo). */
+.channel-header__name .channel-label__lock {
+  color: var(--color-muted);
+}
+/* A group with nobody else (workspace.md §22.1 item 5): "Só você", quiet. */
+.channel-header__name--alone {
+  color: var(--color-muted);
+}
+/* Channel mark (PLANO-RELEASE-PUBLICA §8.35, §8.66): '#' or the lock, its own span before the name,
+   in the list row, the header, the archived row and the search hit. Inherits the text colour
+   (currentColor); pre-055 surface (workspace.md §4.1). The label is INLINE: the name is plain text of
+   the container, so its text-overflow cuts a private name like a public one. The distance to the
+   name is the mark's margin, the same for both kinds. */
+.channel-label {
+  display: inline;
+}
+.channel-label__mark,
+.channel-label__lock {
+  margin-right: var(--space-4);
+}
+.channel-label__lock {
+  display: inline-flex;
+  vertical-align: middle;
+}
+/* The accessible name's word break (ChannelLabel.tsx): visually hidden, out of the flow, so it adds
+   no glyph to the margin. white-space: pre keeps the lone space in the layout (a collapsed one would
+   drop out of the accessible name). The 1px is accessibility geometry, not scale. */
+.channel-label__space {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: pre;
+}
+.channel-header__topic {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+}
+/* Manage entry point (Track U/U1). Quiet icon button, 34 raw (§6.5): the export's `[data-ic]` hover,
+   text over the page's floor. Accent is not decoration, nor state here (ADR-027). */
+.channel-header__manage {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.channel-header__manage:hover {
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.timeline {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-12) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  /* Air between author groups (OG-1): the 20 step earns its own breath between speakers. */
+  gap: var(--space-20);
+  min-height: 0;
+}
+/* Search jump in flight (manifest workspace.md §8 item 10): a sticky pill on top of the timeline —
+   sweep + "Abrindo a mensagem…". The timeline does not dim (§6.1); its rows are inert meanwhile. */
+.timeline__jump {
+  position: sticky;
+  top: var(--space-8);
+  z-index: 1;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 200px;
+  padding: var(--space-8) var(--space-16);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-overlay);
+}
+.timeline__jump-text {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+  text-align: center;
+}
+.timeline__empty {
+  color: var(--color-muted);
+}
+.timeline__older {
+  align-self: center;
+  background: transparent;
+  border: none;
+  color: var(--color-accent);
+  padding: var(--space-4) var(--space-8);
+  cursor: pointer;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+/* Day divider (manifest workspace.md §10 items 1–2, §6.3): rule · label · rule, not sticky. Its padding
+   is the whole of its rhythm, as in the export, where groups space themselves: the two negative
+   margins take back the .timeline gap on the sides that face a group. */
+.timeline__day {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-16) var(--space-4) var(--space-8);
+  margin-bottom: calc(var(--space-20) * -1);
+}
+.message__group + .timeline__day {
+  margin-top: calc(var(--space-20) * -1);
+}
+.timeline__day-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+.timeline__day-label {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+}
+
+.message {
+  display: flex;
+  gap: var(--space-8);
+  align-items: baseline;
+  /* Anchor for the hover action bar (OG-6). */
+  position: relative;
+  /* Hover row tint (OG-6) breathes one step past the text without shifting layout — the negative
+     margin is reabsorbed by the container's own horizontal padding (timeline/thread = space-16). */
+  padding: 3px var(--space-12);
+  margin: 0 calc(var(--space-8) * -1);
+  border-radius: var(--radius-md);
+}
+/* Row highlight on hover (OG-6): a calm tint one step up from the page (surface over bg). */
+.message:hover {
+  background: var(--color-surface);
+}
+/* Author name is NOT accent (acento nunca é decorativo — ADR-027 eixo 4): text colour, weight 500. */
+.message__author {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+/* Afordância de perfil-de-outro (ADR-043): o header de autor (avatar + nome) abre o perfil. Reset de
+   botão — herda tipografia, sem chrome — pra não alterar o layout do header. Underline só no hover do
+   nome (o avatar é decorativo). */
+.message__author-open {
+  appearance: none;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.message__author-open:hover .message__author {
+  text-decoration: underline;
+}
+
+/* ── Grouped timeline (PR-2): consecutive same-author messages collapse into one block — an
+   avatar/timestamp gutter beside a content column. The ThreadPanel shares MessageRow but supplies
+   no group context, so it keeps the flat layout above. ─────────────────────────────────────── */
+.message__group {
+  display: flex;
+  flex-direction: column;
+  /* 0: o artboard não tem ar entre linhas do mesmo grupo, manifesto workspace.md §6.4. */
+  gap: 0;
+}
+.message--grouped {
+  align-items: flex-start;
+  /* The gutter is the avatar column's own width (below) — not a flex gap. */
+  gap: 0;
+}
+/* Avatar/timestamp gutter (OG-3): width = avatar + one step, expressed as the calc so it tracks the
+   avatar density token (never a coined `40`). The avatar sits left; the trailing step is the gutter
+   gap. Continuations reserve the same column, so their bodies hang-indent to the same edge. */
+.message__avatar {
+  flex: none;
+  width: calc(var(--density-cotidiano-avatar) + var(--space-12));
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+.message__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+/* Quote + body: what the send states dim (§10 items 5–6). Lays its children out as .message__main does. */
+.message__content {
+  align-self: stretch;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  transition: opacity var(--motion-duration-base) var(--motion-ease-entrada);
+}
+/* The quoted reply — the thread affordance — hangs one optical notch past the gutter (14 one-off →
+   54 from the row edge, OG-3), the one place the deeper indent is asked for. */
+.message__group .message__quote {
+  /* stylelint-disable-next-line declaration-property-value-disallowed-list -- 14px adjudicado: OG-3 do DELTA-workspace (indent óptico do quote, one-off sem token) */
+  margin-left: 14px;
+}
+/* Header line of a group: author beside a muted wall-clock timestamp. */
+.message__meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+}
+.message__timestamp,
+.message__time-rail {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+/* Right-aligned on the avatar's width (manifest workspace.md §10 item 4). HH:MM is wider than that:
+   as an overflowing flex item it grows left, into the row's padding — text-align would grow it right,
+   over the body. */
+.message__time-rail {
+  display: flex;
+  justify-content: flex-end;
+  width: var(--density-cotidiano-avatar);
+  white-space: nowrap;
+}
+/* Menção-a-mim (ADR-037 M1): o accent É o sinal de menção (o próprio sentido do token — "menção"), não
+   decoração. Wash accent na linha + barra accent à esquerda (inset, sem deslocar layout) marcam a
+   mensagem que te puxou. Extensão (linha vs. só corpo) ajustável na revisão. */
+.message--mentions-me {
+  background: var(--color-accent-wash);
+  box-shadow: inset 3px 0 0 0 var(--color-accent);
+  border-radius: var(--radius-md);
+}
+/* The label under a mention (manifest workspace.md §11 item 1, §6.4): dot + mono meta, in accent. */
+.message__mention {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-accent);
+}
+.message__mention-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+/* ADR-093 (Proposto), workspace.md §21.1 item 8, §21.2: a command message's chip (accent on accent-wash)
+   and the line "comando para {agente}" — the "menção a você" idiom, without the dot and in muted. */
+.message__command {
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-wash);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
+}
+.message__command-line {
+  display: inline-flex;
+  align-items: center;
+  margin-top: var(--space-4);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+}
+.message__edited {
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+}
+.message__image {
+  max-width: 320px;
+  max-height: 240px;
+  border-radius: var(--radius-md);
+  display: block;
+}
+/* §8.27 B: with the domain's dimensions the box is reserved before the bytes load. The width fits
+   BOTH caps of .message__image by aspect ratio (no distortion for tall images), and the height
+   follows from --image-ratio (set inline from width/height). The pending state is the same box. */
+.message__image--sized {
+  width: min(320px, 100%, calc(240px * var(--image-ratio)));
+  height: auto;
+  aspect-ratio: var(--image-ratio);
+}
+.message__image--pending {
+  background: var(--color-surface-raised);
+}
+/* ADR-066: thread summary under a root (manifest workspace.md §11 items 5–6, §6.4) — accent action
+   text, the latest-reply suffix muted, and the unread marker (.unread-dot, ADR-067). The button's own
+   padding and a step above it give the air; the left edge sits on the body's. */
+.message__thread-summary {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--space-8);
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-8) var(--space-4) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+.message__thread-summary:hover {
+  background: var(--color-accent-wash);
+}
+.message__thread-last {
+  color: var(--color-muted);
+  font-weight: var(--font-weight-regular);
+}
+/* A real link → action (accent text). */
+.message__file {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+.message__file:hover {
+  text-decoration: underline;
+}
+.message__body--unsupported,
+.message__body--unavailable {
+  color: var(--color-muted);
+  font-style: italic;
+}
+/* The row's wash eases in over `base`, never pulses or shakes; the send states' body opacity settles
+   the same way (.message__content). prefers-reduced-motion collapses both (the global rule at the
+   foot of this file). */
+.message {
+  transition: background-color var(--motion-duration-base) var(--motion-ease-entrada);
+}
+/* The row a search jump reached (manifest workspace.md §8 item 9, §6.1): the "está aqui" wash held for
+   60% of motion-duration-linger, then faded out (ease-saida). The whole row, --radius-md (the .message
+   box), whose own padding gives the wash its room. prefers-reduced-motion: solid, then gone in
+   motion-duration-base (foot of file). */
+.message[data-highlight] {
+  animation: highlight-linger var(--motion-duration-linger) var(--motion-ease-saida) both;
+}
+@keyframes highlight-linger {
+  0%,
+  60% {
+    background-color: var(--color-highlight-wash);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+@keyframes highlight-hold {
+  from,
+  to {
+    background-color: var(--color-highlight-wash);
+  }
+}
+@keyframes highlight-out {
+  from {
+    background-color: var(--color-highlight-wash);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+/* Sending (functional, not accent §0.2): a calm dim of the body alone — its status stays legible. */
+.message--pending .message__content {
+  opacity: 0.5;
+}
+/* Failed (functional → danger §0.2): the body recedes; the danger lives on the status line and the
+   gutter glyph, with no alert background (manifest workspace.md §10 item 6). */
+.message--failed .message__content {
+  color: var(--color-muted);
+}
+.message__time-rail--failed {
+  font-family: var(--font-family-sans);
+  color: var(--color-danger);
+}
+.message__status {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+/* The send state's line under the body, as opposed to the media status inline in a file body. */
+.message__status--send {
+  gap: var(--space-8);
+  margin-top: var(--space-4);
+}
+/* Indeterminate "downloading" indicator (no percentage — progress is deferred). prefers-reduced-motion
+   collapses the spin (see the media query at the foot of this file). */
+.message__spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--color-muted);
+  border-top-color: transparent;
+  border-radius: var(--radius-full);
+  animation: message-spin 0.7s linear infinite;
+}
+@keyframes message-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.message__status--failed {
+  color: var(--color-danger);
+}
+/* Retry of a failed send: a text button on the status line. */
+.message__retry-inline {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+/* Retry of a failed media download. */
+.message__retry {
+  margin-left: var(--space-8);
+  background: transparent;
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-8);
+  cursor: pointer;
+  font-size: var(--font-size-meta);
+}
+
+.reactions {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+}
+.reaction {
+  display: inline-flex;
+  gap: var(--space-4);
+  align-items: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  padding: 0 var(--space-8);
+  /* OG-4: inline control height — a per-component constant (the CT verdict), not a global scale
+     token; routed here rather than to a Chip primitive (deferred — single in-scope consumer). */
+  min-height: 26px;
+  font-size: var(--font-size-meta);
+  color: var(--color-text);
+  cursor: pointer;
+  line-height: 1.6;
+}
+.reaction--mine {
+  border-color: var(--color-accent);
+  background: var(--color-accent-wash);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
+}
+.reaction:not(.reaction--mine):hover,
+.reaction--add:hover {
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+.reaction__count {
+  color: var(--color-muted);
+}
+.reaction--mine .reaction__count {
+  color: var(--color-accent);
+}
+/* The `+` at the end of the line (§6.4): round, 26 like the pills. */
+.reaction--add {
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  color: var(--color-muted);
+}
+.reaction-anchor {
+  position: relative;
+  display: inline-flex;
+}
+/* Quick picker (manifest workspace.md §11 item 3): the action bar's card. It opens above its trigger,
+   left-aligned on the `+` and right-aligned in the bar; below it where the scroller would clip it. */
+.reaction-picker {
+  position: absolute;
+  bottom: calc(100% + var(--space-4));
+  left: 0;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+}
+.reaction-picker--below {
+  top: calc(100% + var(--space-4));
+  bottom: auto;
+}
+.message__actions .reaction-picker {
+  right: 0;
+  left: auto;
+}
+.reaction-picker__option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: var(--font-size-body);
+  cursor: pointer;
+}
+.reaction-picker__option:hover {
+  background: var(--color-bg);
+}
+
+/* Composer — raised card (workspace.md §6.5, §12): three stacked rows (formatting toolbar · field ·
+   action row), each with its own padding; the card has none. The thread variant (`--compact`) is one
+   row: field + attach + icon-only send. The card clips its rows to the radius, except while the
+   mention picker is open: that popup hangs above the card. */
+.composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0 var(--space-16) var(--space-16);
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  overflow: hidden;
+}
+.composer:has(.composer__suggest) {
+  overflow: visible;
+}
+.composer:focus-within {
+  border-color: var(--color-accent);
+}
+/* The card is the frame: the field carries no border/fill of its own. One line at rest (body size ×
+   its line-height + padding), growing with content; Enter sends, Shift+Enter newlines. */
+.composer__input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  color: var(--color-text);
+  padding: var(--space-12);
+  /* You type the message here (a fala) → body size. */
+  font-size: var(--font-size-body);
+  font-family: var(--font-family-sans);
+  line-height: var(--font-line-height-body);
+  resize: none;
+  min-height: calc(var(--font-size-body) * var(--font-line-height-body) + var(--space-12) * 2);
+}
+.composer__input:focus {
+  outline: none;
+}
+/* Rich variant (ADR-051): o EditorContent é um wrapper em volta do contenteditable do ProseMirror —
+   o wrapper carrega .composer__input e o padding; o filho tem a altura de uma linha e some com o
+   outline (o card é o frame). */
+.composer__input--rich > [contenteditable] {
+  min-height: calc(var(--font-size-body) * var(--font-line-height-body));
+  outline: none;
+}
+/* Paragraphs carry no UA margin: the air between lines is the body line-height alone (§6.5). */
+.composer__input--rich .tiptap p {
+  margin: 0;
+}
+/* Formatting toolbar (top row), divided from the field below. Quiet 28 raw icon buttons (§6.5): no
+   chrome at rest, the export's `[data-ic]` hover. */
+.composer__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-4) var(--space-8);
+  border-bottom: 1px solid var(--color-border);
+}
+.composer__toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-size-ui);
+}
+.composer__toolbar button:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+.composer__toolbar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* Divider between mark buttons (B I S) and block/insert buttons (link, list, code). */
+.composer__toolbar-sep {
+  width: 1px;
+  height: var(--space-16);
+  margin: 0 var(--space-4);
+  background: var(--color-border);
+}
+/* Active mark/list (rich island, ADR-051): the toolbar button reflects editor.isActive via
+   aria-pressed. Same pair as the hover, fixed (§6.5). */
+.composer__toolbar button[aria-pressed='true'] {
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+/* Mention chip (rich island, ADR-051 PR-3): the atomic mention node renders as `@Name` in accent —
+   a quiet inline highlight, not a filled pill. The opaque UserId lives in the node's attr, never in
+   the DOM (P1), so this styles only the visible label. */
+.composer__input--rich .mention {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
+}
+/* Command chip in the composer (ADR-093 Proposto, workspace.md §21.1 item 7, §21.2): the same node as the
+   mention with the same treatment (accent, medium, no fill); the gap to the text is the text space after
+   the node. While nothing but blanks follows it, the paragraph carries the hint "{dica} · para {agente}" —
+   a decoration of its own drawn by the live placeholder's rule (muted, one line, ellipsis). */
+.composer__input--rich .tiptap p.composer__command-hinted {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.composer__input--rich .tiptap p.composer__command-hinted::after {
+  content: attr(data-command-hint);
+  color: var(--color-muted);
+  pointer-events: none;
+}
+/* Placeholder (rich island): the TipTap Placeholder extension decorates the empty first block with
+   .is-editor-empty + a data-placeholder attribute; render it as ::before so the caret stays put, out of the flow so a long one cuts on one line (§6.5). */
+.composer__input--rich .tiptap p.is-editor-empty:first-child {
+  position: relative;
+}
+.composer__input--rich .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  left: 0;
+  right: 0;
+  color: var(--color-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* Action row (bottom): attach + mention on the left, send on the right. */
+.composer__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-8) var(--space-8);
+}
+.composer__actions-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* Attach (a label wrapping the hidden file input) and mention read as quiet icon buttons, 34 raw
+   (§6.5): the export's `[data-ic]` hover. */
+.composer__attach,
+.composer__mention {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-muted);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.composer__attach:hover,
+.composer__mention:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+.composer__mention:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.composer__file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+/* Send: the tier's Button (§4.11). Only the distance between label and icon is the composer's. */
+.ui-button.composer__send {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+/* Compact (thread panel, §12 item 6): the same card, on the panel's own wrapper rhythm. The send is a
+   square: its width follows the primitive's height, touch floor included. */
+.composer--compact {
+  margin: var(--space-8) var(--space-12) var(--space-12);
+}
+.composer--compact .ui-button.composer__send {
+  justify-content: center;
+  width: var(--density-cotidiano-row-height);
+  padding: 0;
+}
+@media (pointer: coarse) {
+  .composer--compact .ui-button.composer__send {
+    width: var(--density-touch-floor);
+  }
+}
+/* Edit island (ADR-051 PR-5b): the same vertical toolbar/input/footer structure, but mounted INLINE
+   inside a message bubble — so it drops the composer's outer margin and sits as a quiet framed edit
+   surface, ~3 lines tall at rest (no artboard: §4.11 keeps its geometry). The Save/Cancel footer
+   right-aligns (no send/action-row here). */
+.composer--edit {
+  margin: 0;
+}
+.composer--edit .composer__input--rich > [contenteditable] {
+  min-height: calc(var(--font-size-body) * var(--font-line-height-body) * 3);
+}
+.composer__actions--edit {
+  justify-content: flex-end;
+  gap: var(--space-4);
+}
+
+/* Mention picker (ADR-037 M2b). The textarea + popover share a relative field; the composer sits at
+   the page's bottom edge, so the picker opens UPWARD (bottom: 100%). Inline, not a primitive —
+   Popover stays deferred until the 2nd consumer (the reactions menu). */
+.composer__field {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+/* Suggestion popup (ADR-093 Proposto, workspace.md §21.1 items 1–6, §21.2): one box for `/` commands and
+   `@` mention — the live @-picker's geometry, with the 1px border of the other overlay boxes (§21.5 item 1).
+   Opens upward over the timeline at the card's width; 240 ceiling with internal scroll. */
+.composer__suggest {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  list-style: none;
+  margin: 0 0 var(--space-4);
+  padding: var(--space-4);
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+}
+.composer__suggest-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--density-gestao-row-padding);
+  min-height: var(--density-gestao-row-height);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text);
+  font-size: var(--font-size-body);
+  font-family: var(--font-family-sans);
+}
+.composer__suggest-option--active {
+  background: var(--color-accent-wash);
+  color: var(--color-accent);
+}
+.composer__suggest-name {
+  flex: 1;
+  min-width: 0;
+}
+.composer__suggest-command {
+  flex: none;
+  font-weight: var(--font-weight-medium);
+}
+.composer__suggest-description {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.composer__suggest-agent {
+  flex: none;
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+/* PLANO-AGENTES §0.3.24 item 9: the touch floor on a row, in both modes. */
+@media (pointer: coarse) {
+  .composer__suggest-option {
+    min-height: var(--density-touch-floor);
+  }
+}
+/* Link dialog form (PR-4, ADR-051 §4): the Texto/URL Fields stack with the shared dialog gap. The
+   Dialog scrim/surface and the Field/Button controls carry the rest — this is the sole layout rule. */
+.composer__link-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+/* Hover action bar (OG-6, manifest workspace.md §11 item 4, §6.4): a card on the row's top right
+   edge, revealed on hover and focus with an entry nudge (translateY 3 → 0). Hidden, it takes no
+   pointer: it overhangs the row above. The confirming state keeps the screen's geometry (§4.10). */
+.message__actions {
+  position: absolute;
+  top: calc(var(--space-12) * -1);
+  right: var(--space-12);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-entrada),
+    transform var(--motion-duration-fast) var(--motion-ease-entrada);
+}
+.message:hover .message__actions,
+.message:has(:focus-visible) .message__actions,
+.message__actions--confirming {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.message__actions--confirming {
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+}
+/* Inside the bar the actions are icon buttons (OG-6): 28 square, no fill or border, the glyph riding
+   `currentColor` from muted up to text on hover, over the page's floor (the export's `[data-ic]`).
+   Overrides the text-button look of the inline affordances below (accent/underline). */
+.message__actions .message__react-open,
+.message__actions .message__edit-open,
+.message__actions .message__delete-open,
+.message__actions .message__reply-open,
+.message__actions .message__thread-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin-left: 0;
+  border: none;
+  background: none;
+  color: var(--color-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.message__actions .message__react-open:hover,
+.message__actions .message__edit-open:hover,
+.message__actions .message__delete-open:hover,
+.message__actions .message__reply-open:hover,
+.message__actions .message__thread-open:hover {
+  color: var(--color-text);
+  background: var(--color-bg);
+  text-decoration: none;
+}
+
+/* Inline edit affordance. */
+.message__edit-open,
+.message__reply-open,
+.message__thread-open {
+  background: none;
+  border: none;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-size: var(--font-size-meta);
+  padding: 0;
+  margin-left: var(--space-8);
+}
+.message__edit-open:hover,
+.message__reply-open:hover,
+.message__thread-open:hover {
+  text-decoration: underline;
+}
+.message__edit {
+  display: inline-flex;
+  gap: var(--space-4);
+  align-items: center;
+}
+.message__edit-input {
+  font-size: var(--font-size-body);
+  font-family: var(--font-family-sans);
+  padding: 2px var(--space-8);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+}
+.message__edit-save,
+.message__edit-cancel {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-8);
+  cursor: pointer;
+  font-size: var(--font-size-meta);
+}
+.message__edit-save {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/* Delete confirmation (ADR-075 dec. 4): the bar holds the question and two text buttons, in the
+   edit mode's inline idiom; "Apagar" rides the danger token, like the media Retry's outline. */
+.message__delete-question {
+  color: var(--color-text);
+  font-size: var(--font-size-meta);
+  padding-left: var(--space-4);
+}
+.message__delete-confirm,
+.message__delete-cancel {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-8);
+  cursor: pointer;
+  font-size: var(--font-size-meta);
+}
+.message__delete-confirm {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+/* ADR-091 (Proposto): the approval card inside the agent's row (manifest workspace.md §17.1, §17.3).
+   Raised card, border, --radius-md; no side bar (that is the mention's idiom). 520px is a component
+   constant of the main timeline (§17.3); in the thread it has no ceiling. */
+.approval {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin-top: var(--space-4);
+  padding: var(--space-12);
+  max-width: 520px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.thread-panel .approval {
+  max-width: none;
+}
+.approval__label {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+}
+.approval__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+.approval__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+/* The chosen option: a static, neutral pill — no green, no red (§17.1 item 7). 26px is OG-4 (§17.3). */
+.approval__pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 var(--space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+
+/* The viewer's own answer in flight (§17.1 item 5, the idiom of §10 item 5): the pill dims, "Enviando…"
+   stays legible. Not sent (item 6, §10 item 6): the pill recedes to muted; the danger lives on the status. */
+.approval__pill--sending {
+  opacity: 0.5;
+}
+.approval__pill--failed {
+  color: var(--color-muted);
+}
+/* The click moves focus to the card's group (its button goes away with the state): programmatic focus
+   for the announcement, no ring — the account-settings subtitle's precedent. */
+.approval:focus {
+  outline: none;
+}
+
+/* Reply: affordance, quoted preview, composer reply mode. */
+.message__quote {
+  display: block;
+  background: transparent;
+  border: 0;
+  border-left: 3px solid var(--color-accent);
+  color: var(--color-muted);
+  cursor: pointer;
+  font-size: var(--font-size-meta);
+  text-align: left;
+  padding: var(--space-4) var(--space-8);
+  margin: 2px 0;
+}
+.message__quote-author {
+  font-weight: var(--font-weight-medium);
+  margin-right: var(--space-8);
+}
+.message__quote--unavailable {
+  cursor: default;
+  font-style: italic;
+}
+.composer__reply {
+  /* The card is a column now (was a flex-wrap row); this row sizes to its content. The card has no
+     padding of its own (§6.5): this row keeps its inset as a margin. */
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+  margin: var(--space-8) var(--space-12) 0;
+  padding: var(--space-4) var(--space-8);
+  border-left: 3px solid var(--color-accent);
+}
+.composer__reply-excerpt {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer__reply-cancel {
+  background: transparent;
+  border: 0;
+  color: var(--color-muted);
+  cursor: pointer;
+  font-size: var(--font-size-ui);
+}
+
+/* ── Thread panel ─────────────────────────────────────────────────────────────────────── */
+.workspace:has(.thread-panel) {
+  grid-template-columns: 264px minmax(0, 1fr) 330px;
+}
+.thread-panel {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+  min-height: 0;
+}
+.thread-panel__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-16);
+  border-bottom: 1px solid var(--color-border);
+}
+.thread-panel__heading {
+  flex: 1;
+  min-width: 0;
+}
+.thread-panel__title {
+  margin: 0;
+  font-size: var(--font-size-title);
+  font-weight: var(--font-weight-medium);
+}
+/* The channel under the title (manifest workspace.md §11 item 9, §6.4), with its mark. */
+.thread-panel__subtitle {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+/* ADR-067: a thread has an unread reply — a dot, no number (the per-thread signal is a boolean). Used
+   on the root's thread summary and in the ThreadPanel header. Sized on the existing space scale. */
+.unread-dot {
+  flex: none;
+  width: var(--space-8);
+  height: var(--space-8);
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+.thread-panel__close {
+  background: transparent;
+  border: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-display);
+  cursor: pointer;
+  line-height: 1;
+}
+.thread-panel__root {
+  padding: var(--space-8) var(--space-16);
+  border-bottom: 1px solid var(--color-border);
+  /* The pinned root is clamped so a long root can never crush the replies area now that the
+     panel is viewport-bound; an oversized root scrolls internally. Root-inside-the-replies-
+     scroller (Slack-style single document) is a deliberate non-goal here — recorded with a
+     dogfood trigger in PLANO-DESIGN-SYSTEM §8. */
+  max-height: 40dvh;
+  overflow-y: auto;
+}
+/* "N respostas" between the root and the first reply (§11 item 9): the day divider's recipe, in place
+   of the root's rule. */
+.thread-panel__root:has(+ .thread-panel__divider) {
+  border-bottom: 0;
+}
+.thread-panel__divider {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-4) var(--space-16);
+}
+.thread-panel__replies {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-8) var(--space-16);
+  min-height: 0;
+}
+.thread-panel__empty {
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+}
+
+/* ── Channel management panel (Track U/U1, ADR-029; modal since ADR-038) ───────────────────
+   The first surface dressed in the `gestao` density regime (ADR-028 §5): denser rows than the
+   spine's `cotidiano`. No longer a grid column — it composes a single Dialog (ADR-038, Fork A),
+   so the grid caps at three columns (thread is the only persistent sibling). The Dialog provides
+   the header/×/footer chrome; only the body/danger-zone styling below is surface-specific.
+   Interactive heights respect the touch floor below. */
+.channel-management-panel__title {
+  margin: 0;
+  font-size: var(--font-size-title);
+  font-weight: var(--font-weight-medium);
+  flex: 1;
+}
+.channel-management-panel__body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.channel-management-panel--main .channel-management-panel__body {
+  padding: var(--space-16);
+}
+.channel-management-panel__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.channel-management-panel__label {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.channel-management-panel__input-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-12);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.channel-management-panel__input-wrap:focus-within {
+  border-color: var(--color-accent);
+}
+.channel-management-panel__input-mark {
+  display: inline-flex;
+  color: var(--color-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-ui);
+}
+.channel-management-panel__input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--density-gestao-row-height);
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--color-text);
+  padding: var(--space-8) 0;
+  font-size: var(--font-size-ui);
+  font-family: var(--font-family-sans);
+}
+.channel-management-panel__feedback {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.channel-management-panel__error {
+  font-size: var(--font-size-meta);
+  color: var(--color-danger);
+}
+
+/* ── Member roster (Track U/U2, ADR-029; manifest channel-management §7.3) ────────────────── */
+.channel-management-panel__roster {
+  display: flex;
+  flex-direction: column;
+}
+.channel-management-panel__roster-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  padding: 0 var(--space-4) var(--space-4);
+}
+.channel-management-panel__roster-title {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-muted);
+  text-transform: uppercase;
+}
+.channel-management-panel__add-member {
+  background: transparent;
+  border: 0;
+  color: var(--color-accent);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-family-sans);
+  padding: var(--space-4) var(--space-8);
+  cursor: pointer;
+}
+.channel-management-panel__add-member:hover {
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+.channel-management-panel__roster-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.channel-management-panel__member {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--density-gestao-row-padding);
+  min-height: var(--density-gestao-row-height);
+  border-radius: var(--radius-md);
+  transition: background var(--motion-duration-fast);
+}
+.channel-management-panel__member:hover {
+  background: var(--color-surface);
+}
+.channel-management-panel__member-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+/* Afordância de perfil-de-outro (ADR-043): o bloco avatar+nome da linha de membro abre o perfil.
+   Reset de botão que assume o flex:1 da linha (empurra role/remove pra direita) e alinha avatar+nome. */
+.channel-management-panel__member-open {
+  appearance: none;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  text-align: left;
+}
+.channel-management-panel__member-open:hover .channel-management-panel__member-name {
+  text-decoration: underline;
+}
+.channel-management-panel__member-name {
+  flex: 1;
+  font-size: var(--font-size-ui);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.channel-management-panel__member-you {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+/* Role as text (manifest §7.3). The admin↔member <select> wears the same dress (§4.3): the arrow
+   shows on hover/focus only, in the row's right padding, so the word sits where the read-only label
+   sits and the arrow clears the Remove before it. */
+.channel-management-panel__member-role,
+.channel-management-panel__role-control {
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-muted);
+}
+.channel-management-panel__member-role[data-role='admin'],
+.channel-management-panel__role-control[data-role='admin'] {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-accent);
+}
+.channel-management-panel__role-field {
+  position: relative;
+  display: inline-flex;
+}
+.channel-management-panel__role-field::after {
+  content: '▾';
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  padding-left: var(--space-4);
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+  pointer-events: none;
+  opacity: 0;
+}
+.channel-management-panel__role-field:hover::after,
+.channel-management-panel__role-field:focus-within::after {
+  opacity: 1;
+}
+.channel-management-panel__role-control {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-family: var(--font-family-sans);
+  text-align: right;
+  cursor: pointer;
+}
+.channel-management-panel__role-control:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 1px;
+}
+.channel-management-panel__role-control:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* Per-row remove (manifest §4.4, §7.6): in the flow before the role, so the role aligns right on
+   every row; shown on row hover / keyboard focus. */
+.channel-management-panel__member-remove {
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-danger);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-meta);
+  padding: 2px var(--space-8);
+  cursor: pointer;
+  opacity: 0;
+}
+.channel-management-panel__member:hover .channel-management-panel__member-remove,
+.channel-management-panel__member:focus-within .channel-management-panel__member-remove {
+  opacity: 1;
+}
+.channel-management-panel__member-remove:hover {
+  border-color: var(--color-danger);
+  background: var(--color-danger-wash);
+}
+.channel-management-panel__member-error {
+  font-size: var(--font-size-meta);
+  color: var(--color-danger);
+  padding-left: calc(var(--density-gestao-avatar) + var(--space-8));
+}
+
+/* Foot (manifest §7.4–5): the divider is this block's border, inset to the body's padding; the
+   verbs sit side by side. The neutral/danger dress is the Button variant. */
+.channel-management-panel__footer {
+  display: flex;
+  gap: var(--space-8);
+  margin: 0 var(--space-16);
+  padding: var(--space-16) 0;
+  border-top: 1px solid var(--color-border);
+}
+.ui-button.channel-management-panel__footer-action {
+  flex: 1;
+}
+
+/* Management overlay residue (PR-1b). The confirm + add-member picker compose Dialog (ADR-036) for
+   the scrim/surface/header/footer; only the title's dot, the body copy + inline error stay bespoke (no
+   Dialog slot styles them). The cancel/confirm/close buttons compose Button (secondary / fill or
+   danger-fill). Shared by the channel's panel and the group's (ManageShell). */
+/* The confirm's dot (channel-management.md §6.1, §9): 9 raw beside the title, accent for a primary
+   verb (archive, convert), danger for leave and remove. */
+.manage-dialog__title {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+}
+.manage-dialog__dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-top: var(--space-8);
+  border-radius: var(--radius-full);
+  background: var(--color-danger);
+}
+.manage-dialog__dot[data-tone='primary'] {
+  background: var(--color-accent);
+}
+.manage-dialog__body {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-ui);
+}
+.manage-dialog__error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: var(--font-size-meta);
+}
+
+/* ── Add-member picker (Track U/U2, ADR-029 §3) — the option list inside the composed Dialog. ── */
+.channel-management-panel__picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.channel-management-panel__picker-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  min-height: var(--density-gestao-row-height);
+  padding: var(--density-gestao-row-padding);
+  cursor: pointer;
+  text-align: left;
+  color: var(--color-text);
+  font-size: var(--font-size-body);
+  font-family: var(--font-family-sans);
+}
+.channel-management-panel__picker-option:hover:not(:disabled) {
+  background: var(--color-surface);
+}
+.channel-management-panel__picker-option:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.channel-management-panel__picker-empty {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-ui);
+}
+
+/* ── New-conversation surface (Track U/U3, ADR-029) ─────────────────────────────────────────
+   Creating a conversation is an all-user surface → regime COTIDIANO (S2), NOT gestao: own classes,
+   reusing only --color-scrim and the overlay shadow from the manage dialog. */
+
+/* New-conversation surface (U3): the shell + form controls are now the component-tier primitives
+   (Dialog / Field / Segmented / Button / Avatar — ADR-036). What stays here is compose-specific:
+   the form rhythm and the multi-select contact picker — a one-off, NOT a primitive (its options
+   compose Avatar). The scrim/surface/header, the segmented rail, the labeled fields and the action
+   buttons migrated to ui-* under the primitive tier section below. Values: new-conversation.md
+   §6.1/§9. */
+/* Casca dressada (new-conversation.md §6.1): slots com o próprio padding, no idioma do
+   channel-management-panel--main. Casca em si (360, radius, ✕) é §4.1. */
+.ui-dialog.compose-dialog {
+  padding: 0;
+  gap: 0;
+  max-height: calc(100vh - var(--space-16) * 2);
+  overflow: hidden;
+}
+.ui-dialog.compose-dialog > .ui-dialog__header {
+  padding: var(--space-12) var(--space-16);
+  border-bottom: 1px solid var(--color-border);
+}
+.compose-dialog__mode {
+  padding: var(--space-12) var(--space-16) 0;
+}
+/* §9 item 2: o rail encolhe ao conteúdo — .ui-segmented é flex block-level e sem `fill` ainda ocupa a largura. */
+.compose-dialog__mode .ui-segmented {
+  width: fit-content;
+}
+.compose-dialog__form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.compose-dialog__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.ui-dialog.compose-dialog .ui-dialog__footer {
+  padding: var(--space-12) var(--space-16);
+  border-top: 1px solid var(--color-border);
+}
+.compose-dialog .ui-field__input::placeholder {
+  color: var(--color-muted);
+}
+/* Nome: `#` mono muted dentro da caixa; a caixa carrega a dress do .ui-field__input (§9 item 4). */
+.compose-dialog__name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--density-cotidiano-row-height);
+  padding: 0 var(--space-8);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+.compose-dialog__name:focus-within {
+  border-color: var(--color-accent);
+}
+.compose-dialog__name-mark {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-ui);
+  color: var(--color-muted);
+}
+.compose-dialog__name-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-body);
+  font-family: var(--font-family-sans);
+}
+.compose-dialog__name-input:focus {
+  outline: none;
+}
+/* Visibilidade em uma linha; rail mono (§9 item 6). */
+.compose-dialog__visibility {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.compose-dialog__visibility-label {
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+}
+.compose-dialog__visibility .ui-segmented__segment {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-mono);
+}
+/* Adicionar pessoas: chips + sugestões tracejadas, one-off local (§9 item 7). */
+.compose-dialog__people {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.compose-dialog__people-label {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.compose-dialog__people-hint {
+  opacity: 0.7;
+}
+.compose-dialog__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+.compose-dialog__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-8) var(--space-4) var(--space-4);
+  background: var(--color-accent-wash);
+  border-radius: var(--radius-full);
+  color: var(--color-accent);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+.compose-dialog__chip-mark {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-meta);
+}
+.compose-dialog__chip-remove {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.7;
+  font-size: inherit;
+}
+.compose-dialog__chip-remove:hover,
+.compose-dialog__chip-remove:focus-visible {
+  opacity: 1;
+}
+.compose-dialog__suggest {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-12);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+  font-family: var(--font-family-sans);
+  cursor: pointer;
+}
+/* The export's `[data-ic]` hover: text over the page's floor. */
+.compose-dialog__suggest:hover {
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+.compose-dialog__picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Linha do picker em densidade GESTÃO (manifesto new-conversation.md §2/§7 item 1): o export
+   desenha 5×12 + avatar 22 — exatamente os tokens --density-gestao-* vivos; zero px cru novo.
+   Unifica o idioma com o picker de add-member do ChannelManagementPanel (já gestão). */
+.compose-dialog__picker-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  width: 100%;
+  min-height: var(--density-gestao-row-height);
+  padding: var(--density-gestao-row-padding);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  color: var(--color-text);
+  font-size: var(--font-size-body);
+  font-family: var(--font-family-sans);
+}
+/* Multi-seleção (§10.2): hover `--color-bg` só na linha livre; selecionada = fundo accent-wash + check;
+   no limite, as não selecionadas a `opacity: 0.45` (cru), cursor padrão, sem hover. */
+.compose-dialog__picker-option:hover:not(:disabled):not([aria-pressed='true']) {
+  background: var(--color-bg);
+}
+.compose-dialog__picker-option[aria-pressed='true'] {
+  background: var(--color-accent-wash);
+}
+.compose-dialog__picker-option:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.compose-dialog__option-name {
+  flex: 1;
+}
+.compose-dialog__check {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--color-accent);
+}
+.compose-dialog__picker-empty {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-ui);
+}
+.compose-dialog__error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: var(--font-size-meta);
+}
+/* Filtro local de pessoas (new-conversation.md §6.2, §9 itens 10–11): o idioma do filtro de Pessoas. */
+.compose-dialog__filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: var(--density-cotidiano-row-height);
+  padding: var(--space-8) var(--space-8) var(--space-8) var(--space-12);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-mono);
+}
+.compose-dialog__filter:focus-within {
+  border-color: var(--color-accent);
+}
+.compose-dialog__filter-icon {
+  display: inline-flex;
+  flex: none;
+}
+.compose-dialog__filter-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-overflow: ellipsis;
+  outline: none;
+}
+.compose-dialog__filter-input::placeholder {
+  color: var(--color-muted);
+}
+/* ✕ "Limpar": `Close` do sistema em caixa 22 (§6.2, 22 cru = `+` de seção). */
+.compose-dialog__filter-clear {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.compose-dialog__filter-clear:hover {
+  color: var(--color-text);
+}
+/* Sem sugestão no modo canal (§6.2): meta muted, `padding: 2px 0` (2 cru). */
+.compose-dialog__no-results {
+  margin: 0;
+  padding: 2px 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+}
+/* Modo DM (§10.1; lista do modo DM adjudicada pelo owner em 12/Nov, §10.2): corpo
+   `--space-8 --space-8 --space-8`, sem gap — cada bloco carrega o próprio padding. */
+.compose-dialog__fields--dm {
+  gap: 0;
+  padding: var(--space-8) var(--space-8) var(--space-8);
+}
+/* Faixa de chips e envelope do filtro no modo DM (§10.2, §6.2): mesmo padding. */
+.compose-dialog__dm-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-8) var(--space-8);
+}
+.compose-dialog__dm-filter {
+  padding: var(--space-4) var(--space-8) var(--space-8);
+}
+/* "Sua equipe": o título de seção da lista lateral (regra compartilhada com .channel-list__section-title);
+   aqui só o padding adjudicado. */
+.compose-dialog__team-title {
+  padding: var(--space-8) var(--space-12) var(--space-4);
+}
+/* Linha do limite (§10.2): `2px --space-12 --space-8` (2 cru). */
+.compose-dialog__limit {
+  margin: 0;
+  padding: 2px var(--space-12) var(--space-8);
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+}
+/* Sem resultado e estados da lista no modo DM (§10.2): `--space-8 --space-12`. */
+.compose-dialog__dm-note {
+  margin: 0;
+  padding: var(--space-8) var(--space-12);
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+}
+.compose-dialog__dm-note.compose-dialog__error {
+  color: var(--color-danger);
+}
+/* Agente no chip (§10.2): `AgentAvatar` 18 cru com glifo 10 cru, nos dois modos. */
+.compose-dialog__chip > .agent-avatar > .agent-avatar__box {
+  width: 18px;
+  height: 18px;
+}
+.compose-dialog__chip > .agent-avatar > .agent-avatar__box > .agent-avatar__glyph {
+  width: 10px;
+  height: 10px;
+}
+
+/* ── Rich text (ADR-012): structural render of RichDoc. ───────────────────────────────── */
+.rich {
+  display: inline;
+}
+.rich__p {
+  margin: 0 0 var(--space-4);
+}
+.rich__p:last-child {
+  margin-bottom: 0;
+}
+.rich__ul,
+.rich__ol {
+  margin: var(--space-4) 0;
+  padding-left: var(--space-16);
+}
+.rich__quote {
+  margin: var(--space-4) 0;
+  padding-left: var(--space-8);
+  border-left: 3px solid var(--color-border-strong);
+  color: var(--color-muted);
+}
+.rich__pre {
+  margin: var(--space-4) 0;
+  padding: var(--space-8) var(--space-12);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+.rich__code,
+.rich__pre code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-mono);
+}
+.rich__code {
+  background: var(--color-surface-raised);
+  padding: 1px var(--space-4);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Account banners of the slot (ADR-018 / ADR-019; workspace.md §14 items 1–2, §6.7, §16; A3-5). Same
+   margin and padding for both; flex items of .main (flex: none — the .timeline absorbs the slack, the
+   banner never squeezes nor pushes the composer). The 2px gap of the text column is OG-2 (§6.7). ── */
+.new-access-banner,
+.reset-access-banner {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-12);
+  margin: var(--space-12) var(--space-16) 0;
+  padding: var(--space-8) var(--space-12) var(--space-8) var(--space-16);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.new-access-banner__text,
+.reset-access-banner__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.new-access-banner__title,
+.reset-access-banner__title {
+  color: var(--color-text);
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+}
+.new-access-banner__detail,
+.reset-access-banner__detail {
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+}
+/* "Novo acesso": informative, never danger (§14 item 1). */
+.new-access-banner {
+  background: var(--color-accent-wash);
+}
+/* "Fui eu, dispensar": the live "Restaurar" idiom (Button ghost gestao — .channel-list__restore):
+   `0 --space-8`, meta, medium (§19.5 item 4). */
+.ui-button.new-access-banner__dismiss {
+  flex: none;
+  padding: 0 var(--space-8);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+@media not all and (pointer: coarse) {
+  .ui-button[data-size].new-access-banner__dismiss {
+    min-height: 0;
+  }
+}
+/* Reset: raised surface; danger (border and title) only where the action is risky — idle/notDone (NC-1,
+   §6.7); pending/done neutral. */
+.reset-access-banner {
+  background: var(--color-surface-raised);
+}
+.reset-access-banner[data-danger='true'] {
+  border-color: var(--color-danger);
+}
+.reset-access-banner[data-danger='true'] .reset-access-banner__title {
+  color: var(--color-danger);
+}
+.ui-button.reset-access-banner__action {
+  flex: none;
+  white-space: nowrap;
+}
+/* pending: the sweep of the search pill (§8 item 10), 120 wide (raw, §6.7). */
+.reset-access-banner__sweep {
+  flex: none;
+  width: 120px;
+}
+
+/* ── Pinned panel (ADR-091 Proposto dec. 12; workspace.md §17.2, §17.3, §19). Below the account banners,
+   with their margin on the wrapper (§19.2), which anchors the list of the other panels. Raw values are
+   component constants adjudicated in §17.3/§19.2: 240 (body and list ceiling), 2/2 (the list box, =
+   picker), z-index 5 (the list over the timeline and the composer). ── */
+.pinned-panel {
+  position: relative;
+  flex: none;
+  margin: var(--space-12) var(--space-16) 0;
+}
+.pinned-panel__card {
+  overflow: hidden;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.pinned-panel__section + .pinned-panel__section {
+  border-top: 1px solid var(--color-border);
+}
+.pinned-panel__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  width: 100%;
+  min-height: var(--density-cotidiano-row-height);
+  padding: 0 var(--space-12);
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pinned-panel__row:hover {
+  background: var(--color-surface);
+}
+.pinned-panel__row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+.pinned-panel__title {
+  flex: none;
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+}
+.pinned-panel__title--alone,
+.pinned-panel__agent {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pinned-panel__agent {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.pinned-panel__updated {
+  flex: none;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.pinned-panel__more {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+}
+.pinned-panel__chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--color-muted);
+  transform: rotate(-90deg);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-entrada);
+}
+.pinned-panel__chevron[data-open='true'] {
+  transform: none;
+}
+.pinned-panel__chevron--more {
+  transform: none;
+}
+.pinned-panel__chevron--more[data-open='true'] {
+  transform: rotate(180deg);
+}
+.pinned-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--space-12);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-body);
+}
+.pinned-panel__text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.pinned-panel__list {
+  position: absolute;
+  top: calc(100% + var(--space-4));
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 2px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+}
+.pinned-panel__row--list {
+  flex: none;
+  border-radius: var(--radius-sm);
+}
+
+/* ── Account modal (ADR-038/039; manifesto account-access §6/§7). The header/close chrome comes from
+   .ui-dialog; the seam adds the 440 width and each view's rhythm, the base rule stays untouched.
+   The confirm is the plain `gestao` Dialog (§4.4). ── */
+.ui-dialog.account-settings-dialog {
+  width: 440px;
+  max-width: 94vw;
+}
+.ui-dialog.account-settings-dialog--main {
+  padding: var(--space-20);
+  gap: var(--space-20);
+}
+.ui-dialog.account-settings-dialog--access {
+  gap: var(--space-16);
+}
+.ui-dialog.account-settings-dialog--people {
+  padding: 0;
+  gap: 0;
+  max-height: calc(100vh - var(--space-16) * 2);
+  overflow: hidden;
+}
+.ui-dialog.account-settings-dialog--people > .ui-dialog__header {
+  padding: var(--space-12) var(--space-16);
+  border-bottom: 1px solid var(--color-border);
+}
+.ui-dialog.account-settings-dialog--people .ui-dialog__title {
+  flex: 1;
+}
+/* Editar perfil (manifesto edit-profile §2): o teto + o scroll do corpo são rede de segurança — ✕ e
+   Salvar nunca saem da viewport (#269); no estado padrão nada rola. */
+.ui-dialog.account-settings-dialog--profile {
+  gap: var(--space-16);
+  max-height: calc(100vh - 2 * var(--space-24));
+}
+.account-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+}
+.account-settings--access {
+  gap: var(--space-16);
+}
+.account-settings__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  /* Cap the access list so a long history scrolls in place instead of dumping the whole roll
+     (dedup/grouping stays deferred). Matches the picker/timeline cap convention. */
+  max-height: 240px;
+  overflow-y: auto;
+}
+.account-settings__access {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  color: var(--color-text);
+  padding: var(--density-cotidiano-row-padding);
+  border-radius: var(--radius-md);
+}
+.account-settings__access:hover {
+  background: var(--color-surface);
+}
+.account-settings__access--current,
+.account-settings__access--current:hover {
+  background: var(--color-accent-wash);
+}
+.account-settings__access-mono {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--density-cotidiano-avatar);
+  height: var(--density-cotidiano-avatar);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+.account-settings__access--current .account-settings__access-mono {
+  border: 0;
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+.account-settings__access-mono--unknown {
+  border: 1px dashed var(--color-border-strong);
+  background: transparent;
+}
+.account-settings__access-mono--unknown::before {
+  content: '';
+  width: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-border-strong);
+}
+.account-settings__access-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.account-settings__access-name {
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+}
+.account-settings__access-meta {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.account-settings__access-badge {
+  flex: none;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-accent);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-full);
+  padding: var(--space-4) var(--space-8);
+  white-space: nowrap;
+}
+.account-settings__subtitle {
+  margin: 0;
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-body);
+  color: var(--color-muted);
+}
+.account-settings__access-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.account-settings__section-title {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-muted);
+  text-transform: uppercase;
+}
+.account-settings__access-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: var(--density-cotidiano-row-height);
+  padding: var(--space-12);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  cursor: pointer;
+  text-align: left;
+}
+.account-settings__access-entry:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-bg);
+}
+@media (pointer: coarse) {
+  .account-settings__access-entry {
+    min-height: var(--density-touch-floor);
+  }
+}
+.account-settings__access-entry-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.account-settings__access-entry-label {
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+.account-settings__access-entry-summary {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.account-settings__access-entry-chevron {
+  color: var(--color-muted);
+  font-size: var(--font-size-title);
+}
+.account-settings__identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+}
+/* 50 crua: geometria adjudicada no manifesto (§2/§6, ADR-033 dec. 3); o primitivo segue intocado. */
+.account-settings__identity .ui-avatar {
+  width: 50px;
+  height: 50px;
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-title);
+}
+.account-settings__identity-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.account-settings__identity-name {
+  font-size: var(--font-size-title);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+.account-settings__identity-role {
+  font-size: var(--font-size-ui);
+  color: var(--color-muted);
+}
+.account-settings__divider {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 0;
+}
+/* Seção Aparência: texto à esquerda (título + flavor), Segmented à direita, sem quebra de linha. */
+.account-settings__appearance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+.account-settings__appearance .ui-segmented {
+  flex: none;
+}
+.account-settings__appearance-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.account-settings__appearance-title {
+  margin: 0;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+.account-settings__appearance-flavor {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+/* Reset voluntário: caixa descritiva (título + teaser), tom calmo — não alarme. O hover lava em
+   danger pra prenunciar a consequência sem gritar antes da intenção. */
+.account-settings__reset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-12) var(--space-16);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  cursor: pointer;
+  text-align: left;
+}
+.account-settings__reset:hover {
+  background: var(--color-danger-wash);
+  border-color: var(--color-danger);
+}
+/* O ponto de 7 vive num slot de --space-16, o mesmo recuo da descrição: os textos alinham (§6). */
+.account-settings__reset-title {
+  display: flex;
+  align-items: center;
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-danger);
+}
+.account-settings__reset-dot {
+  flex: none;
+  width: var(--space-16);
+}
+.account-settings__reset-dot::before {
+  content: '';
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-danger);
+}
+.account-settings__reset-desc {
+  padding-left: var(--space-16);
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-body);
+  color: var(--color-muted);
+}
+.account-settings__subtitle:focus {
+  outline: none; /* foco programático de anúncio — sem anel visível */
+}
+/* Confirmação do reset voluntário: ponto de 9 num slot de --space-20, o recuo do corpo. */
+.account-settings__confirm-title {
+  display: flex;
+  align-items: center;
+  line-height: var(--font-line-height-display);
+}
+.account-settings__confirm-dot {
+  flex: none;
+  align-self: flex-start;
+  margin-top: var(--space-8);
+  width: var(--space-20);
+}
+.account-settings__confirm-dot::before {
+  content: '';
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: var(--color-danger);
+}
+.account-settings__confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding-left: var(--space-20);
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-body);
+  color: var(--color-muted);
+}
+.account-settings__confirm-body p {
+  margin: 0;
+}
+.account-settings__confirm-caveat {
+  color: var(--color-danger);
+  font-weight: var(--font-weight-medium);
+}
+/* Varredura do `pending` (account-access.md §10 item 2, §9.6): sob o corpo, no recuo do texto;
+   16 acima = gap do corpo + --space-8. A barra é o `Sweep` da busca (3º consumidor). */
+.account-settings__confirm-sweep {
+  display: block;
+  margin-top: var(--space-8);
+}
+.account-settings__signout {
+  align-self: flex-start;
+}
+
+/* ── Pessoas (manifesto account-access.md §9.1, §9.2 j) ── topo fixo; a lista rola sob ele, sob o teto de
+   viewport da casca do Nova conversa. O filtro é o idioma de .search__field, em markup local. */
+.people__top {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: var(--space-16) var(--space-16) var(--space-12);
+}
+.people__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.people__filter {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: var(--density-cotidiano-row-height);
+  padding: var(--space-8) var(--space-8) var(--space-8) var(--space-12);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-mono);
+}
+.people__filter:focus-within {
+  border-color: var(--color-accent);
+}
+.people__filter-icon {
+  display: inline-flex;
+  flex: none;
+}
+.people__filter-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-overflow: ellipsis;
+  outline: none;
+}
+.people__filter-input::placeholder {
+  color: var(--color-muted);
+}
+.people__filter-clear {
+  border: 0;
+  background: transparent;
+  color: var(--color-muted);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-meta);
+  padding: 0 var(--space-4);
+  cursor: pointer;
+}
+.people__filter-clear:hover {
+  color: var(--color-text);
+}
+.ui-button.people__invite {
+  flex: none;
+  white-space: nowrap;
+}
+/* ADR-086 (account-access.md §11.2): "+ Adicionar agente" — a discreet admin action under the filter,
+   secondary to "Convidar pessoa" (canvas .pp-quiet: accent text, wash on hover, pulled one step up
+   into the top's gap). */
+.people__add-agent {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  align-self: flex-end;
+  margin-top: calc(-1 * var(--space-8));
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-ui);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-accent);
+  cursor: pointer;
+}
+.people__add-agent:hover {
+  background: var(--color-accent-wash);
+}
+.people__add-agent:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* AgentDialog (account-access.md §11.2; canvas AgentDialog.dc.html): the Convidar pessoa shell. */
+.agent-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.agent-dialog__intro {
+  margin: 0;
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-body);
+  color: var(--color-muted);
+}
+.agent-dialog__help {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+}
+.agent-dialog__who {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+}
+.agent-dialog__who-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.agent-dialog__who-name {
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+}
+/* Colour picker: 10 options in 2 rows of 5, each option the list's agent avatar inside a touch-floor
+   target; selected = accent ring (two box-shadow rings: surface gap, then accent). */
+.agent-dialog__swatches {
+  display: grid;
+  grid-template-columns: repeat(5, var(--density-touch-floor));
+  justify-content: space-between;
+  row-gap: var(--space-8);
+}
+.agent-dialog__swatch {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--density-touch-floor);
+  height: var(--density-touch-floor);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.agent-dialog__swatch:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+.agent-dialog__swatch[aria-checked='true'] {
+  box-shadow: 0 0 0 2px var(--color-surface-raised), 0 0 0 4px var(--color-accent);
+}
+/* criado / reemitido: the whole command, wrapping; Copiar at the top of the box (§11.5). */
+.agent-dialog__token {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  min-height: var(--density-cotidiano-row-height);
+  padding: var(--space-8);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+.agent-dialog__token code {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-mono);
+  line-height: var(--font-line-height-body);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+.agent-dialog__copy {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  flex: none;
+  cursor: pointer;
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-accent);
+}
+.agent-dialog__copy:hover {
+  background: var(--color-accent-wash);
+}
+/* "Copiar só a credencial": accent text action, at the start, between the field and the warning. */
+.agent-dialog__alt {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  align-self: flex-start;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-accent);
+}
+.agent-dialog__alt:hover {
+  text-decoration: underline;
+}
+.agent-dialog__alt:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.agent-dialog__warn {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+/* Edit: "Reemitir credencial" sits apart, at the footer's start. */
+.ui-button.agent-dialog__reissue {
+  margin-right: auto;
+}
+/* The reissue confirm's dot is the accent (a primary action), the removal's the danger (default). */
+.account-settings__confirm-dot.agent-dialog__dot--primary::before {
+  background: var(--color-accent);
+}
+.people__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-12) var(--space-16);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+.people__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.people__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--density-cotidiano-row-padding);
+  border-radius: var(--radius-md);
+}
+.people__row:hover {
+  background: var(--color-surface);
+}
+.people__mono-pending {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--density-cotidiano-avatar);
+  height: var(--density-cotidiano-avatar);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+.people__mono-pending::before {
+  content: '';
+  width: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-border-strong);
+}
+.people__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.people__name {
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-ui);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* §9.2 b: a meta quebra, não trunca. */
+.people__meta {
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+/* "Remover": o idioma do "Restaurar" de Arquivados (.channel-list__restore). */
+.ui-button.people__remove {
+  flex: none;
+  padding: 0 var(--space-8);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+@media not all and (pointer: coarse) {
+  .ui-button[data-size].people__remove {
+    min-height: 0;
+  }
+}
+/* §9.1: o corpo do confirm começa na margem, sem o recuo do título do reset. */
+.account-settings__confirm-body.people__confirm-body {
+  padding-left: 0;
+}
+.people__empty {
+  margin: 0;
+  padding: var(--space-8) var(--space-12);
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-ui);
+  color: var(--color-muted);
+}
+
+/* Dialog "Convidar pessoa": casca e chips do .compose-dialog; aqui só o que ele não tem (§9.1). */
+.invite-person .ui-field__input[aria-invalid='true'] {
+  border-color: var(--color-danger);
+}
+.invite-person [inert] .ui-field__input {
+  color: var(--color-muted);
+}
+.invite-person__field,
+.invite-person__kind {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.invite-person__kind .ui-segmented {
+  width: fit-content;
+}
+.invite-person__help {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+}
+.invite-person__channels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.invite-person__mark {
+  font-family: var(--font-family-mono);
+}
+/* The tile centres the lock; the suggestion keeps "#canal" tight, as the artboard draws it. */
+.invite-person .compose-dialog__chip-mark .channel-label__lock,
+.invite-person .compose-dialog__suggest .channel-label__mark {
+  margin-right: 0;
+}
+.invite-person__done {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding: var(--space-16);
+}
+.invite-person__ready {
+  font-size: var(--font-size-title);
+  line-height: var(--font-line-height-title);
+  font-weight: var(--font-weight-medium);
+}
+.invite-person__instructions {
+  margin: 0;
+  padding: var(--space-12);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-body);
+  color: var(--color-text);
+}
+.ui-button.invite-person__copy {
+  align-self: flex-start;
+}
+
+/* Dialog "Exportar seus dados" (account-access.md §12): casca do .compose-dialog; aqui só o que ela não
+   tem. Px cru só o da tabela do §12.5: a barra de 2 e a coluna da marca de 18. O corpo rola inteiro sob o
+   teto da casca, sem rolagem própria na caixa de lacunas (PLANO-EXPORT-DADOS §0.3.6 item 3). */
+.data-export__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding: var(--space-16);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.data-export__text {
+  margin: 0;
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-body);
+  color: var(--color-text);
+}
+.data-export__label {
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+}
+.data-export__help,
+.data-export .compose-dialog__error {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+}
+.data-export__help {
+  color: var(--color-muted);
+}
+.data-export__title {
+  font-size: var(--font-size-title);
+  line-height: var(--font-line-height-title);
+  font-weight: var(--font-weight-medium);
+}
+.data-export__includes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.data-export__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.data-export__list li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-ui);
+}
+/* O marcador fica centrado na primeira linha do item, pela altura de linha do token (§12.5, sem px cru). */
+.data-export__list li::before {
+  content: '';
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  margin-top: calc((var(--font-line-height-ui) * 1em - var(--space-4)) / 2);
+  border-radius: var(--radius-full);
+  background: var(--color-border-strong);
+}
+.data-export__status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+.data-export__status-text {
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-ui);
+  font-weight: var(--font-weight-medium);
+}
+.data-export__track {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--color-border);
+}
+.data-export__bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  transition: width var(--motion-duration-base) var(--motion-ease-entrada);
+}
+.data-export__gaps {
+  margin: 0;
+  padding: var(--space-12);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.data-export__gap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-ui);
+}
+.data-export__mark {
+  flex: none;
+  width: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+}
+.data-export__mark .channel-label__lock {
+  margin-right: 0;
+}
+.data-export__gap-name {
+  flex: 1;
+  min-width: 0;
+}
+.ui-button.data-export__download {
+  align-self: flex-start;
+}
+
+/* ── Editor de perfil (ADR-040) ── espelha o ritmo account-settings__* (mesma família de tokens de
+   espaçamento/tipografia; sem hex cru, C6). Sub-tela drill-in: corpo + footer próprios. */
+.profile-editor {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-16);
+  min-height: 0;
+  overflow-y: auto;
+}
+.profile-editor__loading,
+.profile-editor__load-error {
+  font-size: var(--font-size-ui);
+  color: var(--color-muted);
+}
+.profile-editor__load-error {
+  color: var(--color-danger);
+}
+.profile-editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.profile-editor__hint {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+}
+/* Caixa read-only "Da sua organização": rótulo + valor + linha "Gerenciado…" em tom secundário —
+   espelha o visual de bloco da entry-row de acessos. */
+.profile-editor__org {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-12);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.profile-editor__org-title {
+  margin: 0;
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-ui);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+.profile-editor__org-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.profile-editor__org-field {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+.profile-editor__org-label {
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+}
+.profile-editor__org-value {
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-ui);
+  color: var(--color-text);
+}
+.profile-editor__org-managed {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+}
+/* Footer do editor: status à esquerda, Salvar à direita. */
+.profile-editor__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  width: 100%;
+}
+.profile-editor__status {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.profile-editor__status--saved {
+  color: var(--color-accent);
+}
+.profile-editor__status--error {
+  color: var(--color-danger);
+}
+
+/* Controle de foto de perfil (ADR-041 PR-3). Preview quadrado-arredondado (px direto OK — C6 só
+   gateia hex; cores só por token) com img object-fit:cover ou monograma centrado; input escondido
+   espelha .composer__file. */
+.profile-photo {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-16);
+}
+.profile-photo__meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.profile-photo__preview {
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+}
+.profile-photo__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.profile-photo__monogram {
+  font-size: var(--font-size-display);
+  color: var(--color-muted);
+  text-transform: uppercase;
+}
+.profile-photo__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.profile-photo__file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+.profile-photo__error {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  color: var(--color-danger);
+}
+
+/* Perfil-de-outro READ-ONLY (ADR-043, Slice 2 PR-2; layout ADR-053): header horizontal — avatar em
+   destaque à esquerda, identidade (nome + pronomes) à direita — e a seção Recado abaixo, largura
+   cheia, alinhada à esquerda. Sem footer (não há verbo de escrita de perfil). Cores só por token; px
+   de layout OK (C6 só gateia hex). Ritmo e superfície seguem o protótipo ratificado
+   (manifesto view-profile §7, ADR-055). */
+/* Corpo do Dialog desta superfície respira a --space-20 (manifesto §7.1) — idioma do
+   .channel-management-panel--main; a regra base .ui-dialog fica intocada. */
+.ui-dialog.user-profile-dialog {
+  padding: var(--space-20);
+}
+.user-profile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+}
+.user-profile__loading,
+.user-profile__load-error {
+  font-size: var(--font-size-ui);
+  color: var(--color-muted);
+}
+.user-profile__load-error {
+  color: var(--color-danger);
+}
+.user-profile__header {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-16);
+}
+/* Avatar em escala de PERFIL — 148px crua, geometria adjudicada no manifesto
+   (manifesto view-profile §6/§7.2). Segue bespoke: o `size` do primitivo Avatar é regime
+   de densidade (ADR-041, ratificação ii — 28px/22px, avatar de LINHA). A borda muda de regime:
+   monograma (sem foto) = fundo lavado do acento, SEM borda; com foto (--photo) = borda fina. */
+/* Âncora do dot de presença (ADR-056): como no protótipo, o dot é irmão da caixa do avatar dentro
+   de um wrapper relativo — fora do overflow:hidden que recorta a foto. */
+.user-profile__avatar-wrap {
+  position: relative;
+  flex: none;
+}
+.user-profile__avatar {
+  flex: none;
+  width: 148px;
+  height: 148px;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-accent-wash);
+}
+.user-profile__avatar--photo {
+  border: 1px solid var(--color-border);
+}
+.user-profile__avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.user-profile__avatar-monogram {
+  /* 54px crua: geometria acoplada ao avatar de 148 (manifesto view-profile §6). */
+  /* stylelint-disable-next-line declaration-property-value-disallowed-list -- 54px adjudicado: view-profile §6 (PLANO-PRESENCA §8.4), atado ao avatar de 148 */
+  font-size: 54px;
+  color: var(--color-accent);
+  text-transform: uppercase;
+}
+/* Coluna de identidade (manifesto §7.2): esticada na altura do avatar; a pilha do nome ancora
+   EMBAIXO (margin-top: auto no name-stack) e o CTA fecha a coluna em largura cheia. */
+.user-profile__identity {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.user-profile__name-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: auto;
+}
+.user-profile__name {
+  font-size: var(--font-size-display);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+.user-profile__pronouns {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+/* ── Presença (ADR-056; protótipo view-profile, estados portados verbatim em valor) ─────────────
+   Geometria adjudicada no manifesto §6: badge 24 com borda 3 e offset óptico 8 (atados ao avatar
+   de 148); dot da linha 7, gap 6, margin-top 1 óptico. Estados por [data-presence] cascateando da
+   RAIZ do dialog (.user-profile), como no protótipo — valores do atributo são os do protótipo
+   (online/ausente/offline; 'away' do domínio aterrissa como "ausente", manifesto §5). */
+.user-profile__presence-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  border: 3px solid var(--color-surface-raised);
+  background: var(--color-presence-online);
+}
+.user-profile__presence {
+  display: flex;
+  align-items: center;
+  /* stylelint-disable-next-line declaration-property-value-disallowed-list -- 6px adjudicado: "micro 6" do cluster de presença, view-profile §6 (espelho PLANO-PRESENCA §8.4) */
+  gap: 6px;
+  margin-top: 1px;
+  font-size: var(--font-size-meta);
+  color: var(--color-presence-online);
+}
+.user-profile__presence-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-presence-online);
+}
+/* ausente: anel do verde do sistema sobre a superfície; offline: anel neutro. Texto muted nos dois. */
+[data-presence='ausente'] .user-profile__presence-badge,
+[data-presence='ausente'] .user-profile__presence-dot {
+  background: var(--color-surface-raised);
+  box-shadow: inset 0 0 0 2px var(--color-presence-online);
+}
+[data-presence='offline'] .user-profile__presence-badge,
+[data-presence='offline'] .user-profile__presence-dot {
+  background: var(--color-border-strong);
+  box-shadow: inset 0 0 0 2px var(--color-border-strong);
+}
+[data-presence='ausente'] .user-profile__presence,
+[data-presence='offline'] .user-profile__presence {
+  color: var(--color-muted);
+}
+/* CTA de DM (ADR-053): largura cheia da coluna de identidade (manifesto §7.2). A ALTURA é do
+   primitivo Button, sem override de tela (manifesto §4.3). */
+.user-profile__dm {
+  width: 100%;
+}
+/* Erro do DM: o Dialog fica aberto e diz o que houve (idioma do .compose-dialog__error). */
+.user-profile__error {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  color: var(--color-danger);
+}
+/* Seção de largura cheia (Recado e Canais em comum). O rótulo espelha .channel-list__section-title:
+   meta, maiúsculo por CSS (o texto é autorado em caixa normal), com letter-spacing. Gap 8 unificado
+   pras duas seções (manifesto §7.3/§6). */
+.user-profile__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.user-profile__section-label {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.user-profile__note {
+  margin: 0;
+  font-size: var(--font-size-body);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+/* Da organização (ADR-054) como CARD (manifesto §7.4): superfície própria sobre o corpo do Dialog
+   (--color-surface sobre --color-surface-raised), campos em coluna rótulo-ACIMA-do-valor. */
+.user-profile__org-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: var(--space-16);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.user-profile__org-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.user-profile__org-label {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.user-profile__org-value {
+  font-size: var(--font-size-ui);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+/* Canais em comum (ADR-053 dec. 4). Chips em fluxo — bespoke: não há primitivo de chip (§8). Pill
+   com borda sobre superfície elevada (manifesto §7.5); min-height 28 é geometria de controle
+   adjudicada (manifesto §6), idioma do CTA. O texto é o nome LIMPO do canal (#engineering, sem
+   :server) — o `#` renderiza num span próprio mono/muted; o ChannelId vive na closure (commit 3),
+   NUNCA num atributo (P1). font-family: inherit + reset deixam o mesmo shape servir <span> (inerte)
+   e <button> (clicável — o overflow aqui, o canal no commit 3). */
+.user-profile__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+.user-profile__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-12);
+  min-height: 28px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  font-family: inherit;
+  font-size: var(--font-size-meta);
+  color: var(--color-text);
+}
+.user-profile__chip-hash {
+  font-family: var(--font-family-mono);
+  color: var(--color-muted);
+}
+/* Canal privado (manifesto §4 item 6): o cadeado no lugar do `#`, muted como ele; o gap do chip é o
+   mesmo --space-4 do §7 item 5. Em 1em (owner, §8.66): segue o --font-size-meta do chip, como o `#`;
+   o CSS vence os atributos width/height do svg. */
+.user-profile__chip-lock {
+  display: inline-flex;
+  color: var(--color-muted);
+}
+.user-profile__chip-lock svg {
+  width: 1em;
+  height: 1em;
+}
+/* Como <button> (overflow, e o chip de canal no commit 3): affordance discreto — a borda ganha peso
+   no hover, sem fill novo. */
+button.user-profile__chip {
+  cursor: pointer;
+}
+button.user-profile__chip:hover {
+  border-color: var(--color-border-strong);
+}
+/* O chip de overflow (+N) lê como "mais", não como um canal: transparente, mono, muted
+   (manifesto §7.5). */
+.user-profile__chip--more {
+  background: transparent;
+  font-family: var(--font-family-mono);
+  color: var(--color-muted);
+}
+
+/* Touch floor (PLANO §0.2): on coarse pointers the interactive hit area is ≥44px regardless of the
+   visual density — a row may read 30–40px but the target stretches to 44. */
+@media (pointer: coarse) {
+  .channel,
+  .composer__send,
+  .composer__input,
+  .timeline__older,
+  .account-settings__reset,
+  .account-settings__signout,
+  /* gestao regime reads denser (30px), but the hit target still stretches to the touch floor. */
+  .channel-header__manage,
+  .channel-management-panel__input,
+  .channel-management-panel__role-control,
+  .channel-management-panel__member-remove {
+    min-height: var(--density-touch-floor);
+  }
+}
+
+/* prefers-reduced-motion (PLANO §0.2): movement orients, never entertains — collapse it. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* The jump highlight holds solid for the linger, then goes in motion-duration-base (§6.1). */
+  .message[data-highlight] {
+    animation:
+      highlight-hold var(--motion-duration-linger) linear,
+      highlight-out var(--motion-duration-base) var(--motion-ease-saida) var(--motion-duration-linger) both !important;
+  }
+  /* The search sweep stands still (manifest §6.1): a static bar, not a 1ms jump off the track. */
+  .sweep__bar {
+    animation: none !important;
+  }
+  /* Boot (login-onboarding §7 item 7): spinner, pulse and the beat fade stand still. */
+  .boot-spinner,
+  .boot-pulse,
+  .boot-message {
+    animation: none !important;
+  }
+}
+
+/* Boot states (Trilha 1 web login): a primeira coisa na tela antes do app montar, e a face honesta
+   de qualquer falha de boot (issue #1). Superfície e px pelo manifesto login-onboarding (§6 auditoria,
+   §7 estrutura): esqueleto neutro da casca sob o scrim, card centrado com o wordmark, a variante
+   abaixo. Em saída (§7 item 8) o app já está montado embaixo: o esqueleto some, scrim e card esmaecem. */
+.boot-surface {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-24);
+  color: var(--color-text);
+}
+.boot-surface[data-exiting] {
+  pointer-events: none;
+}
+/* A casca atrás: só as duas regiões do .workspace (lateral de 264px, a mesma coluna), sem conteúdo. */
+.boot-surface__skeleton {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  background: var(--color-bg);
+}
+.boot-surface__side {
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+}
+.boot-surface[data-exiting] .boot-surface__skeleton {
+  display: none;
+}
+.boot-surface__scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--color-scrim);
+}
+.boot-surface__card {
+  position: relative;
+  width: min(93vw, 412px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+  padding: var(--space-24);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+}
+.boot-surface__scrim,
+.boot-surface__card {
+  transition: opacity var(--motion-duration-slow) var(--motion-ease-entrada);
+}
+.boot-surface[data-exiting] .boot-surface__scrim,
+.boot-surface[data-exiting] .boot-surface__card {
+  opacity: 0;
+}
+/* Wordmark: não é heading (o h1 "Tayet" do app é o alvo dos helpers E2E). */
+.boot-wordmark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+}
+.boot-wordmark__dot {
+  width: var(--space-12);
+  height: var(--space-12);
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+.boot-wordmark__name {
+  font-size: var(--font-size-display);
+  line-height: var(--font-line-height-display);
+  font-weight: var(--font-weight-medium);
+}
+.boot-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-12);
+  text-align: center;
+  animation: boot-fade var(--motion-duration-slow) var(--motion-ease-entrada);
+}
+@keyframes boot-fade {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-8));
+  }
+}
+.boot-message--entry {
+  align-items: stretch;
+  gap: var(--space-16);
+}
+/* Beats D3/D4: o indicador acima do texto. */
+.boot-message--beat {
+  padding: var(--space-8) 0 var(--space-12);
+}
+.boot-message--preparing {
+  gap: var(--space-16);
+}
+/* Beats D3/D4: title and detail are siblings of the indicator in the artboard, under the beat's gap
+   (D3 --space-12, D4 --space-16). The entry keeps the wrapper's --space-4 (login-onboarding.md §6). */
+.boot-message--beat .boot-message__text {
+  gap: inherit;
+}
+.boot-spinner {
+  width: var(--space-24);
+  height: var(--space-24);
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: var(--radius-full);
+  animation: boot-spin var(--motion-duration-sweep) linear infinite;
+}
+@keyframes boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.boot-pulse {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-wash);
+  animation: boot-pulse var(--motion-duration-sweep) var(--motion-ease-entrada) infinite;
+}
+.boot-pulse__core {
+  width: var(--space-12);
+  height: var(--space-12);
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+@keyframes boot-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.boot-message__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 32rem;
+}
+.boot-message__title {
+  font-size: var(--font-size-title);
+  line-height: var(--font-line-height-title);
+  font-weight: var(--font-weight-medium);
+}
+.boot-message__detail {
+  font-size: var(--font-size-ui);
+  line-height: var(--font-line-height-ui);
+  color: var(--color-muted);
+}
+.boot-message__retry {
+  appearance: none;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-radius: var(--radius-md);
+  padding: var(--space-8) var(--space-12);
+  font: inherit;
+  cursor: pointer;
+}
+.boot-message__retry:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+/* Touch floor (PLANO §0.2): o alvo do retry estica para ≥44px em ponteiro grosso. */
+@media (pointer: coarse) {
+  .boot-message__retry {
+    min-height: var(--density-touch-floor);
+  }
+}
+/* Duas ações no estado 'failed' (§8.9): retry primário + saída self-service secundária. */
+.boot-message__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+}
+/* Secundária: mesma altura da primária, sem borda — a hierarquia é o peso visual, não o tamanho. */
+.boot-message__secondary {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-muted);
+  border-radius: var(--radius-md);
+  padding: var(--space-8) var(--space-12);
+  font: inherit;
+  cursor: pointer;
+}
+.boot-message__secondary:hover {
+  color: var(--color-accent);
+}
+@media (pointer: coarse) {
+  .boot-message__secondary {
+    min-height: var(--density-touch-floor);
+  }
+}
+/* Botão SSO no no-session (ADR-031 D1). Convenção de marca neutra: surface/border, NÃO accent. */
+.boot-message__sso {
+  appearance: none;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-radius: var(--radius-md);
+  padding: var(--space-8) var(--space-12);
+  font: inherit;
+  cursor: pointer;
+}
+.boot-message__sso:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+@media (pointer: coarse) {
+  .boot-message__sso {
+    min-height: var(--density-touch-floor);
+  }
+}
+/* Um botão por provedor no no-session (manifesto login-onboarding §7 item 3). As outras telas que
+   usam .boot-message__sso ("Usar aqui", "Entrar de novo", "Tentar de novo") não mudam. */
+.boot-message__sso--provider {
+  border-color: var(--color-border);
+  padding: var(--space-12) var(--space-16);
+  font-size: var(--font-size-body);
+  line-height: var(--font-line-height-body);
+  font-weight: var(--font-weight-medium);
+}
+.boot-message__sso--provider:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* ══ Component primitive tier (ADR-036) ═══════════════════════════════════════════════════════
+   Third tier: primitivo → semântico → componente. Each primitive consumes ONLY semantic tokens
+   (C6 holds inside the tier — zero raw hex below). States ride data-* resolved by token; `size`
+   maps to a density token, never a loose px. These reproduce the prior compose-dialog__* surface
+   exactly (extração, não refino) — NewConversationDialog dogfoods them (PR-1a). */
+
+/* Avatar (leaf): initial-in-a-box. greige = neutral surface/muted (default); accent = accent-wash.
+   size → --density-{size}-avatar. */
+.ui-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--density-cotidiano-avatar);
+  height: var(--density-cotidiano-avatar);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-meta);
+  text-transform: uppercase;
+  overflow: hidden; /* clipa a img ao raio da caixa (modo-imagem, ADR-036 dec. 5) */
+}
+/* Modo-imagem: a foto preenche e é clipada pela caixa arredondada; o monograma (bg/border) recua
+   pra uma moldura neutra sob a foto. Sem hex (C6) — só token semântico. */
+.ui-avatar__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ui-avatar[data-image='true'] {
+  background: var(--color-surface-raised);
+}
+.ui-avatar[data-size='gestao'] {
+  width: var(--density-gestao-avatar);
+  height: var(--density-gestao-avatar);
+}
+/* Canonical greige (F1, PR-1b): a raised, bordered rounded square — unifies the divergent avatars
+   (compose was square-no-fill, the roster a bordered circle) into one treatment. */
+.ui-avatar[data-variant='greige'] {
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-muted);
+}
+.ui-avatar[data-variant='accent'] {
+  background: var(--color-accent-wash);
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
+}
+/* Presence dot on a line avatar (ADR-036 addendum; manifests workspace/new-conversation §7).
+   With the `presence` prop the primitive wraps the box — its overflow:hidden clips children, so
+   the dot is a SIBLING in a relative wrapper — and the dot renders only when online. Geometry is
+   owner-adjudicated raw px tied to the density avatar (workspace.md §6 / new-conversation.md §6):
+   dot 9px on cotidiano (28), 8px on gestao (22), ring 2px in BOTH regimes, optical offsets -1/-1.
+   --presence-ring is a CSS indirection (NOT a DTCG token — C6 intact): default raised (correct in
+   dialogs); the sidebar context overrides it to --color-surface where its footer lives. Distinct
+   pattern from the unread-activity dot (accent, no ring, inline) — never collapse the two. */
+:root {
+  --presence-ring: var(--color-surface-raised);
+}
+.ui-avatar-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.ui-avatar__dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: var(--color-presence-online);
+  border: 2px solid var(--presence-ring);
+}
+.ui-avatar[data-size='gestao'] + .ui-avatar__dot {
+  width: 8px;
+  height: 8px;
+}
+
+/* Agent avatar (ADR-086 Proposto dec. 2; workspace.md §15.1, account-access.md §11.1). The mark IS
+   the avatar: the canvas glyph (15px on the 28 avatar — scaled by the same ratio on the 22) in the
+   agent's colour trio, and the blue indicator exclusive to agents in the presence dot's place (same
+   corner and ring; ~30% of the avatar, 9–15px — manifest-adjudicated geometry, outside the rhythm
+   gate). --color-agent-mark is used here and nowhere else (§11.1 item 2). */
+.agent-avatar__box {
+  border: 1px solid var(--color-border-strong);
+}
+.agent-avatar__box[data-size='perfil'] {
+  width: 148px;
+  height: 148px;
+  border-radius: var(--radius-lg);
+}
+.agent-avatar__glyph {
+  width: calc(100% * 15 / 28);
+  height: calc(100% * 15 / 28);
+  display: block;
+}
+[data-agent-color='areia'] > .agent-avatar__box {
+  background: var(--color-agent-areia-bg);
+  border-color: var(--color-agent-areia-border);
+  color: var(--color-agent-areia-fg);
+}
+[data-agent-color='petroleo'] > .agent-avatar__box {
+  background: var(--color-agent-petroleo-bg);
+  border-color: var(--color-agent-petroleo-border);
+  color: var(--color-agent-petroleo-fg);
+}
+[data-agent-color='turquesa'] > .agent-avatar__box {
+  background: var(--color-agent-turquesa-bg);
+  border-color: var(--color-agent-turquesa-border);
+  color: var(--color-agent-turquesa-fg);
+}
+[data-agent-color='salvia'] > .agent-avatar__box {
+  background: var(--color-agent-salvia-bg);
+  border-color: var(--color-agent-salvia-border);
+  color: var(--color-agent-salvia-fg);
+}
+[data-agent-color='ocre'] > .agent-avatar__box {
+  background: var(--color-agent-ocre-bg);
+  border-color: var(--color-agent-ocre-border);
+  color: var(--color-agent-ocre-fg);
+}
+[data-agent-color='argila'] > .agent-avatar__box {
+  background: var(--color-agent-argila-bg);
+  border-color: var(--color-agent-argila-border);
+  color: var(--color-agent-argila-fg);
+}
+[data-agent-color='barro'] > .agent-avatar__box {
+  background: var(--color-agent-barro-bg);
+  border-color: var(--color-agent-barro-border);
+  color: var(--color-agent-barro-fg);
+}
+[data-agent-color='malva'] > .agent-avatar__box {
+  background: var(--color-agent-malva-bg);
+  border-color: var(--color-agent-malva-border);
+  color: var(--color-agent-malva-fg);
+}
+[data-agent-color='ardosia'] > .agent-avatar__box {
+  background: var(--color-agent-ardosia-bg);
+  border-color: var(--color-agent-ardosia-border);
+  color: var(--color-agent-ardosia-fg);
+}
+[data-agent-color='grafite'] > .agent-avatar__box {
+  background: var(--color-agent-grafite-bg);
+  border-color: var(--color-agent-grafite-border);
+  color: var(--color-agent-grafite-fg);
+}
+/* Beside a name in running text (surfaces without an avatar column: quoted preview, thread flat
+   author, DM header, reply banner, search "where"): inline, centred on the line, one step from the
+   name. Flex contexts (chips, suggestions, picker) space it with their own gap. */
+.message__quote > .agent-avatar,
+.message > .agent-avatar,
+.channel-header__name > .agent-avatar,
+.composer__reply-label > .agent-avatar,
+.search-hit__where > .agent-avatar {
+  vertical-align: middle;
+  margin-right: var(--space-4);
+}
+.agent-avatar__mark {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 30%;
+  height: 30%;
+  min-width: 9px;
+  min-height: 9px;
+  max-width: 15px;
+  max-height: 15px;
+  border-radius: var(--radius-full);
+  background: var(--color-agent-mark);
+  border: 2px solid var(--presence-ring);
+}
+
+/* Field (leaf): a caption stacked above a control (input, or a passed-in control). */
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.ui-field__label {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.ui-field__input {
+  min-height: var(--density-cotidiano-row-height);
+  padding: 0 var(--space-8);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--font-size-body);
+  font-family: var(--font-family-sans);
+}
+.ui-field__input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* Button (leaf): variant = semantic role; size → density row token. */
+.ui-button {
+  min-height: var(--density-cotidiano-row-height);
+  padding: 0 var(--space-12);
+  border-radius: var(--radius-sm);
+  /* A <button> does not inherit the font by UA default. */
+  font-family: inherit;
+  font-size: var(--font-size-ui);
+  cursor: pointer;
+  /* Press feedback: ease the background between rest and the :active/hover token (the transition the
+     bespoke save carried before it composed Button — PR-1b follow-up). Motion only; static render
+     unchanged. */
+  transition: background var(--motion-duration-fast) var(--motion-ease-entrada);
+}
+.ui-button[data-size='gestao'] {
+  min-height: var(--density-gestao-row-height);
+}
+.ui-button[data-variant='fill'] {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border: 0;
+  font-weight: var(--font-weight-medium);
+}
+.ui-button[data-variant='fill']:active:not(:disabled) {
+  background: var(--color-accent-pressed);
+}
+.ui-button[data-variant='secondary'] {
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text);
+}
+.ui-button[data-variant='ghost'] {
+  background: transparent;
+  border: 0;
+  color: var(--color-muted);
+}
+.ui-button[data-variant='ghost']:hover {
+  color: var(--color-text);
+}
+/* danger (quiet trigger): a neutral outline with danger text at rest; the danger tint surfaces on
+   hover. Wired by its first consumer, the management danger-zone (PR-1b). */
+.ui-button[data-variant='danger'] {
+  background: transparent;
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  font-weight: var(--font-weight-medium);
+}
+.ui-button[data-variant='danger']:hover {
+  background: var(--color-danger-wash);
+}
+/* Destructive confirm (danger-fill): danger fill + accent-fg, no border — the loud danger that
+   mirrors the management confirm. The `danger` outline, in the role's color, is the trigger; this is
+   the commit. */
+.ui-button[data-variant='danger-fill'] {
+  background: var(--color-danger);
+  color: var(--color-accent-fg);
+  border: 0;
+  font-weight: var(--font-weight-medium);
+}
+.ui-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* Touch floor (ADR-036 dec. 5): the control carries a ≥44 hit area on coarse pointers regardless of
+   visual density — the floor lives in the primitive, not bolted on per-surface. */
+@media (pointer: coarse) {
+  .ui-button {
+    min-height: var(--density-touch-floor);
+  }
+}
+
+/* Segmented (leaf): single-select rail of segments joined in one border (account-access.md §2);
+   active segment reads accent-wash/accent, the rest muted. Hugs its content; `--fill` splits the
+   width evenly. The focus ring is drawn inset — the rail's overflow would clip it. */
+.ui-segmented {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.ui-segmented__segment {
+  flex: none;
+  min-height: var(--density-cotidiano-row-height);
+  padding: var(--space-8) var(--space-16);
+  background: transparent;
+  border: 0;
+  color: var(--color-muted);
+  cursor: pointer;
+  font-size: var(--font-size-ui);
+  font-family: var(--font-family-sans);
+}
+.ui-segmented__segment:focus-visible {
+  outline-offset: -2px;
+}
+.ui-segmented--fill .ui-segmented__segment {
+  flex: 1;
+}
+.ui-segmented__segment--on {
+  background: var(--color-accent-wash);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Dialog (composes): scrim + raised surface + header/body/footer slots. Scrim is absolute within a
+   positioned ancestor (never fixed), anchored by the chrome that mounts it. */
+.ui-dialog__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-16);
+  background: var(--color-scrim);
+}
+.ui-dialog {
+  width: 360px;
+  max-width: 100%;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+  padding: var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+/* gestao: the denser management shell — shrinks to content up to a tighter cap, tighter gap. */
+.ui-dialog[data-size='gestao'] {
+  width: auto;
+  max-width: 320px;
+  gap: var(--space-8);
+}
+.ui-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ui-dialog__title {
+  margin: 0;
+  font-size: var(--font-size-title);
+  font-weight: var(--font-weight-medium);
+}
+.ui-dialog__close {
+  background: transparent;
+  border: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-title);
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 var(--space-4);
+}
+.ui-dialog__back {
+  background: transparent;
+  border: none;
+  color: var(--color-muted);
+  font-size: var(--font-size-display);
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  margin-right: var(--space-8);
+}
+.ui-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+}
+
+/* Management surface as a modal (ADR-038, Fork A): one Dialog whose body swaps between the
+   form+roster, the confirm, and the add-member picker. The seam dresses the main view only: caps at
+   viewport, header/footer pinned, body scrolls, width = manifest channel-management §2 (448). The
+   confirm and the picker are the plain `gestao` Dialog (§4.2). */
+.ui-dialog.channel-management-panel--main {
+  width: 448px;
+  max-width: 94vw;
+  padding: 0;
+  gap: 0;
+  max-height: calc(100vh - var(--space-16) * 2);
+  overflow: hidden;
+}
+.ui-dialog.channel-management-panel--main > .ui-dialog__header {
+  gap: var(--space-8);
+  min-height: var(--density-gestao-row-height);
+  padding: var(--density-gestao-row-padding);
+  padding-right: var(--space-16);
+  border-bottom: 1px solid var(--color-border);
+}
+/* The header's '#' reads mono muted here (§6); ChannelLabel elsewhere keeps the inherited dress. */
+.ui-dialog.channel-management-panel--main > .ui-dialog__header .channel-label__mark {
+  color: var(--color-muted);
+  font-family: var(--font-family-mono);
+}
+.ui-dialog.channel-management-panel--main > .ui-dialog__footer {
+  padding: var(--space-12) var(--space-16);
+  border-top: 1px solid var(--color-border);
+}
+/* Pending chip for an invited member (awaiting first connection). Mirrors the read-only role
+   label's quiet treatment; the contained pill/warmth is a deferred design-pass follow-up. */
+.channel-management-panel__member-pending {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}

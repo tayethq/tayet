@@ -1,0 +1,45 @@
+{
+  "name": "@tayet/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Tayet shared library: domain types, read translation and the protocol-leak scanner, consumed by the client and the sidecar (ADR-088).",
+  "license": "BUSL-1.1",
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=12.0.0"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./internal": "./src/internal/index.ts",
+    "./internal/attachment-crypto": "./src/internal/attachment-crypto.ts",
+    "./leak-scan": "./src/leak-scan.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run lint && npm run test"
+  },
+  "peerDependencies": {
+    "@matrix-org/matrix-sdk-crypto-wasm": "18.3.1",
+    "matrix-js-sdk": "41.6.0"
+  },
+  "devDependencies": {
+    "@eslint-community/eslint-plugin-eslint-comments": "4.7.2",
+    "@eslint/js": "10.0.1",
+    "@matrix-org/matrix-sdk-crypto-wasm": "18.3.1",
+    "@types/node": "25.9.2",
+    "eslint": "10.4.1",
+    "eslint-import-resolver-typescript": "4.4.5",
+    "eslint-plugin-import-x": "4.16.2",
+    "globals": "17.6.0",
+    "matrix-js-sdk": "41.6.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.60.1",
+    "vitest": "4.1.12"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true
+  }
+}

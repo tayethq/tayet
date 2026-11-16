@@ -1,0 +1,186 @@
+# Chaves de assinatura e `encryption` do MAS: geradas no primeiro `up` (dev-stack.sh, ensure_mas_secrets) em
+# mas/secrets/ (spike) ou .render/<projeto>/mas/secrets/, gitignored, NUNCA commitadas (ADR-092; README).
+# Templates próprios (ADR-084): a árvore vendored de infra/mas/templates, montada pelo compose.
+# Substitui o diretório inteiro; `mas-cli templates check` valida (CI).
+templates:
+  path: /templates/
+http:
+  listeners:
+  - name: web
+    resources:
+    - name: discovery
+    - name: human
+    - name: oauth
+    - name: compat
+    - name: graphql
+    - name: assets
+    binds:
+    - address: '[::]:8080'
+    proxy_protocol: false
+  # ADR-082 dec. 3: `adminapi` SÓ aqui, nunca no `web`. Bind na rede do compose (o escrow chega por mas:8081); sem porta no host.
+  - name: internal
+    resources:
+    - name: health
+    - name: adminapi
+    binds:
+    - address: '[::]:8081'
+    proxy_protocol: false
+  trusted_proxies:
+  - 192.168.0.0/16
+  - 172.16.0.0/12
+  - 10.0.0.0/10
+  - 127.0.0.1/8
+  - fd00::/8
+  - ::1/128
+  public_base: http://localhost:8080/
+  issuer: http://localhost:8080/
+database:
+  uri: postgresql://synapse:synapse@postgres:5432/mas
+  max_connections: 10
+  min_connections: 0
+  connect_timeout: 30
+  idle_timeout: 600
+  max_lifetime: 1800
+email:
+  from: '"Authentication Service" <root@localhost>'
+  reply_to: '"Authentication Service" <root@localhost>'
+  transport: blackhole
+secrets:
+  encryption_file: /config/secrets/encryption
+  keys_dir: /config/secrets/keys/
+passwords:
+  enabled: true
+  schemes:
+  - version: 1
+    algorithm: argon2id
+  minimum_complexity: 3
+# Dev-stack throwaway: os gates de integração escrow↔MAS mintam tokens OIDC via login
+# headless (auth-code+PKCE). O default login.per_ip.burst=3 estoura com múltiplos logins
+# do mesmo host (os gates rodam em paralelo). Burst folgado — local-only, sem relevância
+# de produção (usuário real não faz N logins paralelos).
+rate_limiting:
+  login:
+    per_ip:
+      burst: 100
+      per_second: 100
+# Dev-stack throwaway: os gates C2 do cliente mintam token OIDC e rodam suítes longas
+# (beforeAll 240s + testes 200s). O default access_token_ttl=300s (5 min) expiraria o mat_
+# no meio → 401 tardio. TTL folgado — local-only, sem relevância de produção (lá, refresh).
+experimental:
+  access_token_ttl: 3600
+  # ADR-062 D3: sessão sem atividade há 30 dias é encerrada (o MAS apaga o device no Synapse). Par do
+  # `delete_stale_devices_after: 30d` do Synapse. `ttl` em SEGUNDOS (o MAS 1.27 recusa "30d":
+  # "expected i64"). Chave sob `experimental`: re-verificar com `mas-cli config check` a cada bump da
+  # imagem do MAS.
+  inactive_session_expiration:
+    ttl: 2592000
+    expire_compat_sessions: true
+    expire_oauth_sessions: true
+    expire_user_sessions: true
+matrix:
+  kind: synapse
+  homeserver: tayet.local
+  secret: tayet-dev-stack-throwaway-mas-synapse-shared
+  endpoint: http://synapse:8008/
+
+upstream_oauth2:
+  providers:
+    # SS3/3a — Dex local (mock connector). Split-horizon resolvido via discovery disabled:
+    #   authorization_endpoint -> browser (localhost:5556)
+    #   token/jwks/userinfo    -> rede de container (dex:5556)
+    - id: 01HFS6S2SVAR7Y7QYMZJ53ZDEX
+      # "Continuar com {human_name}" (login-onboarding.md §8 item 4); "(local)" distingue o dev.
+      human_name: a conta da empresa (local)
+      issuer: http://localhost:5556/dex
+      discovery_mode: disabled
+      pkce_method: never
+      authorization_endpoint: http://localhost:5556/dex/auth
+      token_endpoint: http://dex:5556/dex/token
+      jwks_uri: http://dex:5556/dex/keys
+      userinfo_endpoint: http://dex:5556/dex/userinfo
+      client_id: mas-dex
+      client_secret: tayet-dev-stack-throwaway-mas-dex-client
+      token_endpoint_auth_method: client_secret_basic
+      scope: "openid profile email"
+      claims_imports:
+        localpart:
+          # Dex password connector mapeia o `username` para o claim `name` (não preferred_username).
+          action: require
+          template: "{{ user.name }}"
+          # Como em produção: `mel` é pré-criada pelo `up` para receber o flag admin (dev-stack.sh), e o
+          # 1º login liga a ela.
+          on_conflict: add
+        displayname:
+          action: suggest
+          template: "{{ user.name }}"
+        email:
+          action: suggest
+          template: "{{ user.email }}"
+      # Postura (§8.13): após sign-out no MAS, o re-login exige credencial no IdP. No-op com o Dex
+      # atual (sem sessões); vale para IdP com sessão (Google, ADR-048). `logged_out` vale 5 min.
+      additional_authorization_parameters:
+        prompt: "{% if logged_out %}login{% endif %}"
+    # ADR-083 (P3-2): o Google do dev-stack. Mesmo Dex, com o mapeamento do provider de produção: `subject`
+    # é o email, e é assim que o login cai no vínculo que o escrow pré-criou. O id é fixo (ULID literal),
+    # é o ESCROW_PEOPLE_PROVIDER_ID de compose.yaml e entra nos redirectURIs de dex/config.yaml.
+    - id: 01HFS6S2SVAR7Y7QYMZJ53ZG00
+      human_name: Google (simulado)
+      # Ícone oficial colorido do Google no botão (ADR-084 dec. 4; components/idp_brand.html).
+      brand_name: google
+      issuer: http://localhost:5556/dex
+      discovery_mode: disabled
+      pkce_method: never
+      authorization_endpoint: http://localhost:5556/dex/auth
+      token_endpoint: http://dex:5556/dex/token
+      jwks_uri: http://dex:5556/dex/keys
+      userinfo_endpoint: http://dex:5556/dex/userinfo
+      client_id: mas-dex
+      client_secret: tayet-dev-stack-throwaway-mas-dex-client
+      token_endpoint_auth_method: client_secret_basic
+      scope: "openid profile email"
+      claims_imports:
+        subject:
+          # Guard igual ao de produção (infra/deploy/mas/config.yaml.tmpl, provider Google): email não
+          # verificado = subject vazio = tela de erro do MAS (PLANO-PESSOAS §0.3 F(i)). Sujeito vivo do
+          # guard: `fal` (dex/config.yaml), no mas-login.spec.ts da P4-2.
+          template: "{% if user.email_verified %}{{ user.email }}{% endif %}"
+        localpart:
+          action: ignore
+        displayname:
+          action: suggest
+          template: "{{ user.name }}"
+        email:
+          action: require
+          template: "{{ user.email }}"
+
+# ADR-082 dec. 3: só este client pode pedir urn:mas:admin (a policy padrão do MAS recusa os demais).
+policy:
+  data:
+    admin_clients:
+      - 000000000000000000ESCADM1N
+
+# Fatia C1 (escrow): cliente de introspecção RFC 7662 do serviço de escrow — segredo
+# throwaway, local-only, mesma classe de aviso do README. A entrada vive NA config
+# (não via API) de propósito: o `config sync --prune` do up remove clients fora dela.
+clients:
+  - client_id: 00000000000000000000ESCR0W
+    client_auth_method: client_secret_basic
+    client_secret: tayet-dev-stack-throwaway-escrow-introspection
+  # ADR-082 dec. 3: client admin do escrow (`client_credentials`, escopo urn:mas:admin) — só encerra
+  # os outros acessos do usuário do token. Segredo throwaway, mesma classe de aviso do client acima.
+  - client_id: 000000000000000000ESCADM1N
+    client_auth_method: client_secret_basic
+    client_secret: tayet-dev-stack-throwaway-escrow-mas-admin
+  # Web client (SPA) — público, authorization_code + PKCE, sem secret (ADR-032 §Decisão 1). Estático
+  # na config porque o `config sync --prune` do up removeria um client de DCR. redirect_uri = origin
+  # de DEV do SPA (Vite, raiz — o callback é detectado no Boot, sem router, ADR-032 §Decisão 3). O pin
+  # da porta (strictPort) e o CORS/proxy do token-exchange são da fatia 2a.
+  - client_id: 000000000000000000000TAYET
+    client_name: Tayet (web)
+    # Página de consentimento do MAS (re-login após "Sair": a sessão de browser do MAS sobrevive à
+    # ADR-062 D1) mostrava "<no client_uri provided>" (PLANO-RELEASE-PUBLICA §8.23). = origem do SPA.
+    # logo_uri/policy_uri/tos_uri não existem no ClientConfig do MAS 1.27 (docs/config.schema.json).
+    client_uri: http://localhost:5173/
+    client_auth_method: none
+    redirect_uris:
+      - http://localhost:5173/

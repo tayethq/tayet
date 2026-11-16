@@ -1,0 +1,42 @@
+{
+  "color": {
+    "$description": "Tayet — tema CLARO (primário). Semânticos mode-estáveis resolvidos aos primitivos do DIA (greige/índigo). Autorado à mão (ADR-028 decisão 4) — não é derivação do dark. Mapa congelado em PLANO §0.2. Os autorados (danger, danger-wash, presence-online, scrim) não têm rampa: são valores semânticos diretos.",
+    "bg": { "$value": "{color.greige.200}", "$type": "color", "$description": "Chão da janela." },
+    "surface": { "$value": "{color.greige.50}", "$type": "color", "$description": "Superfície padrão (painéis, linhas)." },
+    "surface-raised": { "$value": "{color.greige.0}", "$type": "color", "$description": "Superfície elevada — clareia, sem sombra (elevação contida)." },
+    "border": { "$value": "{color.greige.400}", "$type": "color", "$description": "Separação padrão." },
+    "border-strong": { "$value": "{color.greige.500}", "$type": "color", "$description": "Separação enfática / inputs." },
+    "text": { "$value": "{color.greige.900}", "$type": "color", "$description": "Texto primário." },
+    "muted": { "$value": "{color.greige.600}", "$type": "color", "$description": "Secundário; reusado por 'enviando' e 'presence-away'." },
+    "accent": { "$value": "{color.indigo.600}", "$type": "color", "$description": "Acento semântico (não-lido/menção/selecionado/ação)." },
+    "accent-pressed": { "$value": "{color.indigo.700}", "$type": "color", "$description": "Estado pressionado da ação." },
+    "accent-wash": { "$value": "{color.indigo.50}", "$type": "color", "$description": "Fundo lavado do acento (linha selecionada, bg de badge)." },
+    "accent-fg": { "$value": "{color.indigo.50}", "$type": "color", "$description": "texto/ícone sobre preenchimento de acento" },
+    "highlight-wash": { "$value": "{color.indigo.100}", "$type": "color", "$description": "Realce de \"está aqui\" — linha-alvo de um salto da busca e o termo em <mark> (workspace.md §6.1). Mesma rampa do acento, um degrau acima do wash: difere de \"selecionado\" em intensidade, não em matiz." },
+    "danger": { "$value": "#9C4A3A", "$type": "color", "$description": "Funcional (falhou) — autorado, sem rampa. Calmo, sem alarme." },
+    "danger-wash": { "$value": "#F3E3DF", "$type": "color", "$description": "Fundo lavado de falha — autorado." },
+    "presence-online": { "$value": "#4F7E5C", "$type": "color", "$description": "Presença online (sálvia) — autorado, não é acento." },
+    "agent": {
+      "$description": "Agente (ADR-086 dec. 1/2; account-access.md §11.1, workspace.md §15.1) — autorados, sem rampa. Cada cor é um trio fundo/borda/glifo do avatar de agente, escolhido pelo admin entre 10. `mark` é o indicador exclusivo de agente no lugar do ponto de presença; não se reaproveita em nenhum outro status.",
+      "mark": { "$value": "#3E7CB1", "$type": "color", "$description": "Indicador de agente (azul exclusivo) — ≠ acento, ≠ presença." },
+      "areia": { "bg": { "$value": "#F2EFE7", "$type": "color" }, "border": { "$value": "#D2CCBE", "$type": "color" }, "fg": { "$value": "#5F584C", "$type": "color" } },
+      "petroleo": { "bg": { "$value": "#E9EEEB", "$type": "color" }, "border": { "$value": "#B0BEB8", "$type": "color" }, "fg": { "$value": "#35463F", "$type": "color" } },
+      "turquesa": { "bg": { "$value": "#E2EEEC", "$type": "color" }, "border": { "$value": "#AECFC9", "$type": "color" }, "fg": { "$value": "#2C5C56", "$type": "color" } },
+      "salvia": { "bg": { "$value": "#ECEFE2", "$type": "color" }, "border": { "$value": "#C7CFB0", "$type": "color" }, "fg": { "$value": "#4F5A2E", "$type": "color" } },
+      "ocre": { "bg": { "$value": "#F5EEDC", "$type": "color" }, "border": { "$value": "#DCC9A0", "$type": "color" }, "fg": { "$value": "#765A1C", "$type": "color" } },
+      "argila": { "bg": { "$value": "#F5E9E2", "$type": "color" }, "border": { "$value": "#E0C3B2", "$type": "color" }, "fg": { "$value": "#8A4B2F", "$type": "color" } },
+      "barro": { "bg": { "$value": "#F3E7E5", "$type": "color" }, "border": { "$value": "#D9BFBB", "$type": "color" }, "fg": { "$value": "#7E4A4E", "$type": "color" } },
+      "malva": { "bg": { "$value": "#F0E7EE", "$type": "color" }, "border": { "$value": "#D3BFCF", "$type": "color" }, "fg": { "$value": "#6B4262", "$type": "color" } },
+      "ardosia": { "bg": { "$value": "#E6EDF2", "$type": "color" }, "border": { "$value": "#B9CAD6", "$type": "color" }, "fg": { "$value": "#3A5568", "$type": "color" } },
+      "grafite": { "bg": { "$value": "#E9E8E5", "$type": "color" }, "border": { "$value": "#C4C1BA", "$type": "color" }, "fg": { "$value": "#3F3D38", "$type": "color" } }
+    },
+    "scrim": { "$value": "rgba(34, 31, 24, 0.24)", "$type": "color", "$description": "Backdrop de dialog/modal — autorado por tema, sem rampa (escurece em ambos os modos). Idêntico ao scrim atual do light (greige.900 @24%), então o light NÃO regride. Consumidor: dialogs de gestão (ADR-029)." }
+  },
+  "shadow": {
+    "overlay": {
+      "$value": "0 4px 16px rgba(20, 16, 12, 0.10)",
+      "$type": "shadow",
+      "$description": "Única sombra — só flutuantes (menu/modal/popover). Quente, não preta. Superfícies padrão NÃO têm sombra."
+    }
+  }
+}

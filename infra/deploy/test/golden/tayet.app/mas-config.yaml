@@ -1,0 +1,197 @@
+# Matrix Authentication Service — PRODUÇÃO (auth.<domínio base>).
+#
+# TEMPLATE: os `__PLACEHOLDER__` são preenchidos pelo `deploy.sh secrets` →
+# `secrets/rendered/mas-config.yaml` (gitignored). A seção `secrets:` (chaves de
+# assinatura) NÃO vive aqui — é gerada por `mas-cli config generate` para
+# `secrets/mas-secrets.yaml` e mesclada no boot via `--config` repetido (Variante A,
+# §0.3). Nenhum secret real neste arquivo.
+#
+# Deltas sobre o mas/config.yaml de dev comentados inline (ADR-046).
+# Templates próprios (ADR-084): a árvore vendored de infra/mas/templates, montada pelo compose (mesma árvore do dev).
+# Substitui o diretório inteiro; `mas-cli templates check` valida (CI).
+templates:
+  path: /templates/
+http:
+  listeners:
+  - name: web
+    resources:
+    - name: discovery
+    - name: human
+    - name: oauth
+    - name: compat
+    - name: graphql
+    - name: assets
+    binds:
+    # §0.6: em produção o MAS escuta em 0.0.0.0:8080 (o escrow e o Caddy o alcançam pela
+    # rede interna como mas:8080). O dev bindava em '[::]:8080'.
+    - address: '0.0.0.0:8080'
+    proxy_protocol: false
+  # ADR-082 dec. 3: `adminapi` SÓ aqui, nunca no `web`. Bind na rede interna (o escrow chega por mas:8081); sem porta publicada e fora do Caddy.
+  - name: internal
+    resources:
+    - name: health
+    - name: adminapi
+    binds:
+    - address: '0.0.0.0:8081'
+    proxy_protocol: false
+  trusted_proxies:
+  - 192.168.0.0/16
+  - 172.16.0.0/12
+  - 10.0.0.0/10
+  - 127.0.0.1/8
+  - fd00::/8
+  - ::1/128
+  # Issuer em host dedicado (ADR-046): o identificador mais foreclosante depois do
+  # server_name — entra em toda sessão/token, nunca migra quando a topologia de trás mudar.
+  public_base: https://auth.tayet.app/
+  issuer: https://auth.tayet.app/
+database:
+  uri: postgresql://synapse:synapse@postgres:5432/mas
+  max_connections: 10
+  min_connections: 0
+  connect_timeout: 30
+  idle_timeout: 600
+  max_lifetime: 1800
+email:
+  from: '"Authentication Service" <root@localhost>'
+  reply_to: '"Authentication Service" <root@localhost>'
+  transport: blackhole
+
+# A autenticação acontece no upstream (Dex, ADR-048 item 4) → o MAS não guarda senha
+# local; o login é sempre delegado ao provider de identidade.
+passwords:
+  enabled: false
+
+# SEM os overrides `rate_limiting` e `experimental.access_token_ttl` do dev: o próprio
+# dev-stack os comenta como dev-only (bursts de login paralelo do gate, TTL longo p/
+# suítes lentas). Produção usa os defaults do MAS (refresh de token no fluxo real).
+#
+# `experimental` aqui carrega SÓ o reaper de sessões inativas (ADR-062 D3), que NÃO é dev-only:
+experimental:
+  # ADR-062 D3: sessão sem atividade há 30 dias é encerrada (o MAS apaga o device no Synapse). Par do
+  # `delete_stale_devices_after: 30d` do Synapse. `ttl` em SEGUNDOS (o MAS 1.27 recusa "30d":
+  # "expected i64"). Chave sob `experimental`: re-verificar com `mas-cli config check` a cada bump da
+  # imagem do MAS.
+  inactive_session_expiration:
+    ttl: 2592000
+    expire_compat_sessions: true
+    expire_oauth_sessions: true
+    expire_user_sessions: true
+
+matrix:
+  kind: synapse
+  homeserver: tayet.app
+  secret: fake-mas-shared-00000000000000000
+  endpoint: http://synapse:8008/
+
+upstream_oauth2:
+  providers:
+    # Dex de produção — stand-in OIDC do seam agnóstico do dogfood (ADR-048). Bloco
+    # PORTADO do provider Dex do dev-stack (infra/dev-stack/mas/config.yaml, §0.2), que já
+    # funciona: mapping/scope/auth_method idênticos; mudam só o `id` (ULID novo pinado no
+    # PR-2), o issuer e os endpoints (host de produção) e os secrets.
+    #
+    # Split-horizon (mesma forma do dev): o `authorization_endpoint` é browser-reachable
+    # via Caddy (login.<domínio base>); token/jwks/userinfo são server-to-server e vão pela
+    # rede interna do compose (dex:5556) — sem hairpin por TLS. `discovery_mode: disabled`
+    # por isso; o `iss` do id_token (= issuer configurado) é validado contra `issuer`.
+    - id: 5N76WXKCKTDZV1E79ZM7E1YTG0
+      human_name: "a conta da empresa"
+      issuer: https://login.tayet.app
+      discovery_mode: disabled
+      pkce_method: never
+      authorization_endpoint: https://login.tayet.app/auth
+      token_endpoint: http://dex:5556/token
+      jwks_uri: http://dex:5556/keys
+      userinfo_endpoint: http://dex:5556/userinfo
+      client_id: mas
+      client_secret: fake-dex-client-000000000000000
+      token_endpoint_auth_method: client_secret_basic
+      scope: "openid profile email"
+      claims_imports:
+        localpart:
+          # O password connector do Dex mapeia o `username` estático para o claim `name`
+          # (não preferred_username) — o localpart do MXID vem daí.
+          action: require
+          template: "{{ user.name }}"
+          # Addendum de chancela do PR #295 (doc "Allow linking existing user accounts"): o bootstrap
+          # admin é pré-criado pelo `up`, porque a política fecha o cadastro; o 1º login liga a ela.
+          on_conflict: add
+        displayname:
+          action: suggest
+          template: "{{ user.name }}"
+        email:
+          action: suggest
+          template: "{{ user.email }}"
+      # Postura (§8.13): após sign-out no MAS, o re-login exige credencial no IdP. No-op com o Dex
+      # atual (sem sessões); vale para IdP com sessão (Google, ADR-048). `logged_out` vale 5 min.
+      additional_authorization_parameters:
+        prompt: "{% if logged_out %}login{% endif %}"
+
+    # Google, o provedor da v0.1.0 (ADR-083 dec. 1). O id é fixo e é o ESCROW_PEOPLE_PROVIDER_ID do
+    # compose: o redirect URI do OAuth client termina nele (SELF-HOSTING.md).
+    # `subject = email`: o MAS vincula por subject, nunca por email, e o `sub` real do Google só existe
+    # depois do 1º login, tarde demais para o link pré-criado pelo escrow (PLANO-PESSOAS §0 B.a, D2).
+    - id: 01M6EV4GP9QK3T7YH2ZD8NXGG1
+      human_name: "Google"
+      # Ícone oficial colorido do Google no botão (ADR-084 dec. 4; components/idp_brand.html).
+      brand_name: google
+      issuer: https://accounts.google.com
+      client_id: fake-google-client-id-0000000000
+      client_secret: fake-google-client-0000000000000
+      token_endpoint_auth_method: client_secret_post
+      scope: "openid email profile"
+      claims_imports:
+        subject:
+          # Guard só aqui: no `email.template` o login passa com email não verificado, porque o link já
+          # existe e o import não barra. Subject vazio recusa, com a tela de erro do MAS (PLANO-PESSOAS
+          # §0.3 F, medido com Dex; Google real não medido).
+          template: "{% if user.email_verified %}{{ user.email }}{% endif %}"
+        localpart:
+          action: ignore
+        displayname:
+          action: suggest
+          template: "{{ user.name }}"
+        email:
+          action: require
+          template: "{{ user.email }}"
+      additional_authorization_parameters:
+        login_hint: "{{ params.login_hint }}"
+        prompt: "{% if logged_out %}login{% endif %}"
+
+policy:
+  data:
+    # ADR-082 dec. 3: só este client pode pedir urn:mas:admin (a policy padrão do MAS recusa os demais).
+    admin_clients:
+      - 000000000000000000ESCADM1N
+    # Fecha o cadastro: só entra quem o escrow pré-criou (PLANO-PESSOAS §0 D, linha "Gate"; ADR-083
+    # dec. 1). A admin API ignora a política. Conta nova pelo Dex também para aqui. O caminho é
+    # `registration.`: na raiz de `data` a política ignora a chave em silêncio (PLANO-PESSOAS §8.2).
+    registration:
+      allowed_usernames:
+        literals: []
+
+# Clients estáticos NA config (o `config sync --prune` do up removeria clients de DCR).
+clients:
+  # Cliente de introspecção RFC 7662 do escrow (ADR-017). O secret casa com o
+  # ESCROW_CLIENT_SECRET do env-file (mesmo valor renderizado nos dois lados).
+  - client_id: 00000000000000000000ESCR0W
+    client_auth_method: client_secret_basic
+    client_secret: fake-escrow-client-0000000000000
+  # ADR-082 dec. 3: client admin do escrow (`client_credentials`, escopo urn:mas:admin) — só encerra
+  # os outros acessos do usuário do token. O secret casa com ESCROW_MAS_ADMIN_CLIENT_SECRET do env-file.
+  - client_id: 000000000000000000ESCADM1N
+    client_auth_method: client_secret_basic
+    client_secret: fake-escrow-admin-0000000000000
+  # SPA (web) — público, authorization_code + PKCE, sem secret (ADR-032 §Decisão 1).
+  # Mesmo id do dev, instância DISTINTA de MAS. redirect_uri = origin de produção do SPA
+  # (o callback é detectado no Boot, sem router — ADR-032 §Decisão 3).
+  - client_id: 000000000000000000000TAYET
+    client_name: Tayet (web)
+    # Página de consentimento do MAS (re-login após "Sair": a sessão de browser do MAS sobrevive à
+    # ADR-062 D1) mostrava "<no client_uri provided>" (PLANO-RELEASE-PUBLICA §8.23). = origem do SPA.
+    # logo_uri/policy_uri/tos_uri não existem no ClientConfig do MAS 1.27 (docs/config.schema.json).
+    client_uri: https://chat.tayet.app/
+    client_auth_method: none
+    redirect_uris:
+      - https://chat.tayet.app/

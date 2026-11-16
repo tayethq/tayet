@@ -1,0 +1,17 @@
+# Tayet — Fatia 3 de CI (issue #7). Override de compose CI-ONLY.
+#
+# Layerado SÓ quando TAYET_CI_RATELIMIT=1 (ver dev-stack.sh, helper compose()). NUNCA carregado
+# localmente. Única função: trocar o `command` do serviço synapse para passar DOIS --config-path
+# explícitos, de modo que o homeserver.ci.yaml (rc_* permissivos) seja layerado sobre o
+# homeserver.yaml base. O run-mode do start.py honra os --config-path do command (só injeta o
+# default quando nenhum está presente) e continua auto-gerando a signing key no boot — nenhum
+# bypass de entrypoint. Todos os outros campos do serviço synapse (image, volumes, ports,
+# healthcheck, depends_on) vêm do compose.yaml base por merge.
+services:
+  synapse:
+    command:
+      - "run"
+      - "--config-path"
+      - "/data/homeserver.yaml"
+      - "--config-path"
+      - "/data/homeserver.ci.yaml"

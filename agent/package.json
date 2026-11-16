@@ -1,0 +1,36 @@
+{
+  "name": "@tayet/custody-agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Tayet custody agent: headless client of the structural custody identity that deposits session keys with the escrow.",
+  "license": "BUSL-1.1",
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=12.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run lint && npm run test"
+  },
+  "dependencies": {
+    "@matrix-org/matrix-sdk-crypto-wasm": "18.3.1",
+    "matrix-js-sdk": "41.6.0",
+    "node-indexeddb": "6.0.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "25.9.2",
+    "eslint": "10.4.1",
+    "globals": "17.6.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.60.1",
+    "vitest": "4.1.12"
+  },
+  "allowScripts": {
+    "classic-level@1.4.1": true,
+    "fsevents@2.3.3": true
+  }
+}

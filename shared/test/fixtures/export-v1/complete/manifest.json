@@ -1,0 +1,86 @@
+{
+  "format": "tayet-export",
+  "formatVersion": 1,
+  "scope": "person",
+  "createdAt": "2026-11-13T21:00:00.000Z",
+  "subject": "p1",
+  "people": [
+    {
+      "id": "p1",
+      "name": "Marina Alves",
+      "kind": "member"
+    },
+    {
+      "id": "p2",
+      "name": "Atlas",
+      "kind": "agent"
+    },
+    {
+      "id": "p3",
+      "name": "Bruno Costa",
+      "kind": "member"
+    },
+    {
+      "id": "p4",
+      "name": "Relatórios",
+      "kind": "agent"
+    },
+    {
+      "id": "p5",
+      "name": "Lucas Prado",
+      "kind": "guest"
+    }
+  ],
+  "conversations": [
+    {
+      "id": "c1",
+      "file": "conversations/c1.json",
+      "name": "diretoria",
+      "kind": "private",
+      "joinedAt": "2026-10-02T12:00:00.000Z",
+      "messages": 11,
+      "deleted": 1,
+      "attachments": 1,
+      "gaps": 2
+    },
+    {
+      "id": "c2",
+      "file": "conversations/c2.json",
+      "name": "Bruno Costa",
+      "kind": "dm",
+      "joinedAt": "2026-10-05T09:00:00.000Z",
+      "messages": 1,
+      "deleted": 0,
+      "attachments": 0,
+      "gaps": 0
+    },
+    {
+      "id": "c3",
+      "file": "conversations/c3.json",
+      "name": "Bruno Costa, Lucas Prado",
+      "kind": "group",
+      "messages": 1,
+      "deleted": 0,
+      "attachments": 1,
+      "gaps": 0
+    },
+    {
+      "id": "c4",
+      "file": "conversations/c4.json",
+      "name": "geral",
+      "kind": "public",
+      "joinedAt": "2026-10-01T08:00:00.000Z",
+      "messages": 0,
+      "deleted": 0,
+      "attachments": 0,
+      "gaps": 0
+    }
+  ],
+  "totals": {
+    "conversations": 4,
+    "messages": 13,
+    "deleted": 1,
+    "attachments": 2,
+    "gaps": 2
+  }
+}

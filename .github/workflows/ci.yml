@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  client:
+    name: client (typecheck · boundary lint · tests · build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/checks
+        with:
+          package: client
+
+  escrow:
+    name: escrow (typecheck · lint · unit · no cross-imports)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/checks
+        with:
+          package: escrow
+
+  agent:
+    name: agent (typecheck · lint · unit · audit · no cross-imports)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/checks
+        with:
+          package: agent
+
+  shared:
+    name: shared (typecheck · boundary lint · unit · no cross-imports)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/checks
+        with:
+          package: shared
+
+  sidecar:
+    name: sidecar (typecheck · lint · build · unit · audit · no cross-imports)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/checks
+        with:
+          package: sidecar
+
+  secret-scan:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/secret-scan

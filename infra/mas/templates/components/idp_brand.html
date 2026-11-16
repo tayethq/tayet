@@ -1,0 +1,19 @@
+{#
+Copyright 2024, 2025 New Vector Ltd.
+Copyright 2023, 2024 The Matrix.org Foundation C.I.C.
+
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+Please see LICENSE files in the repository root for full details.
+
+Modified by Tayet (first on 2026-11-03, last on 2026-11-15): only `google` has an icon, the G of Google's
+official sign-in button snippet (`_assets/google-g.svg`, verbatim; origin in UPSTREAM.md). The SVG has
+no width/height: in `display:block` it fills the 20 px slot through its viewBox, uncropped. Any other
+`brand_name` renders nothing: a provider without a brand has no icon.
+The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and infra/mas/NOTICE.md.
+-#}
+
+{% macro logo(brand, class="") -%}
+    {% if brand == "google" -%}
+        <span class="idp-logo {{ class }}" aria-hidden="true" style="display:inline-block;flex:none;width:20px;height:20px">{% include "_generated/google-g.html" %}</span>
+    {%- endif %}
+{% endmacro %}

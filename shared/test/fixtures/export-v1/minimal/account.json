@@ -1,0 +1,14 @@
+{
+  "formatVersion": 1,
+  "profile": {
+    "fullName": "Lia Souza"
+  },
+  "accesses": [
+    {
+      "name": "Firefox no Linux",
+      "lastSeenAt": "2026-11-13T21:29:00.000Z",
+      "current": true
+    }
+  ],
+  "agents": []
+}

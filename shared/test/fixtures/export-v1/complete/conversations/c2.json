@@ -1,0 +1,14 @@
+{
+  "formatVersion": 1,
+  "conversation": "c2",
+  "items": [
+    {
+      "type": "message",
+      "id": "m15",
+      "sentAt": "2026-11-12T18:00:00.000Z",
+      "text": "Obrigada pela ajuda ontem.",
+      "inThread": false,
+      "isReply": false
+    }
+  ]
+}

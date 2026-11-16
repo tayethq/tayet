@@ -1,0 +1,42 @@
+{
+  "color": {
+    "$description": "Tayet — tema ESCURO (peer caloroso, ADR-027 eixo 3: 'mesmo cômodo, outro horário'). Semânticos mode-estáveis (MESMOS nomes do light) resolvidos aos primitivos da NOITE (petróleo/índigo). Autorado à mão — NÃO é inversão fria do light. Mapa congelado em PLANO §0.2. O microajuste de hex reservado pelo owner já está aplicado (border = petrol.600 pra não colidir com surface-raised).",
+    "bg": { "$value": "{color.petrol.900}", "$type": "color" },
+    "surface": { "$value": "{color.petrol.800}", "$type": "color" },
+    "surface-raised": { "$value": "{color.petrol.700}", "$type": "color", "$description": "Elevação por luz: clareia (+ border). É a base da elevação no dark." },
+    "border": { "$value": "{color.petrol.600}", "$type": "color" },
+    "border-strong": { "$value": "{color.petrol.500}", "$type": "color" },
+    "text": { "$value": "{color.petrol.50}", "$type": "color" },
+    "muted": { "$value": "{color.petrol.400}", "$type": "color" },
+    "accent": { "$value": "{color.indigo.300}", "$type": "color", "$description": "Acento clareado pro contraste no chão petróleo." },
+    "accent-pressed": { "$value": "{color.indigo.400}", "$type": "color" },
+    "accent-wash": { "$value": "#232A40", "$type": "color", "$description": "Autorado — não há stop de índigo que sirva de wash sobre petróleo." },
+    "accent-fg": { "$value": "{color.indigo.700}", "$type": "color", "$description": "texto/ícone sobre preenchimento de acento" },
+    "highlight-wash": { "$value": "{color.indigo.700}", "$type": "color", "$description": "Realce de \"está aqui\" (workspace.md §6.1) — autorado no degrau índigo 700, um passo mais forte que o accent-wash no chão petróleo." },
+    "danger": { "$value": "#CE7E6C", "$type": "color", "$description": "Autorado — falha calma no chão noturno." },
+    "danger-wash": { "$value": "#2C211D", "$type": "color", "$description": "Autorado." },
+    "presence-online": { "$value": "#7FB089", "$type": "color", "$description": "Autorado — sálvia clareada." },
+    "agent": {
+      "$description": "Agente (ADR-086 dec. 1/2; account-access.md §11.1, workspace.md §15.1) — autorados, sem rampa. Cada cor é um trio fundo/borda/glifo do avatar de agente, escolhido pelo admin entre 10. `mark` é o indicador exclusivo de agente no lugar do ponto de presença; não se reaproveita em nenhum outro status.",
+      "mark": { "$value": "#6FA8D6", "$type": "color", "$description": "Indicador de agente (azul exclusivo) — ≠ acento, ≠ presença." },
+      "areia": { "bg": { "$value": "#2A2721", "$type": "color" }, "border": { "$value": "#4A443A", "$type": "color" }, "fg": { "$value": "#D2CCBE", "$type": "color" } },
+      "petroleo": { "bg": { "$value": "#1E2B27", "$type": "color" }, "border": { "$value": "#3A4C45", "$type": "color" }, "fg": { "$value": "#B0BEB8", "$type": "color" } },
+      "turquesa": { "bg": { "$value": "#1A2B29", "$type": "color" }, "border": { "$value": "#34514D", "$type": "color" }, "fg": { "$value": "#AED2CC", "$type": "color" } },
+      "salvia": { "bg": { "$value": "#262A1D", "$type": "color" }, "border": { "$value": "#454C34", "$type": "color" }, "fg": { "$value": "#C9D1B3", "$type": "color" } },
+      "ocre": { "bg": { "$value": "#2F2919", "$type": "color" }, "border": { "$value": "#56492B", "$type": "color" }, "fg": { "$value": "#DCC79A", "$type": "color" } },
+      "argila": { "bg": { "$value": "#33241D", "$type": "color" }, "border": { "$value": "#5A3D30", "$type": "color" }, "fg": { "$value": "#E6C1AC", "$type": "color" } },
+      "barro": { "bg": { "$value": "#2F2324", "$type": "color" }, "border": { "$value": "#523E40", "$type": "color" }, "fg": { "$value": "#DABFBC", "$type": "color" } },
+      "malva": { "bg": { "$value": "#2C2229", "$type": "color" }, "border": { "$value": "#4E3E4A", "$type": "color" }, "fg": { "$value": "#D6C2D2", "$type": "color" } },
+      "ardosia": { "bg": { "$value": "#1E262D", "$type": "color" }, "border": { "$value": "#3A4855", "$type": "color" }, "fg": { "$value": "#B9CBD8", "$type": "color" } },
+      "grafite": { "bg": { "$value": "#262523", "$type": "color" }, "border": { "$value": "#45433F", "$type": "color" }, "fg": { "$value": "#CFCCC5", "$type": "color" } }
+    },
+    "scrim": { "$value": "rgba(9, 14, 13, 0.55)", "$type": "color", "$description": "Backdrop de dialog/modal — autorado, sem rampa. Preto quente que AFUNDA o chão petróleo; NÃO derivar de --color-text (clarearia no dark). Consumidor: dialogs de gestão (ADR-029)." }
+  },
+  "shadow": {
+    "overlay": {
+      "$value": "0 6px 20px rgba(0, 0, 0, 0.34)",
+      "$type": "shadow",
+      "$description": "Apoio à elevação-por-luz (surface-raised mais clara + border faz o trabalho principal)."
+    }
+  }
+}

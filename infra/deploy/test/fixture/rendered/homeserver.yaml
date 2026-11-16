@@ -1,0 +1,7 @@
+# Fixture de render-identity.sh (ADR-095): esboço do render vivo com só as linhas que o
+# `deploy.sh render` extrai. O primeiro render o substitui pela saída do template.
+registration_shared_secret: "fake-registration-000000000000"
+macaroon_secret_key: "fake-macaroon-00000000000000000"
+form_secret: "fake-form-0000000000000000000000"
+matrix_authentication_service:
+  secret: "fake-mas-shared-00000000000000000"

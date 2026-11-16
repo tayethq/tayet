@@ -1,0 +1,277 @@
+# Dex — provedor OIDC local para de-riscar o plumbing MAS↔Synapse (SS3, item 5/3a).
+# THROWAWAY. Connector mock = round-trip OIDC completo, sem formulário (curl-ável).
+issuer: http://localhost:5556/dex
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+oauth2:
+  skipApprovalScreen: true
+
+staticClients:
+  - id: mas-dex
+    name: "Tayet MAS"
+    secret: tayet-dev-stack-throwaway-mas-dex-client
+    redirectURIs:
+      # {public_base}/upstream/callback/{provider_id} do MAS
+      - http://localhost:8080/upstream/callback/01HFS6S2SVAR7Y7QYMZJ53ZDEX
+      - http://localhost:8080/upstream/callback/01HFS6S2SVAR7Y7QYMZJ53ZG00
+
+# Password DB local: usuários estáticos. username -> claim preferred_username (localpart limpo).
+enablePasswordDB: true
+staticPasswords:
+  - email: "alice@tayet.local"
+    username: "alice"
+    userID: "tayet-alice-0001"
+    hash: "$2y$10$EXx2LkFqjSPMgLdbgJsmnuHD.vZKNOPuijNDCOnuLh0WX6x0PTkdG"
+  - email: "bob@tayet.local"
+    username: "bob"
+    userID: "tayet-bob-0002"
+    hash: "$2y$10$eGsD0zyDUWl9WaHHeCfiyuXpVhVfZcMShdXI/2Yx.G73UMYc4ewp2"
+  # NÃO é provisionada por `up` — de propósito. É o sujeito vivo da ADR-054 dec. 6:
+  # existe na allowlist, ainda não fez o 1º login, e o sync tem que PULAR sem erro.
+  - email: "carol@tayet.local"
+    username: "carol"
+    userID: "tayet-carol-0003"
+    hash: "$2y$12$WiCThkLq7BBkBvoGwu2XPubS/IlV3Af4F8G1lRTdSBGVEtSMRQPzC"
+  # Usuários do tier E2E (ADR-060 D2): nascem pelo Dex no 1º login; NUNCA `register-user`.
+  # Senhas throwaway declaradas (erinpass123/frankpass123/ginapass123/hanapass123/ivopass123/jadepass123/kaipass123/liapass123/miapass123/noapass123/otopass123/piapass123), espelhadas em
+  # client/e2e/fixtures/users.ts. Hash: `htpasswd -nbBC 12 "" "<senha>" | cut -d: -f2`.
+  - email: "erin@tayet.local"
+    username: "erin"
+    userID: "tayet-erin-0005"
+    hash: "$2y$12$Bj9AfhRzhe8snFAjU3jqT.ignLRacv7AfUWDKR51Xsl9.At03nTXy"
+  - email: "frank@tayet.local"
+    username: "frank"
+    userID: "tayet-frank-0006"
+    hash: "$2y$12$843/Fx6gBUDkIMznu//KKe3nUX8c8smUtJjFVLnCbEeKBaX3d17gu"
+  # gina: só do login.spec.ts — um usuário por spec (client/e2e/fixtures/users.ts).
+  - email: "gina@tayet.local"
+    username: "gina"
+    userID: "tayet-gina-0007"
+    hash: "$2y$12$q.hGsaQw6yY1akV6QQu9SefXafEW4cj3uT8dT5cjn06syy7x2fkPG"
+  # hana: só do new-access.spec.ts — um usuário por spec (client/e2e/fixtures/users.ts).
+  - email: "hana@tayet.local"
+    username: "hana"
+    userID: "tayet-hana-0008"
+    hash: "$2y$12$HN5.fLTIrgaqKkS6z9u.8uFTq3aT60VWSQAMTAc1pDy27yJ1nY2P2"
+  # ivo e jade: só do device-list-staleness.spec.ts (§8.24). A regra "um usuário por spec" vale por
+  # PAR aqui: ivo é a sessão longa (A), jade sai e entra a cada rodada (B).
+  - email: "ivo@tayet.local"
+    username: "ivo"
+    userID: "tayet-ivo-0009"
+    hash: "$2y$12$/R8ylSJ.RxRaF2qHAWmxEukkFqtCUJ0XoQ5abANwsYFzWJ3m7fj3a"
+  - email: "jade@tayet.local"
+    username: "jade"
+    userID: "tayet-jade-0010"
+    hash: "$2y$12$zT7wl4M26o6VI6jrNaYiTO8ZOyCRMSVeYGMQd4z8T/DlcEkJNmgr."
+  # kai e lia: só do tab-lock.spec.ts (ADR-065). Regra por PAR: kai abre as duas abas (A), lia é o par
+  # da DM.
+  - email: "kai@tayet.local"
+    username: "kai"
+    userID: "tayet-kai-0011"
+    hash: "$2y$12$Aav5SoFvsRS62SHAwyBEm.pYTce5I6j8fcbhgYk8pRbxF3aZNeOJS"
+  - email: "lia@tayet.local"
+    username: "lia"
+    userID: "tayet-lia-0012"
+    hash: "$2y$12$Czw0He1dbU6.W8YHSMsMqeouvGXcWruikmBjrCinxT1z1gJuLCnC."
+  # mia e noa: só do timeline.spec.ts (§8.27). Regra por PAR: mia escreve na DM (A), noa abre a DM e
+  # responde em thread (B).
+  - email: "mia@tayet.local"
+    username: "mia"
+    userID: "tayet-mia-0013"
+    hash: "$2y$12$pwUa/3lTzCniLLgBZtej3uaPBb1cqe1vqoR9cAC09BBdyFZwa96zi"
+  - email: "noa@tayet.local"
+    username: "noa"
+    userID: "tayet-noa-0014"
+    hash: "$2y$12$b3LuyBSfc5J7w4iR8egkUutfneAfE9xqoO7g1LdIP133zzXHZt3Um"
+  # oto e pia: só do notifications.spec.ts (PLANO-RELEASE-PUBLICA §8.42). Regra por PAR: oto escreve
+  # (A), pia é notificada (B).
+  - email: "oto@tayet.local"
+    username: "oto"
+    userID: "tayet-oto-0015"
+    hash: "$2y$12$b5RMICNqpU3wWb9JHl/B9OVY9EsLFK4Gy4nlXe3vZalLaYZ/WBsRq"
+  - email: "pia@tayet.local"
+    username: "pia"
+    userID: "tayet-pia-0016"
+    hash: "$2y$12$FXEgV8FtnhFuPmmPaM43VemAnn/wZTVOiQ91iwqtrBR/uz7YHMTw2"
+  # quim e rita: só do search.spec.ts (PLANO-RELEASE-PUBLICA §8.45). Regra por PAR: rita escreve
+  # (A), quim busca e salta (B).
+  - email: "quim@tayet.local"
+    username: "quim"
+    userID: "tayet-quim-0017"
+    hash: "$2y$12$bp.xuTOuKAE3izDx5c1B7Od0vriRB9zRZX5n86MYE.cIyU1sXlhhy"
+  - email: "rita@tayet.local"
+    username: "rita"
+    userID: "tayet-rita-0018"
+    hash: "$2y$12$4O8tTH7I0d89po2cX1I8NuaF4tiEvv0D/3Es60mm16.DOgPknsGnO"
+  # sol e tom: só do delete.spec.ts (PLANO-RELEASE-PUBLICA §8.52). Regra por PAR: tom escreve e apaga
+  # (A), sol observa (B).
+  - email: "sol@tayet.local"
+    username: "sol"
+    userID: "tayet-sol-0019"
+    hash: "$2y$12$YPYMenDi5BOQ0IsJhpcceexmETBIR8jxsAc33A7jTP1rWICKF8sre"
+  - email: "tom@tayet.local"
+    username: "tom"
+    userID: "tayet-tom-0020"
+    hash: "$2y$12$0sCe68W2p95C5FOLnOeSeejOY/9Yh1gf8yGZJTfbwtjRhFbaqJhmi"
+  # una e vic: só do archive.spec.ts (PLANO-RELEASE-PUBLICA §8.53). Regra por PAR: vic cria,
+  # arquiva e restaura (A); una observa (B).
+  - email: "una@tayet.local"
+    username: "una"
+    userID: "tayet-una-0021"
+    hash: "$2y$12$rdZdYlNSC.sJR1f7pCHre.HIjJVvrU8doxmOIaYFaO24qhN1hocEe"
+  - email: "vic@tayet.local"
+    username: "vic"
+    userID: "tayet-vic-0022"
+    hash: "$2y$12$CIYKA//FeQFhfpBg0GkIOO1usZHLMNhf.Il.fsi1ogA/5Rr2RVLaa"
+  # wal e xan: só do attachments.spec.ts (PLANO-RELEASE-PUBLICA §8.54). Regra por PAR: wal anexa
+  # (A), xan recebe, baixa e devolve (B).
+  - email: "wal@tayet.local"
+    username: "wal"
+    userID: "tayet-wal-0023"
+    hash: "$2y$12$c8SDZOjLZbf/OlPhNXS8T.9BQ2jHGR3HLDzN4pfxgHByoVL0cnqly"
+  - email: "xan@tayet.local"
+    username: "xan"
+    userID: "tayet-xan-0024"
+    hash: "$2y$12$yK9NGxha8UIcLBref3m.5e3zKg4Eld5iZyBE.yI/TgJd5n4KdXtiO"
+  # yan e zoe: só do compose.spec.ts (PLANO-RELEASE-PUBLICA §8.54). Regra por PAR: yan compõe, edita
+  # e abre a thread (A); zoe responde, reage e menciona (B).
+  - email: "yan@tayet.local"
+    username: "yan"
+    userID: "tayet-yan-0025"
+    hash: "$2y$12$43Cy5.wtcvyY0LV3Vg51uuL3shEwm7pSZKwoN9SpsxwTAXk299YAa"
+  - email: "zoe@tayet.local"
+    username: "zoe"
+    userID: "tayet-zoe-0026"
+    hash: "$2y$12$Aw5Zul3A.1li/QoRuaAaL.yCpSgi8Oo.k5suIC/LxI9cFOwDV8OFW"
+  # ari e bel: só do channel-lifecycle.spec.ts (PLANO-RELEASE-PUBLICA §8.55). Regra por PAR: ari cria
+  # e administra o canal (A); bel é adicionada, promovida, removida e sai (B).
+  - email: "ari@tayet.local"
+    username: "ari"
+    userID: "tayet-ari-0027"
+    hash: "$2y$12$w012uzF3z.EVoHKIboTZX.QTDOu394ZAEiR3DfwcOE/fbJ4yJCjLm"
+  - email: "bel@tayet.local"
+    username: "bel"
+    userID: "tayet-bel-0028"
+    hash: "$2y$12$ebazSrjEw3mTOAXCGS6cBuijjvo/48a5sEssfJuPPGMwKEmX4J8oG"
+  # cid e deb: só do account.spec.ts (PLANO-RELEASE-PUBLICA §8.55). Regra por PAR: cid escreve e
+  # observa o perfil (A); deb edita o perfil, lê em dois contextos, sai e entra de novo (B).
+  - email: "cid@tayet.local"
+    username: "cid"
+    userID: "tayet-cid-0029"
+    hash: "$2y$12$b.TPptFOnxy8R26gKmzOGeYw0dFw9kyo/EsfLdNf.7MVfpdWXyNmS"
+  - email: "deb@tayet.local"
+    username: "deb"
+    userID: "tayet-deb-0030"
+    hash: "$2y$12$Dl5uuMI.VP.HK5.ugqlUv.x9XFEOmKHKbjeDzAM8mbC0hiAdfjEd2"
+  # eli e fay: só do new-device.spec.ts (PLANO-RELEASE-PUBLICA §8.64). Regra por PAR: eli troca
+  # mensagens com fay e entra num navegador novo (A); fay é a outra ponta da DM cifrada (B).
+  - email: "eli@tayet.local"
+    username: "eli"
+    userID: "tayet-eli-0031"
+    hash: "$2y$12$3wf9npPzeX038v65BH4VJer.KLENd1HNxRq8.3Np0jRyiGj365fNe"
+  - email: "fay@tayet.local"
+    username: "fay"
+    userID: "tayet-fay-0032"
+    hash: "$2y$12$PI/BCrNyqmdlReFqjvJzf.9PhI3ZhCc5tCwgdqm3t0yEbc7QQLJda"
+  # gus e hal: só do presence.spec.ts (ROTEIRO-U2 rev. 3). Regra por PAR: gus observa (A); hal fecha
+  # todos os contextos e reabre (B).
+  - email: "gus@tayet.local"
+    username: "gus"
+    userID: "tayet-gus-0033"
+    hash: "$2y$12$VlHKPJgb6OlNMyDPbqt9bOPaCkIsIt1t1FFNXQghVIDZR7GkS9UXy"
+  - email: "hal@tayet.local"
+    username: "hal"
+    userID: "tayet-hal-0034"
+    hash: "$2y$12$GPfpM3hMjulu5h2dTY.1cePqsiNoRvWIhXBdIUg/JMkBeaBmK/gCq"
+  # ian e jon: só do access-reset.spec.ts (ADR-082). Regra por PAR: ian redefine o acesso (A, B e D);
+  # jon é a outra ponta da DM cifrada (C). O reset contamina a identidade: conta própria, sempre.
+  - email: "ian@tayet.local"
+    username: "ian"
+    userID: "tayet-ian-0035"
+    hash: "$2y$12$CGEYw3iK2qpqalayJr2rfu7ns8jSh443csn6jzD4nAQ.wn09AHugm"
+  - email: "jon@tayet.local"
+    username: "jon"
+    userID: "tayet-jon-0036"
+    hash: "$2y$12$381wE7RwnFThkzjkSZ.qS./T2o8BQOfLjTtPdpCuTYiE1mM.dufsS"
+  # kim e lua: só do org-membership.spec.ts (ADR-083), regra por PAR: kim é membro (A); lua é guest (B).
+  # lua fica em ORG_GUESTS (dev-stack.sh): está na allowlist para logar, nunca é convidada para #all.
+  - email: "kim@tayet.local"
+    username: "kim"
+    userID: "tayet-kim-0037"
+    hash: "$2y$12$vJSGJZif4fXBxZBeFEQdeuvyWYU1SYHKMakvk8kiMEBiRkdLf326i"
+  - email: "lua@tayet.local"
+    username: "lua"
+    userID: "tayet-lua-0038"
+    hash: "$2y$12$SsoU.YSAK6hlYL5s6hfUr.CSb5kw2ad3cwcySv0fX5zFEHyTKAZXm"
+  # mel, nic e gho: só do people.spec.ts: mel convida (A); nic entra como convidado pelo provider simulado (B);
+  # gho é convite cancelado, nunca loga. nic e gho ficam em ORG_GUESTS (dev-stack.sh); mel é admin da org.
+  - email: "mel@tayet.local"
+    username: "mel"
+    userID: "tayet-mel-0039"
+    hash: "$2a$10$c6M4VHoR0sIyf9gOwYysg.Qy2MgcLIJ6WhZFPxcuh/ttiRa1.Q.Di"
+  - email: "nic@tayet.local"
+    username: "nic"
+    userID: "tayet-nic-0040"
+    hash: "$2a$10$i4Ba7Lu3AO59nFKgDiFeduQUJtLD0eB0RAIu2J8OhiUoLhb4LpCR6"
+  - email: "gho@tayet.local"
+    username: "gho"
+    userID: "tayet-gho-0041"
+    hash: "$2a$10$V1b0dJpZj7HlNg2w4fTCruPNW7cK94PcKWbAn6/pA9IKhCKppuCJm"
+  # fal, ada e bea: só do mas-login.spec.ts (P4-2), senhas falpass123/adapass123/beapass123, hash pela
+  # receita da l.42. fal tem email não verificado e nunca entra: é o sujeito do guard `email_verified`
+  # do Google simulado (mas/config.yaml); fica em ORG_GUESTS (dev-stack.sh). ada é a sonda do
+  # consentimento (o spec muda o displayname dela); bea é a sonda do `logged_out` (o spec mata as sessões dela).
+  - email: "fal@tayet.local"
+    username: "fal"
+    userID: "tayet-fal-0042"
+    emailVerified: false
+    hash: "$2y$12$v5ltAHrqteLDntXfTAc9M.VSySJeXk1BuXBuHsBzTSbdzLpiYxlem"
+  - email: "ada@tayet.local"
+    username: "ada"
+    userID: "tayet-ada-0043"
+    hash: "$2y$12$vMP0SbP5NG/ToOWuynY8kO9l5S.2ANXJIjez.7ypWV.SqiHDCzZZG"
+  - email: "bea@tayet.local"
+    username: "bea"
+    userID: "tayet-bea-0044"
+    hash: "$2y$12$ML/6kqda1ZN3q.XHdtbusOPydOZtDl5tgwYJzNGlmJrm16ByKjl5u"
+  # rae e sam: só do agents.spec.ts (ADR-086, fatia 3), senhas raepass123/sampass123, hash pela receita
+  # da l.42. rae é admin da org (pré-criada pelo `up` para o flag, como mel) e cria o agente pela UI; sam
+  # é a pessoa do par que vê o agente marcado. O agente nasce pelo escrow, nunca pelo Dex.
+  - email: "rae@tayet.local"
+    username: "rae"
+    userID: "tayet-rae-0045"
+    hash: "$2y$12$TjUxeYwObzL.PSxFCmoUFeDN4/NOD.r9SCh8/4MQw0lHYl17S5ZWK"
+  - email: "sam@tayet.local"
+    username: "sam"
+    userID: "tayet-sam-0046"
+    hash: "$2y$12$JUN29H/x.QH2RDFh/oroleSHTGnNXHcv07J0EAFmFaoh0HXdU2.9i"
+  # tai e ugo: só do agent-sidecar.spec.ts (S-e, PLANO-AGENTES §0.3.9), senhas taipass123/ugopass123, hash
+  # pela receita da l.42. tai é admin da org (pré-criada pelo `up` para o flag, como rae) e cria o agente
+  # pela UI; ugo é a pessoa do par que lê o agente que o sidecar põe para falar.
+  - email: "tai@tayet.local"
+    username: "tai"
+    userID: "tayet-tai-0047"
+    hash: "$2y$12$YLNqR.1cAHiZ0RKCEG54KuLFvQM7oey1ZMlOUV.mpo/ukDJjViMuy"
+  - email: "ugo@tayet.local"
+    username: "ugo"
+    userID: "tayet-ugo-0048"
+    hash: "$2y$12$NIdWTUOc89lLs7Rr2UgJQ.rSNwfz7ja1QzRWdwZIPV6XNLaLDOc1m"
+  # val, wes e xin: só do group-conversation.spec.ts (ADR-094, PR-4), senhas valpass123/wespass123/xinpass123,
+  # hash pela receita da l.42. A regra vale por TRIO: val abre o grupo (A), wes lê (B), xin completa o conjunto (C).
+  - email: "val@tayet.local"
+    username: "val"
+    userID: "tayet-val-0049"
+    hash: "$2y$12$wzbIHO3PlGlyL1Rnb1ThL.eO3KzRHUksWLy1E3sbQizptgOMEnTkW"
+  - email: "wes@tayet.local"
+    username: "wes"
+    userID: "tayet-wes-0050"
+    hash: "$2y$12$2qshipxe45x7gbzN6rFPn.A3LrjA/.1PCp.RVtuLA/SKASA4LBZq2"
+  - email: "xin@tayet.local"
+    username: "xin"
+    userID: "tayet-xin-0051"
+    hash: "$2y$12$1G3Rel7tSU2Z994xUWI11uENRvBg18B7bMMmZtO/EVuDewKu2gAnS"

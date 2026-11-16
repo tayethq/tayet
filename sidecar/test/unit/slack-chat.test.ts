@@ -1,0 +1,102 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { ALICE, DM, GENERAL, ME, call, idLeaks, refusal, startSlack, type SlackHarness } from '../support/slack-world'
+
+// chat.postMessage / update / delete through the real @slack/web-api (PLANO-AGENTES §0.3.12 items 4, 7, 11).
+
+let h: SlackHarness
+beforeEach(async () => {
+  h = await startSlack()
+})
+afterEach(() => h.close())
+
+const ok = async (method: string, args: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  const res = await call(h.client(), method, args)
+  expect(idLeaks(res)).toEqual([])
+  return res
+}
+const posts = () => h.world.calls.filter((c) => c.op === 'post')
+
+describe('chat.postMessage', () => {
+  it('mrkdwn → rich + mentions; the answer is { channel, ts, message } as a read shows it', async () => {
+    const res = await ok('chat.postMessage', { channel: GENERAL.id, text: 'oi <@UALICEAAAAA>, o *deploy* saiu' })
+    expect(posts()).toEqual([
+      {
+        op: 'post',
+        conversation: GENERAL.id,
+        text: 'oi @Alice Souza, o deploy saiu',
+        rich: [{ t: 'p', children: [{ t: 'text', text: 'oi @Alice Souza, o ' }, { t: 'strong', children: [{ t: 'text', text: 'deploy' }] }, { t: 'text', text: ' saiu' }] }],
+        mentions: [ALICE.id],
+      },
+    ])
+    expect(res).toMatchObject({ channel: GENERAL.id, ts: expect.stringMatching(/^\d+\.\d{6}$/) as unknown, message: { type: 'message', user: ME.id, text: 'oi <@UALICEAAAAA>, o *deploy* saiu' } })
+    expect(res).not.toHaveProperty('response_metadata.warnings')
+  })
+
+  it('the WebClient helper; mrkdwn: false sends the text as is (escapes decoded)', async () => {
+    const res = await h.client().chat.postMessage({ channel: DM.id, text: '*literal* &amp; <@UALICEAAAAA>', mrkdwn: false })
+    expect(res.ok).toBe(true)
+    expect(posts()[0]).toEqual({ op: 'post', conversation: DM.id, text: '*literal* & <@UALICEAAAAA>' })
+  })
+
+  it('thread_ts → the native thread; an unknown thread → thread_not_found', async () => {
+    await ok('chat.postMessage', { channel: GENERAL.id, text: 'na thread', thread_ts: '1730000100.000100' })
+    expect(posts()[0]).toMatchObject({ thread: '1730000100.000100' })
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, text: 'x', thread_ts: '1730009999.000999' })).toBe('thread_not_found')
+  })
+
+  it('the ignored arguments come back as warnings (P6: the agent speaks as itself)', async () => {
+    const res = await ok('chat.postMessage', { channel: GENERAL.id, text: 'x', username: 'Outro', icon_emoji: ':robot_face:', icon_url: 'https://ex.com/i.png', as_user: true, reply_broadcast: true })
+    expect(res.response_metadata).toMatchObject({
+      warnings: ['ignored_argument:reply_broadcast', 'ignored_argument:username', 'ignored_argument:icon_url', 'ignored_argument:icon_emoji', 'ignored_argument:as_user'],
+    })
+  })
+
+  it('blocks with no text are flattened; actions dropped with blocks_unsupported:actions', async () => {
+    const res = await ok('chat.postMessage', {
+      channel: GENERAL.id,
+      blocks: [
+        { type: 'header', text: { type: 'plain_text', text: 'Relatório' } },
+        { type: 'section', text: { type: 'mrkdwn', text: 'tudo *ok*' } },
+        { type: 'divider' },
+        { type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Aprovar' }, action_id: 'a' }] },
+      ],
+    })
+    expect(posts()[0]).toMatchObject({ text: 'Relatório\n\ntudo ok' })
+    expect(res.response_metadata).toMatchObject({ warnings: ['blocks_unsupported:actions'] })
+    expect(res.message).not.toHaveProperty('blocks')
+  })
+
+  it('text wins over blocks', async () => {
+    await ok('chat.postMessage', { channel: GENERAL.id, text: 'o texto', blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'o bloco' } }] })
+    expect(posts()[0]).toMatchObject({ text: 'o texto' })
+  })
+
+  it('refusals: no text → no_text; unknown channel → channel_not_found; too long → msg_too_long; an id in the text → internal_error before any effect', async () => {
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id })).toBe('no_text')
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, text: '   ' })).toBe('no_text')
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, blocks: [{ type: 'divider' }] })).toBe('no_text')
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: 'CNOTHEREAAA', text: 'x' })).toBe('channel_not_found')
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, text: 'x'.repeat(33 * 1024) })).toBe('msg_too_long')
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, text: 'fale com @bob:server.example' })).toBe('internal_error')
+    expect(posts()).toEqual([])
+  })
+})
+
+describe('chat.update / chat.delete', () => {
+  it('update: own message, mrkdwn → rich; someone else’s → cant_update_message', async () => {
+    const posted = await ok('chat.postMessage', { channel: GENERAL.id, text: 'rascunho' })
+    const res = await ok('chat.update', { channel: GENERAL.id, ts: posted.ts, text: '_final_' })
+    expect(res).toMatchObject({ channel: GENERAL.id, ts: posted.ts, text: '_final_', message: { text: '_final_', edited: { user: ME.id } } })
+    expect(h.world.calls.find((c) => c.op === 'edit')).toMatchObject({ text: 'final', rich: [{ t: 'p', children: [{ t: 'em', children: [{ t: 'text', text: 'final' }] }] }] })
+    expect(await refusal(h.client(), 'chat.update', { channel: GENERAL.id, ts: '1730000100.000100', text: 'x' })).toBe('cant_update_message')
+    expect(await refusal(h.client(), 'chat.update', { channel: GENERAL.id, ts: '1730009999.000999', text: 'x' })).toBe('message_not_found')
+  })
+
+  it('delete: own message; someone else’s → cant_delete_message; unknown → message_not_found', async () => {
+    const posted = await ok('chat.postMessage', { channel: GENERAL.id, text: 'apagar' })
+    expect(await ok('chat.delete', { channel: GENERAL.id, ts: posted.ts })).toMatchObject({ ok: true, channel: GENERAL.id, ts: posted.ts })
+    expect(h.world.calls.find((c) => c.op === 'remove')).toEqual({ op: 'remove', conversation: GENERAL.id, ts: posted.ts })
+    expect(await refusal(h.client(), 'chat.delete', { channel: GENERAL.id, ts: '1730000100.000100' })).toBe('cant_delete_message')
+    expect(await refusal(h.client(), 'chat.delete', { channel: GENERAL.id, ts: '1730009999.000999' })).toBe('message_not_found')
+  })
+})

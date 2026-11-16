@@ -1,0 +1,184 @@
+# Tayet — Fase 0 spike (THROWAWAY). Não é config de produção.
+# Digests pinados para evitar mismatch silencioso de versão (ver FINDINGS).
+# Sobe ao longo dos sub-spikes: SS1 = postgres + synapse; SS3 adiciona mas + dex.
+#
+# `name: spike` é load-bearing: o harness de teste (client/test/support/synapse.ts) faz
+# `docker exec spike-mas-1` hardcoded. Fixar o project name aqui torna o nome intrínseco ao
+# arquivo, independente do dir. Mudar exige mudar TAYET_MAS_CONTAINER junto.
+# O `-p` do dev-stack.sh VENCE este `name:` (o script passa `-p "$PROJECT"` em todo compose).
+# O namespace `spike-ci` do CI vem de TAYET_COMPOSE_PROJECT (ADR-071 dec. 2); sem a var, o
+# default continua `spike` — byte-equivalente ao de antes.
+name: ${TAYET_COMPOSE_PROJECT:-spike}
+
+services:
+  postgres:
+    # postgres:16
+    image: postgres@sha256:4b7183ac05f8ef417db21fd72d71047a4238340c261d3cc3ddb6d579ab5071ae
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_PASSWORD: synapse
+      POSTGRES_DB: synapse
+      # Synapse exige locale C no DB.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # initdb só roda em volume VIRGEM — exatamente o caso pós-`reset` (down -v). Com volume
+      # existente é no-op (idempotente por construção). Cria o banco `mas` que a uri do MAS
+      # espera (mas/config.yaml); o owner é o POSTGRES_USER `synapse`, o mesmo da uri — correto.
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapse -d synapse"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  synapse:
+    # ghcr.io/element-hq/synapse:v1.163.0
+    image: ghcr.io/element-hq/synapse@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./synapse:/data
+    ports:
+      # Por projeto (fase 2, §8.R2); default = spike.
+      - "${TAYET_HS_PORT:-8008}:8008"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8008/health').read()==b'OK' else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  dex:
+    # ghcr.io/dexidp/dex (master) — provedor OIDC local (SS3/3a)
+    image: ghcr.io/dexidp/dex@sha256:dbff0aafbc0b0020c61e5a07411c087494a2da1ca9658c65598ba266e476c95b
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    volumes:
+      # Por projeto (fase 2, §8.R2); default = spike. Projeto ≠ spike monta o render em .render/<projeto>/dex.
+      - ${TAYET_DEX_CONFIG_DIR:-./dex}:/etc/dex
+    ports:
+      # Por projeto (fase 2, §8.R2); default = spike.
+      - "${TAYET_DEX_PORT:-5556}:5556"
+
+  mas:
+    # ghcr.io/element-hq/matrix-authentication-service:1.27.0 — digest fixado em TRÊS lugares: aqui,
+    # infra/deploy/compose.yaml e infra/deploy/deploy.sh (MAS_IMAGE).
+    image: ghcr.io/element-hq/matrix-authentication-service@sha256:085e37263957b3b79be85de9cfda1980b97e9653f284fba0c902445e06c200b8
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # TAYET_MAS_CONFIG troca a config do SERVIDOR também (não só a do mas-cli do dev-stack.sh): o soak
+    # noturno sobe com /config/config.soak.yaml (access_token_ttl curto, PLANO-RELEASE-PUBLICA §8.24).
+    command: ["--config", "${TAYET_MAS_CONFIG:-/config/config.yaml}", "server"]
+    volumes:
+      # Por projeto (fase 2, §8.R2); default = spike. Projeto ≠ spike monta o render em .render/<projeto>/mas.
+      - ${TAYET_MAS_CONFIG_DIR:-./mas}:/config
+      # Templates próprios (ADR-084): o diretório (não arquivos soltos), para o `_generated/` regenerado
+      # pelo prepare.sh aparecer sem recriar o container. Mesma árvore em todo projeto.
+      - ../mas/templates:/templates:ro
+    ports:
+      # Por projeto (fase 2, §8.R2); default = spike.
+      - "${TAYET_MAS_PORT:-8080}:8080"
+
+  escrow:
+    # Tayet Fase 2 — serviço de escrow para o APP REAL de browser (ADR-021). Roda da
+    # fonte, zero build, espelhando o harness: mesmo entrypoint, mesmo contrato de env.
+    # NÃO substitui o spawnEscrow do gate (efêmero por-run, mundo virgem do C2) — coexistem.
+    # node:22-bookworm-slim — strip-types nativo exige Node >=22.6. Pinado por digest
+    # (índice multi-arch), resolvido com `docker buildx imagetools inspect node:22-bookworm-slim`.
+    image: node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752  # node:22-bookworm-slim
+    depends_on:
+      mas:
+        condition: service_started
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "src/server.ts"]
+    # SIGTERM → drain das requests em voo + exit 0 (server.ts, teto 5 s). A janela de graça é
+    # contrato: menor que o teto = request cortada e SIGKILL no stop rotineiro. Explícita porque o
+    # default efetivo varia por host (medido 3 s no Mac, §8.41).
+    stop_grace_period: 10s
+    volumes:
+      - ../../escrow:/app:ro      # fonte do escrow (raiz do repo), read-only
+      - escrowdata:/data          # store persistente; reset (down -v) apaga
+    environment:
+      ESCROW_PORT: "8090"
+      # 0.0.0.0 SÓ no container (ADR-021): bind loopback não responde via porta publicada.
+      # O default do serviço continua 127.0.0.1 (host-process/harness). Ver server.ts.
+      ESCROW_BIND: 0.0.0.0
+      ESCROW_STORE_DIR: /data
+      # MAS pela REDE INTERNA do compose (mas:8080), NÃO localhost — o harness usa
+      # localhost:8080 porque roda no host; aqui é mas:8080.
+      ESCROW_INTROSPECTION_URL: http://mas:8080/oauth2/introspect
+      ESCROW_CLIENT_ID: "00000000000000000000ESCR0W"
+      ESCROW_CLIENT_SECRET: tayet-dev-stack-throwaway-escrow-introspection
+      # ADR-082 dec. 3: admin API do MAS no listener interno (sem porta no host) + client admin.
+      ESCROW_MAS_ADMIN_URL: http://mas:8081
+      ESCROW_MAS_ADMIN_CLIENT_ID: "000000000000000000ESCADM1N"
+      ESCROW_MAS_ADMIN_CLIENT_SECRET: tayet-dev-stack-throwaway-escrow-mas-admin
+      # ADR-083: Synapse pela rede interna; o provider do vínculo é o Dex (o de `subject = email`
+      # para simular o Google é da P3).
+      ESCROW_HS_URL: http://synapse:8008
+      ESCROW_SERVER_NAME: tayet.local
+      ESCROW_PEOPLE_PROVIDER_ID: 01HFS6S2SVAR7Y7QYMZJ53ZG00
+      # Org key interpolada do --env-file passado SÓ no `up` (ADR-021). Sem env_file: evita
+      # o `required:` (que exigiria Compose >=2.24; a máquina é v2.12.2). ps/status (sem
+      # --env-file) interpolam vazio → escrow falha-no-boot limpo (envOrThrow) e o
+      # check_escrow reporta unhealthy. NUNCA commitar a key (gitignored).
+      ESCROW_ORG_KEY: "${ESCROW_ORG_KEY:-}"
+    ports:
+      # Publicada SÓ no loopback do host (ADR-021): o Vite no host alcança; a LAN não.
+      # Combina com ESCROW_BIND=0.0.0.0 no container (DNAT host-loopback → 0.0.0.0:8090).
+      # Por projeto (fase 2, §8.R2); default = spike.
+      - "127.0.0.1:${TAYET_ESCROW_PORT:-8090}:8090"
+    healthcheck:
+      # /healthz é dep-free (server.ts). Liveness pura, no loopback DO CONTAINER.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  agent:
+    # Tayet PR-3 (ADR-057 dec. 5) — agente de custódia `cofre`. Mesmo regime do escrow:
+    # roda da FONTE com strip-types, imagem pinada idêntica. node_modules vem do HOST
+    # (bind da raiz do pacote): deps JS/wasm puras, e o level do node-indexeddb embarca
+    # prebuilds N-API multi-plataforma (S2.3) — o install de macOS serve o container
+    # Linux. O dev-stack.sh só sobe este serviço DEPOIS de mintar o token do cofre
+    # (fase 2 do up) e avisa/skipa quando agent/node_modules não existe (caso CI).
+    image: node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752  # node:22-bookworm-slim
+    depends_on:
+      synapse:
+        condition: service_healthy
+      escrow:
+        condition: service_started
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "src/main.ts"]
+    # SIGTERM → flush do Level + checkpoint (main.ts). A janela de graça é contrato:
+    # menos que o flush = store rasgado no stop rotineiro (caveat SIGKILL do S2.3).
+    stop_grace_period: 15s
+    # Boot com store inutilizável/chaves divergentes sinaliza identity-reset, grava a
+    # sentinela REMEDIATION_NEEDED e sai 1 SEM apagar nada (F8, PR-3.1 — o wipe local
+    # produzia o agente-zumbi do A1). O crash-loop até o ensure_agent_token remediar
+    # (mint+wipe atômicos) é aceito e ALTO de propósito. `docker stop` (teste de
+    # catch-up) NÃO religa sozinho.
+    restart: unless-stopped
+    volumes:
+      - ../../agent:/app:ro       # fonte do agente (raiz do repo), read-only
+      - agentdata:/data           # store cripto + checkpoint; reset (down -v) apaga
+      # Token mct_ do cofre, mintado UMA vez pelo up (S2.5: sem expiração). O arquivo
+      # PRECISA existir antes do container (senão o docker cria um DIRETÓRIO no bind);
+      # ensure_agent_token garante. Por projeto (fase 2, §8.R2); default = spike
+      # (agent-token.secret); outro projeto usa agent-token.<projeto>.secret.
+      - ./${TAYET_AGENT_TOKEN_FILE:-agent-token.secret}:/secrets/token:ro
+    environment:
+      AGENT_HS_URL: http://synapse:8008
+      AGENT_ESCROW_URL: http://escrow:8090
+      AGENT_TOKEN_FILE: /secrets/token
+      AGENT_STORE_DIR: /data
+      # Injetada pelo up (fase 2) a partir de agent.secret.env — mesma disciplina da
+      # ESCROW_ORG_KEY: ps/status interpolam vazio e o agente falha-no-boot limpo
+      # (fail-closed do loadConfig). NUNCA commitar (gitignored).
+      AGENT_STORAGE_KEY: "${AGENT_STORAGE_KEY:-}"
+
+volumes:
+  pgdata:
+  escrowdata:
+  agentdata:

@@ -1,0 +1,185 @@
+name: Package checks
+description: Typecheck, lint, tests, build and guards for one package of the tree at `root`.
+
+inputs:
+  package:
+    description: "Package to check: client, escrow, agent, shared or sidecar"
+    required: true
+  root:
+    description: Root of the tree, which must be a git repository (the guards use git grep)
+    default: .
+
+runs:
+  using: composite
+  steps:
+    # ADR-071 dec. 1: the harnesses detect a stack on their own, and every detection goes through
+    # these vars. Port 9 (discard) refuses at once and no `docker exec`/`inspect` finds `ci-no-stack-*`.
+    # The `prove integration skipped` step below proves the diversion took effect.
+    - name: divert stack detection (ADR-071 dec. 1)
+      shell: bash
+      run: |
+        {
+          echo "TAYET_HS_URL=http://127.0.0.1:9"
+          echo "TAYET_MAS_URL=http://127.0.0.1:9"
+          echo "TAYET_ESCROW_URL=http://127.0.0.1:9"
+          echo "TAYET_MAS_CONTAINER=ci-no-stack-mas"
+          echo "TAYET_AGENT_CONTAINER=ci-no-stack-agent"
+        } >> "$GITHUB_ENV"
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 22
+    # npm pin (PLANO-RELEASE-PUBLICA §8.51): the tool cache falls back to an older npm on each Node patch.
+    - shell: bash
+      run: npm i -g npm@12.2.1 && npm --version
+    - shell: bash
+      working-directory: ${{ inputs.root }}/${{ inputs.package }}
+      run: npm ci
+    # Supply-chain gate (PLANO-RELEASE-PUBLICA §8.26): runtime dependencies only, high/critical only.
+    # Accepted cost: a new upstream advisory turns any PR red, even an unrelated one, until the bump.
+    - shell: bash
+      working-directory: ${{ inputs.root }}/${{ inputs.package }}
+      run: npm audit --omit=dev --audit-level=high
+    - shell: bash
+      working-directory: ${{ inputs.root }}/${{ inputs.package }}
+      run: npm run typecheck
+    # The ADR-007 boundary gate in the client. `lint` is `eslint . --max-warnings=0`, so a single
+    # warning (incl. a leak-pattern hit or a disabled boundary rule) fails the build.
+    - shell: bash
+      working-directory: ${{ inputs.root }}/${{ inputs.package }}
+      run: npm run lint
+    # Sibling rhythm gate (ADR-033 dec. 3, activated via PLANO-GATES §2) + C6 CSS (color-no-hex).
+    # Fail-closed: stylelint exits non-zero on any violation, and a disable without a description
+    # is itself reported (reportDescriptionlessDisables).
+    - if: inputs.package == 'client'
+      shell: bash
+      working-directory: ${{ inputs.root }}/${{ inputs.package }}
+      run: npm run lint:css
+    # Integration suites skip here (stack detection diverted above, ADR-071 dec. 1) and unit suites
+    # run for real. The JSON report feeds the skip proof below. In the client this includes the
+    # boundary negative test and the P1 DOM render-scan (jsdom).
+    - shell: bash
+      working-directory: ${{ inputs.root }}/${{ inputs.package }}
+      run: npm run test -- --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/vitest.json"
+    # ADR-071 dec. 1: no stack-gated test passed or failed, only skipped. Besides test/integration/,
+    # the live block of the render-scan (test/ui/render-scan.test.tsx) is gated;
+    # integration-setup.test.ts is hermetic by construction (the script refuses the exclusion if the
+    # file cites a stack probe).
+    - name: prove integration skipped (ADR-071 dec. 1)
+      if: inputs.package == 'client'
+      shell: bash
+      working-directory: ${{ inputs.root }}/${{ inputs.package }}
+      run: >-
+        node ../.github/scripts/assert-stack-skipped.mjs "$RUNNER_TEMP/vitest.json" .
+        --stack-free test/integration/integration-setup.test.ts
+        --stack-describe 'test/ui/render-scan.test.tsx::DOM render-scan over real Synapse data'
+    # shared/ has no stack-gated test (no harness, no network): the proof would be vacuous, which the
+    # script refuses, so it does not run there (ADR-088).
+    - name: prove integration skipped (ADR-071 dec. 1)
+      if: inputs.package != 'client' && inputs.package != 'shared'
+      shell: bash
+      working-directory: ${{ inputs.root }}/${{ inputs.package }}
+      run: node ../.github/scripts/assert-stack-skipped.mjs "$RUNNER_TEMP/vitest.json" .
+    # The first UI must stay buildable (tsc + vite build).
+    - if: inputs.package == 'client'
+      shell: bash
+      working-directory: ${{ inputs.root }}/${{ inputs.package }}
+      run: npm run build
+    # The sidecar's bundle (esbuild → dist/cli.js), the file the npm package ships. `pretest` already
+    # rebuilt it for the process tests; this step keeps the build a gate of its own.
+    - if: inputs.package == 'sidecar'
+      shell: bash
+      working-directory: ${{ inputs.root }}/${{ inputs.package }}
+      run: npm run build
+    # ADR-020 confinement: the Synapse-admin scope used by the D3 convergence gate lives ONLY in
+    # the test-only helper (client/test/support/synapse-admin.ts) — it must NEVER reach the
+    # product bundle. Fail-closed grep-guard (same shape as the no-cross-imports gate).
+    - name: no synapse-admin scope in client/src
+      if: inputs.package == 'client'
+      shell: bash
+      working-directory: ${{ inputs.root }}
+      run: |
+        if git grep -nE "urn:synapse:admin" -- client/src; then
+          echo "::error::client/src contains the synapse-admin scope"; exit 1
+        fi
+    # PLANO-FASE-2-ESCROW-C1 §5.1: client/ and escrow/ are standalone packages — any
+    # cross-import is a contract violation, red on CI in both directions.
+    - name: no cross-imports between client/ and escrow/
+      if: inputs.package == 'escrow'
+      shell: bash
+      working-directory: ${{ inputs.root }}
+      run: |
+        if git grep -nE "(from|import)[[:space:]]+['\"][^'\"]*/(client)/" -- escrow; then
+          echo "::error::escrow imports from client/"; exit 1
+        fi
+        if git grep -nE "(from|import)[[:space:]]+['\"][^'\"]*/(escrow)/" -- client; then
+          echo "::error::client imports from escrow/"; exit 1
+        fi
+    # agent/ is a standalone package like client/ and escrow/: a cross-import is a contract violation.
+    - name: no cross-imports between agent/ and client/ or escrow/
+      if: inputs.package == 'agent'
+      shell: bash
+      working-directory: ${{ inputs.root }}
+      run: |
+        if git grep -nE "(from|import)[[:space:]]+['\"][^'\"]*/(client|escrow)/" -- agent; then
+          echo "::error::agent imports from client/ or escrow/"; exit 1
+        fi
+        if git grep -nE "(from|import)[[:space:]]+['\"][^'\"]*/(agent)/" -- client escrow; then
+          echo "::error::client or escrow imports from agent/"; exit 1
+        fi
+    # ADR-088 dec. 6: cross-imports across the 5 package directories (client, escrow, agent, shared,
+    # sidecar). The older pairs (client↔escrow, agent↔client|escrow) stay in the escrow/agent branches.
+    - name: no cross-imports between shared/, sidecar/ and the other packages
+      if: inputs.package == 'shared'
+      shell: bash
+      working-directory: ${{ inputs.root }}
+      run: |
+        P="(from|import)[[:space:]]+['\"]"
+        # shared/ imports from no other package, by path or by name.
+        if git grep -nE "${P}[^'\"]*/(client|escrow|agent|sidecar)/" -- shared; then
+          echo "::error::shared imports from client/, escrow/, agent/ or sidecar/"; exit 1
+        fi
+        if git grep -nE "${P}(@tayet/(client|escrow|custody-agent|sidecar)|tayet-agent)" -- shared; then
+          echo "::error::shared imports another package by name"; exit 1
+        fi
+        # client/ and sidecar/ take shared only by package name (file:../shared), never by relative path.
+        if git grep -nE "${P}(\.\.?/)+([^'\"]*/)?shared/" -- client sidecar; then
+          echo "::error::client or sidecar imports shared/ by relative path (use @tayet/shared)"; exit 1
+        fi
+        # escrow/ and agent/ import neither shared nor sidecar.
+        if git grep -nE "${P}([^'\"]*/(shared|sidecar)/|@tayet/shared|tayet-agent)" -- escrow agent; then
+          echo "::error::escrow or agent imports shared/ or sidecar/"; exit 1
+        fi
+        # Nothing imports from sidecar/; sidecar/ imports none of client/, escrow/, agent/.
+        if git grep -nE "${P}[^'\"]*/(sidecar)/" -- client escrow agent shared; then
+          echo "::error::a package imports from sidecar/"; exit 1
+        fi
+        # Relative paths only, like the shared/ rule: an npm subpath (`@modelcontextprotocol/client/stdio`) is not the repo's client/.
+        if git grep -nE "${P}(\.\.?/)+([^'\"]*/)?(client|escrow|agent)/" -- sidecar; then
+          echo "::error::sidecar imports from client/, escrow/ or agent/"; exit 1
+        fi
+    # sidecar/ (ADR-087) imports none of client/, escrow/, agent/, by path or by name; it takes shared
+    # only by package name. The shared job holds the full 5-package matrix; this is the sidecar's own.
+    - name: no cross-imports from sidecar/ into client/, escrow/ or agent/
+      if: inputs.package == 'sidecar'
+      shell: bash
+      working-directory: ${{ inputs.root }}
+      run: |
+        P="(from|import)[[:space:]]+['\"]"
+        # Relative paths only, like the shared/ rule: an npm subpath (`@modelcontextprotocol/client/stdio`) is not the repo's client/.
+        if git grep -nE "${P}(\.\.?/)+([^'\"]*/)?(client|escrow|agent)/" -- sidecar; then
+          echo "::error::sidecar imports from client/, escrow/ or agent/"; exit 1
+        fi
+        if git grep -nE "${P}@tayet/(client|escrow|custody-agent)" -- sidecar; then
+          echo "::error::sidecar imports client, escrow or agent by name"; exit 1
+        fi
+        if git grep -nE "${P}(\.\.?/)+([^'\"]*/)?shared/" -- sidecar; then
+          echo "::error::sidecar imports shared/ by relative path (use @tayet/shared)"; exit 1
+        fi
+    # ADR-054 addendum: no write verb on /_synapse/admin in the provisioning scripts; exactly one
+    # pre-check GET per script. Allowlist by content (ADR-069 dec. 7 closed the last DELETE, in the
+    # dev-stack).
+    - name: no admin-API writes in infra scripts (ADR-054)
+      if: inputs.package == 'agent'
+      shell: bash
+      working-directory: ${{ inputs.root }}
+      run: .github/scripts/assert-no-admin-writes.sh

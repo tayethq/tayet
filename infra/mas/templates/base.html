@@ -1,0 +1,71 @@
+{#
+Copyright 2025, 2026 Element Creations Ltd.
+Copyright 2024, 2025 New Vector Ltd.
+Copyright 2021-2024 The Matrix.org Foundation C.I.C.
+
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+Please see LICENSE files in the repository root for full details.
+
+Modified by Tayet (first on 2026-11-03, last on 2026-11-15). A page that sets `tayet_page` before
+`extends` gets the Tayet shell: pt-BR, the client's design tokens inline (`_generated/tokens.html`, a
+copy of client/src/ui/tokens/tokens.css), the font served at /fonts/, no Compound, no JS, no stock
+footer. The page's CSS goes in the `tayet_style` block. Without `tayet_page` the shell is the stock
+one, verbatim: every page Tayet does not own extends this file.
+The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and infra/mas/NOTICE.md.
+-#}
+
+{% set _ = translator(lang) %}
+
+{% import "components/button.html" as button %}
+{% import "components/field.html" as field %}
+{% import "components/back_to_client.html" as back_to_client %}
+{% import "components/logout.html" as logout %}
+{% import "components/errors.html" as errors %}
+{% import "components/icon.html" as icon %}
+{% import "components/scope.html" as scope %}
+{% import "components/captcha.html" as captcha %}
+
+<!DOCTYPE html>
+<html lang="{% if tayet_page is defined %}pt-BR{% else %}{{ lang }}{% endif %}">
+  <head>
+    <meta charset="utf-8">
+    <title>{% block title %}{% if tayet_page is defined %}Tayet{% else %}{{ _("app.name") }}{% endif %}{% endblock title %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% if tayet_page is defined %}
+    <style>
+{% include "_generated/tokens.html" %}
+      @font-face {
+        font-family: "Hanken Grotesk Variable";
+        src: url("/fonts/hanken-grotesk-latin-wght-normal.woff2") format("woff2");
+        font-weight: 100 900;
+        font-style: normal;
+        font-display: swap;
+      }
+      *, *::before, *::after { box-sizing: border-box; }
+      html, body { margin: 0; }
+      body {
+        min-height: 100vh;
+        font-family: var(--font-family-sans);
+        background: var(--color-bg);
+        color: var(--color-text);
+      }
+      {% block tayet_style %}{% endblock tayet_style %}
+    </style>
+    {% else %}
+    {{ include_asset('src/entrypoints/vendor.css') | indent(4) | safe }}
+    {{ include_asset('src/entrypoints/shared.css') | indent(4) | safe }}
+    {{ include_asset('src/entrypoints/templates.css') | indent(4) | safe }}
+    {{ include_asset('src/entrypoints/templates.ts') | indent(4) | safe }}
+    {% endif %}
+  </head>
+  <body>
+    {% if tayet_page is defined %}
+    {% block tayet_content %}{% endblock tayet_content %}
+    {% else %}
+    <div class="layout-container{% if consent_page is defined %} consent{% endif %}">
+      {% block content %}{% endblock content %}
+      {% include "components/footer.html" %}
+    </div>
+    {% endif %}
+  </body>
+</html>

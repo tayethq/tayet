@@ -1,0 +1,72 @@
+# Tayet — Fatia 3 de CI (issue #7). Override CI-ONLY de rate-limits rc_* permissivos.
+#
+# NÃO é config de produção e NÃO é carregado localmente. O homeserver.yaml base não tem nenhum
+# rc_* (limites default); este arquivo é layerado SÓ em CI, como segundo --config-path, via o
+# compose.ci.yaml (que o dev-stack.sh anexa quando TAYET_CI_RATELIMIT=1). Synapse faz merge
+# top-level shallow na ordem dos --config-path; este vem por último. Cada rc_* abaixo é chave
+# top-level e não colide com nada do base — é adição pura.
+#
+# Cobertura calibrada contra a superfície REAL do suite acl-* (grep dos verbos) e os defaults do
+# Synapse 1.154.0 (synapse/config/ratelimiting.py):
+#   - rc_message       (sends/edits/reactions/redacts/threads/images, ~32x; default burst 10) ← dominante
+#   - rc_room_creation (createRoom, 36x; default burst 10)                                    ← co-dominante
+#   - rc_joins         (join, 22x; default burst 10)
+#   - rc_invites       (invite, 17x; per_user default burst 5)
+#   - rc_media_create  (uploadMedia, 2x; default burst 50 — não throttla, incluído por completude)
+#   - rc_registration / rc_login: mintToken/registerUser são mas-cli via `docker exec`, NÃO HTTP
+#     ao Synapse — não tocam estes limiters por essa via. Incluídos por completude barata.
+# rc_admin_redaction OMITIDO de propósito: o suite só faz self-redaction (governada por rc_message),
+# nunca admin-redaction de eventos alheios. Menos chaves = menos superfície de typo.
+#
+# `delete_stale_devices_after` (ADR-062 D3) NÃO é repetido aqui: vem do homeserver.yaml base, que o CI
+# carrega antes deste layer — paridade por herança, sem colisão com o base (a regra acima).
+
+rc_message:
+  per_second: 1000
+  burst_count: 1000
+
+rc_room_creation:
+  per_second: 1000
+  burst_count: 1000
+
+rc_joins:
+  local:
+    per_second: 1000
+    burst_count: 1000
+  remote:
+    per_second: 1000
+    burst_count: 1000
+
+rc_joins_per_room:
+  per_second: 1000
+  burst_count: 1000
+
+rc_invites:
+  per_room:
+    per_second: 1000
+    burst_count: 1000
+  per_user:
+    per_second: 1000
+    burst_count: 1000
+  per_issuer:
+    per_second: 1000
+    burst_count: 1000
+
+rc_media_create:
+  per_second: 1000
+  burst_count: 1000
+
+rc_registration:
+  per_second: 1000
+  burst_count: 1000
+
+rc_login:
+  address:
+    per_second: 1000
+    burst_count: 1000
+  account:
+    per_second: 1000
+    burst_count: 1000
+  failed_attempts:
+    per_second: 1000
+    burst_count: 1000

@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "Tayet E2E tab discard",
+  "version": "1",
+  "permissions": ["tabs"],
+  "background": { "service_worker": "background.js" }
+}

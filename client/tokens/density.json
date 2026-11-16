@@ -1,0 +1,22 @@
+{
+  "density": {
+    "$description": "Densidade como tokens, não toggle (ADR-028 decisão 5 / ADR-027 eixo 6). Dois regimes POR SUPERFÍCIE: cotidiano (conversa, calmo) × gestão (compacto — Track U). Não-temado. Valores congelados em PLANO §0.2.",
+    "cotidiano": {
+      "$description": "Confortável — Timeline, Composer, ChannelList, ThreadPanel, banners.",
+      "row-padding": { "$value": "10px 12px", "$type": "dimension" },
+      "row-height": { "$value": "40px", "$type": "dimension" },
+      "avatar": { "$value": "28px", "$type": "dimension" }
+    },
+    "gestao": {
+      "$description": "Compacto — superfícies de gestão (membros/papéis/criar/arquivar/editar). Construir é Track U; aqui só o token existe.",
+      "row-padding": { "$value": "5px 12px", "$type": "dimension" },
+      "row-height": { "$value": "30px", "$type": "dimension" },
+      "avatar": { "$value": "22px", "$type": "dimension" }
+    },
+    "touch-floor": {
+      "$value": "44px",
+      "$type": "dimension",
+      "$description": "Piso de toque (mobile): área de clique mínima de elementos interativos, independente da densidade visual — gestão lê 30px mas o alvo estica pra 44."
+    }
+  }
+}

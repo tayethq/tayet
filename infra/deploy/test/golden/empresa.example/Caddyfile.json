@@ -1,0 +1,451 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"matrix.empresa.example"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"encodings": {
+														"gzip": {},
+														"zstd": {}
+													},
+													"handler": "encode",
+													"prefer": [
+														"zstd",
+														"gzip"
+													]
+												},
+												{
+													"handler": "reverse_proxy",
+													"upstreams": [
+														{
+															"dial": "synapse:8008"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						},
+						{
+							"match": [
+								{
+									"host": [
+										"login.empresa.example"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"upstreams": [
+														{
+															"dial": "dex:5556"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						},
+						{
+							"match": [
+								{
+									"host": [
+										"chat.empresa.example"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"encodings": {
+														"gzip": {},
+														"zstd": {}
+													},
+													"handler": "encode",
+													"prefer": [
+														"zstd",
+														"gzip"
+													]
+												}
+											]
+										},
+										{
+											"group": "group10",
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "headers",
+																	"response": {
+																		"set": {
+																			"Content-Type": [
+																				"application/json"
+																			]
+																		}
+																	}
+																},
+																{
+																	"body": "{\"server\": \"https://matrix.empresa.example\", \"account\": \"/escrow\"}",
+																	"handler": "static_response",
+																	"status_code": 200
+																}
+															]
+														}
+													]
+												}
+											],
+											"match": [
+												{
+													"path": [
+														"/.well-known/tayet/agent"
+													]
+												}
+											]
+										},
+										{
+											"group": "group10",
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "rewrite",
+																	"strip_path_prefix": "/escrow"
+																}
+															]
+														},
+														{
+															"handle": [
+																{
+																	"handler": "reverse_proxy",
+																	"upstreams": [
+																		{
+																			"dial": "escrow:8090"
+																		}
+																	]
+																}
+															]
+														}
+													]
+												}
+											],
+											"match": [
+												{
+													"path": [
+														"/escrow/*"
+													]
+												}
+											]
+										},
+										{
+											"group": "group10",
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "vars",
+																	"root": "/srv/app"
+																}
+															]
+														},
+														{
+															"handle": [
+																{
+																	"handler": "rewrite",
+																	"uri": "{http.matchers.file.relative}"
+																}
+															],
+															"match": [
+																{
+																	"file": {
+																		"try_files": [
+																			"{http.request.uri.path}",
+																			"/index.html"
+																		]
+																	}
+																}
+															]
+														},
+														{
+															"handle": [
+																{
+																	"handler": "file_server",
+																	"hide": [
+																		"/etc/caddy/Caddyfile"
+																	]
+																}
+															]
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						},
+						{
+							"match": [
+								{
+									"host": [
+										"auth.empresa.example"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"encodings": {
+														"gzip": {},
+														"zstd": {}
+													},
+													"handler": "encode",
+													"prefer": [
+														"zstd",
+														"gzip"
+													]
+												}
+											]
+										},
+										{
+											"group": "group12",
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "rewrite",
+																	"strip_path_prefix": "/fonts"
+																}
+															]
+														},
+														{
+															"handle": [
+																{
+																	"handler": "vars",
+																	"root": "/srv/mas-templates/_generated/fonts"
+																},
+																{
+																	"handler": "file_server",
+																	"hide": [
+																		"/etc/caddy/Caddyfile"
+																	]
+																}
+															]
+														}
+													]
+												}
+											],
+											"match": [
+												{
+													"path": [
+														"/fonts/*"
+													]
+												}
+											]
+										},
+										{
+											"group": "group12",
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "reverse_proxy",
+																	"upstreams": [
+																		{
+																			"dial": "mas:8080"
+																		}
+																	]
+																}
+															]
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						},
+						{
+							"match": [
+								{
+									"host": [
+										"empresa.example"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"group": "group14",
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "headers",
+																	"response": {
+																		"set": {
+																			"Content-Type": [
+																				"application/json"
+																			]
+																		}
+																	}
+																},
+																{
+																	"handler": "headers",
+																	"response": {
+																		"set": {
+																			"Access-Control-Allow-Origin": [
+																				"*"
+																			]
+																		}
+																	}
+																},
+																{
+																	"body": "{\"m.homeserver\": {\"base_url\": \"https://matrix.empresa.example\"}}",
+																	"handler": "static_response",
+																	"status_code": 200
+																}
+															]
+														}
+													]
+												}
+											],
+											"match": [
+												{
+													"path": [
+														"/.well-known/matrix/client"
+													]
+												}
+											]
+										},
+										{
+											"group": "group14",
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "headers",
+																	"response": {
+																		"set": {
+																			"Content-Type": [
+																				"application/json"
+																			]
+																		}
+																	}
+																},
+																{
+																	"body": "{\"m.server\": \"matrix.empresa.example:443\"}",
+																	"handler": "static_response",
+																	"status_code": 200
+																}
+															]
+														}
+													]
+												}
+											],
+											"match": [
+												{
+													"path": [
+														"/.well-known/matrix/server"
+													]
+												}
+											]
+										},
+										{
+											"group": "group14",
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "vars",
+																	"root": "/srv/site"
+																},
+																{
+																	"handler": "file_server",
+																	"hide": [
+																		"/etc/caddy/Caddyfile"
+																	]
+																}
+															]
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		}
+	}
+}

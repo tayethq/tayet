@@ -1,0 +1,96 @@
+# Publishes the agent sidecar `tayet-agent` on a v* tag (PLANO-AGENTES §0.3.8 item 4, ADR-087 dec. 11):
+# the npm package by trusted publishing (OIDC: no npm token in this repository; the provenance
+# statement comes with it and points at this public source) and the multi-arch image
+# ghcr.io/tayethq/tayet-agent with the workflow's own GITHUB_TOKEN. The version in sidecar/package.json
+# stays 0.0.0 in the source; the tag stamps it here. The image installs the very tarball the npm job
+# packed. A prerelease tag (v1.2.3-rc.1) goes to the npm dist-tag `next` and gets no `latest` image.
+#
+# Owner prerequisites (outside the code): the name `tayet-agent` reserved on npm, and its trusted
+# publisher set to tayethq/tayet, workflow release.yml, no environment.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency: release
+
+permissions:
+  contents: read
+
+jobs:
+  npm:
+    name: npm (tayet-agent)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm >= 11.5.1; the same pin as the checks action.
+      - run: npm i -g npm@12.2.1 && npm --version
+      # sidecar/ links shared/ from this checkout (file:../shared) and bundles it into dist/cli.js.
+      - name: install and build
+        working-directory: sidecar
+        run: |
+          npm ci
+          npm run build
+      - name: stamp the version from the tag
+        working-directory: sidecar
+        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+      # The package ships the repository's license (sidecar/ has no copy in the source).
+      - run: cp LICENSE sidecar/LICENSE
+      - name: publish
+        working-directory: sidecar
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          case "$VERSION" in
+            *-*) npm publish --access public --tag next ;;
+            *) npm publish --access public ;;
+          esac
+      # The same build, packed for the image job.
+      - name: pack for the image
+        working-directory: sidecar
+        run: |
+          npm pack
+          mv tayet-agent-*.tgz tayet-agent.tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tayet-agent-tgz
+          path: sidecar/tayet-agent.tgz
+          retention-days: 7
+
+  image:
+    name: image (ghcr.io/tayethq/tayet-agent)
+    needs: npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: tayet-agent-tgz
+          path: sidecar
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: build and push
+        working-directory: sidecar
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TAGS=(-t "ghcr.io/tayethq/tayet-agent:${VERSION}")
+          case "$VERSION" in
+            *-*) ;;
+            *) TAGS+=(-t ghcr.io/tayethq/tayet-agent:latest) ;;
+          esac
+          docker buildx build --platform linux/amd64,linux/arm64 --push "${TAGS[@]}" .

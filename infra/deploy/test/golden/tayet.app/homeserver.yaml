@@ -1,0 +1,116 @@
+# Configuration file for Synapse — PRODUÇÃO (domínio base do deployment, ADR-095).
+#
+# Este é um TEMPLATE: os `__PLACEHOLDER__` são preenchidos pelo `deploy.sh secrets` com
+# material FRESCO gerado fora do repo, renderizado para `secrets/rendered/homeserver.yaml`
+# (gitignored). NUNCA há secret real aqui — só placeholders. Diferente do dev-stack, aqui
+# não há nenhum segredo throwaway nem o server_name de dev reaproveitados.
+#
+# Deltas sobre o homeserver.yaml de dev estão comentados inline (ADR-046).
+server_name: "tayet.app"
+pid_file: /data/homeserver.pid
+public_baseurl: "https://matrix.tayet.app/"
+listeners:
+  # Atrás do Caddy (matrix.<domínio base> → synapse:8008): x_forwarded honra o X-Forwarded-For.
+  - port: 8008
+    resources:
+    - compress: false
+      names:
+      - client
+      - federation
+    tls: false
+    type: http
+    x_forwarded: true
+database:
+  name: psycopg2
+  args:
+    user: synapse
+    password: synapse
+    database: synapse
+    host: postgres
+    port: 5432
+    cp_min: 5
+    cp_max: 10
+log_config: "/data/tayet.app.log.config"
+media_store_path: /data/media_store
+registration_shared_secret: "fake-registration-000000000000"
+report_stats: false
+macaroon_secret_key: "fake-macaroon-00000000000000000"
+form_secret: "fake-form-0000000000000000000000"
+# Signing key AUSENTE no primeiro boot → o Synapse a gera automaticamente em /data
+# (volume persistente). Verificação da Fatia 3: conferir que o arquivo nasceu.
+signing_key_path: "/data/tayet.app.signing.key"
+trusted_key_servers:
+  - server_name: "matrix.org"
+
+# Federação DESLIGADA no dogfood (PLANO-TRILHA-A §0.2): a identidade federável fica
+# preparada (well-known servido pelo Caddy, ADR-023), mas nenhum servidor externo
+# conversa com o dogfood. Aditivo/reversível — gatilho de religar no PLANO §0.2/§6.
+federation_domain_whitelist: []
+
+# Delegação de auth ao MAS (top-level, não experimental_features.msc3861). O secret casa
+# com matrix.secret na config do MAS (mesmo valor renderizado nos dois lados).
+matrix_authentication_service:
+  enabled: true
+  endpoint: http://mas:8080/
+  secret: "fake-mas-shared-00000000000000000"
+
+# ADR-042/043: pronomes auto-autorados vivem no perfil ESTENDIDO (MSC4133, custom profile
+# fields). Consumido pelo produto → OBRIGATÓRIO em produção, não é opção de dev (§0.9).
+experimental_features:
+  msc4133_enabled: true
+  # ADR-078 (#244): state_after no /sync (MSC4222). Sem ele, o rejoin `limited` sobre um Room
+  # reusado deixa o SDK com o estado do início da timeline (nome de antes do rename).
+  msc4222_enabled: true
+
+# ADR-052: idem dev-stack — perfil estendido é legível-por-quem-compartilha-sala. Em produção
+# isto é o que impede o diretório da organização (nome/cargo/e-mail de trabalho, quando a camada
+# org entrar) de ser lido por curl anônimo em matrix.<domínio base>. Mergear este template NÃO propaga
+# ao deployment vivo (cmd_secrets aborta sobre secrets vivos): ver o runbook no README.
+require_auth_for_profile_requests: true
+limit_profile_requests_to_users_who_share_rooms: true
+
+# ADR-057 dec. 2 / PLANO-CRIPTO-COBERTURA F9: o convite da identidade estrutural
+# (`cofre`) acontece em TODA criação de sala cifrada, e o balde default do Synapse é
+# keyed no CONVIDADO (0.003/s, burst 5) — a partir do 6º canal cifrado da org na
+# janela, o convite falharia e o fail-open nasceria sem cobertura, silenciosamente
+# (falsificado na PR-4: bob {} e cofre M_LIMIT_EXCEEDED no mesmo instante). Valores
+# pinados como decisão, não herdados; per_room/per_issuer intocados (a proteção
+# emissor→humanos permanece).
+rc_invites:
+  per_user:
+    per_second: 5
+    burst_count: 100
+
+# ADR-057 dec. 2 / PLANO-CRIPTO-COBERTURA F10: o cofre joina toda sala cifrada (F2) e
+# o balde default de rc_joins.local (0.1/s, burst 10) é keyed no JOINER — sob rajada o
+# depósito enfileira (medido na PR-4: 1396 M_LIMIT_EXCEEDED / 22 joins OK em 90 min),
+# latência que tornaria o veredito definitivo da PR-5 falso durante a fila. Bônus
+# documentado: o auto-join humano (ADR-044) sofre o MESMO 429 em onboarding de rajada.
+# Valores pinados como decisão; remote intocado.
+rc_joins:
+  local:
+    per_second: 5
+    burst_count: 100
+
+# ADR-062 D3: reaper de devices. Device sem uso há 30 dias é apagado (com as chaves publicadas): o
+# parque converge para os acessos vivos mesmo quando o browser fecha sem "Sair". Par do
+# `experimental.inactive_session_expiration` do MAS (mesma janela) — sem ele o MAS mantém a sessão e o
+# SyncDevicesJob recria o device apagado. Limitação (Synapse 1.154.0, devices.py): só colhe device com
+# `last_seen` preenchido; os sem last_seen dependem do lado MAS.
+delete_stale_devices_after: 30d
+
+# Room version das salas novas fixada em 10: mantém o comportamento do Synapse 1.154.0. O default
+# subiu para 11 no 1.158 e para 12 no 1.162 (config docs, `default_room_version`). Adotar v12
+# (criador com PL infinito, ids de sala sem servidor) é decisão própria futura, com ADR.
+default_room_version: "10"
+
+# How long Synapse keeps a finished /sync response and serves it again to an identical request
+# (same user, device, filter and `since`); the default is 2 minutes. Set to 0 so a finished
+# response is never replayed: with the cache on, a client that reloads within the window gets the
+# previous initial sync again, and the incremental syncs that follow re-deliver the history one
+# event at a time, which the client treats as new arrivals. Concurrent identical requests are
+# still coalesced while in flight.
+caches:
+  sync_response_cache_duration: 0
+
+# vim:ft=yaml
