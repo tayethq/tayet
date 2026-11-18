@@ -70,6 +70,10 @@ test('search: find a message, jump to it from another conversation; a thread rep
 
     await test.step('3. quim writes the 35th; rita replies to it in a thread; quim sees it and reloads', async () => {
       await dmWith(pageB, RITA_NAME).click()
+      // send() only waits for the text on the sender's own screen, so rita's last sends may still be on
+      // their way to the server. The root must reach the server after all of them, or it can fall outside
+      // the window quim gets after the reload.
+      await expect(messages(pageB)).toContainText(`enchimento ${FILLERS} ${ts}`, { timeout: 60_000 })
       await send(pageB, rootText)
       const root = messages(pageA).locator('article').filter({ hasText: rootText })
       await expect(root).toBeVisible({ timeout: 60_000 })
@@ -176,8 +180,13 @@ test('search index survives a reload with history blocked (ADR-074 D3)', async (
       await startDm(pageA, QUIM_NAME)
       await send(pageA, target)
       await expect(dmWith(pageB, RITA_NAME)).toBeVisible({ timeout: 60_000 })
-      // The observable signal that the entry is in the in-memory index: search finds it.
+      // The observable signal that the entry is in the in-memory index: search finds it. The open results
+      // list does not re-run its query when a matching message is indexed, and filling the same term
+      // again changes nothing, so a first query that ran before the target was indexed would stay empty
+      // for every attempt. Each attempt clears the field first: the term goes from empty to the target
+      // and the query runs again.
       await expect(async () => {
+        await pageB.getByRole('textbox', { name: SEARCH.field }).fill('')
         await search(pageB, `alvo${ts}`)
         await expect(searchResults(pageB).getByRole('heading', { name: '1 resultado' })).toBeVisible({ timeout: 2_000 })
       }).toPass({ timeout: 30_000 })

@@ -38,6 +38,14 @@ test('MAS /login is the Tayet page: §8 copy, Google icon only, no protocol iden
   expect(html).not.toContain('Continue with')
   // P1 (§8 item 6): nenhum mxid nem outro identificador de protocolo no HTML inteiro.
   expect(findProtocolLeaksInText(html)).toEqual([])
+
+  // Ícone da marca embutido e a cor do chrome do tema claro, em toda página do MAS.
+  await expect(page.locator('head link[rel="icon"]')).toHaveAttribute('href', /^data:image\/svg\+xml;base64,/)
+  const bg = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--color-bg').trim(),
+  )
+  expect(bg).not.toBe('')
+  await expect(page.locator('head meta[name="theme-color"]')).toHaveAttribute('content', bg)
 })
 
 // P4-2 (ADR-084 dec. 1): consentimento, erro e saída do MAS são templates próprios em pt-BR, sem mxid.

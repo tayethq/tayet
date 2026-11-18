@@ -22,6 +22,12 @@ export type SlackErrorCode =
   | 'invalid_blocks'
   // `markdown_text` with a non-empty `text` or with `blocks` in the same call.
   | 'markdown_text_conflict'
+  // views.open (slack/views.ts): the trigger_id is not of the format, unknown or expired, or already used; the
+  // definition passes the size limit.
+  | 'invalid_trigger_id'
+  | 'expired_trigger_id'
+  | 'exchanged_trigger_id'
+  | 'view_too_large'
   // A3-4: a response_url whose ticket is unknown, expired or spent.
   | 'expired_url'
   | 'invalid_name'
@@ -296,7 +302,7 @@ export interface SlackBlockActions {
   container: { type: 'message'; message_ts: string; channel_id: string; is_ephemeral: false }
   message: SlackMessage
   state: { values: Record<string, never> }
-  // Opaque, minted per click; nothing opens with it (no `views.*`).
+  // Opaque, minted per click (slack/triggers.ts): views.open opens one form with it, within 30 s.
   trigger_id: string
   // `<listener>/slack/response/<ticket>` (slack/response.ts): 30 min, 5 uses, `replace_original` only.
   response_url: string
@@ -319,7 +325,7 @@ export interface SlackSlashCommand {
   user_name: string
   team_id: string
   api_app_id: string
-  // Opaque, minted per command; nothing opens with it (no `views.*`).
+  // Opaque, minted per command (slack/triggers.ts): views.open opens one form with it, within 30 s.
   trigger_id: string
   // `<listener>/slack/response/<ticket>` (slack/response.ts): 30 min, 5 uses; every call a reply in the thread.
   response_url: string

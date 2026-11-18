@@ -79,3 +79,23 @@ test('login through Dex → org channel → reload keeps the session, with no pr
     expect(seen, `${url}: ${seen} × 404, above the cap of ${max} (${why})`).toBeLessThanOrEqual(max)
   }
 })
+
+// The brand icon is served from the app root, and the browser chrome takes the floor color of the
+// applied theme: a fresh context has no stored theme, so light, read back from the page's own CSS.
+test('brand icon served at the root; theme-color is the light --color-bg', async ({ page }) => {
+  const svg = await page.request.get('/icon.svg')
+  expect(svg.status()).toBe(200)
+  expect(svg.headers()['content-type']).toContain('image/svg+xml')
+  expect((await page.request.get('/favicon.ico')).status()).toBe(200)
+  expect((await page.request.get('/apple-touch-icon.png')).status()).toBe(200)
+
+  await page.goto('/')
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme')
+  const bg = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--color-bg').trim(),
+  )
+  expect(bg).not.toBe('')
+  const meta = page.locator('head meta[name="theme-color"]')
+  await expect(meta).toHaveCount(1)
+  await expect(meta).toHaveAttribute('content', bg)
+})

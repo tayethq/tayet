@@ -128,6 +128,8 @@ function makeAcl(channels: Channel[], initialMembers: Record<string, Member[]> =
     },
     sendMessage: async () => mid('x'),
     answerApproval: async () => {},
+    submitForm: async () => ({ ok: true }),
+    closeForm: () => {},
     listPanels: async () => [],
     listCommands: async () => [],
     editMessage: noop,

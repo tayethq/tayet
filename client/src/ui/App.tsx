@@ -4,6 +4,7 @@ import { useChat } from './useChat'
 import { useTheme } from './useTheme'
 import { useNotificationsPrompt } from './useNotificationsPrompt'
 import { useSearch } from './useSearch'
+import { useAgentForm } from './useAgentForm'
 import { Workspace } from './components/Workspace'
 import { MediaProvider } from './MediaContext'
 
@@ -14,6 +15,7 @@ export function App({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
   const { theme, setTheme } = useTheme()
   const notifications = useNotificationsPrompt()
   const search = useSearch(acl, chat.selectedId)
+  const agentForm = useAgentForm(acl)
   // The hit last opened stays selected while the results are on screen (manifest workspace.md §8 item 9).
   const [picked, setPicked] = useState<MessageId | undefined>(undefined)
   return (
@@ -118,6 +120,7 @@ export function App({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
           },
         }}
         jump={chat.jump}
+        agentForm={agentForm}
         highlight={chat.highlight}
         onHighlightEnd={chat.clearHighlight}
       />

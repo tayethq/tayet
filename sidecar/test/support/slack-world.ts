@@ -9,6 +9,7 @@ import { ReadError, type MessageQuery, type ReadFacade } from '../../src/core/re
 import { WriteError, type PostRequest, type UploadRequest, type WriteFacade } from '../../src/core/write'
 import type { SlackMethods } from '../../src/api/slack/router'
 import type { ApprovalFacade } from '../../src/core/approvals'
+import type { FormFacade } from '../../src/core/forms'
 import type { EventBus } from '../../src/api/bus'
 import type { SocketOptions } from '../../src/api/slack/socket'
 
@@ -270,6 +271,8 @@ export interface SlackStart {
   // The clicks over HTTP (`--slack-actions-url`) and the period of their redelivery.
   actionsUrl?: string
   redeliveryMs?: number
+  // An agent's forms (views.open, view_submission).
+  forms?: FormFacade
 }
 
 export async function startSlack(opts: SlackStart = {}): Promise<SlackHarness> {
@@ -283,6 +286,7 @@ export async function startSlack(opts: SlackStart = {}): Promise<SlackHarness> {
     listen: { host: '127.0.0.1', port: opts.port ?? 0 },
     log: (l) => logs.push(l),
     ...(opts.approvals !== undefined && { approvals: opts.approvals }),
+    ...(opts.forms !== undefined && { forms: opts.forms }),
     ...(opts.bus !== undefined && { bus: opts.bus }),
     slack: {
       productUrl: 'https://chat.example.com',
@@ -316,7 +320,7 @@ export async function startSlack(opts: SlackStart = {}): Promise<SlackHarness> {
 // The leak-scan of the tests over a whole Slack answer: no protocol id shape anywhere (mxid, room id,
 // event id, media URI, the `u-`/`a-` localparts), and every id-valued field a token of its kind.
 const ID_KEYS: Record<string, RegExp> = {
-  id: /^[CDUTFB][A-Z2-7]{10}$/,
+  id: /^(?:[CDUTFB][A-Z2-7]{10}|V[0-9A-F]{10})$/,
   user: /^U[A-Z2-7]{10}$/,
   user_id: /^U[A-Z2-7]{10}$/,
   bot_id: /^B[A-Z2-7]{10}$/,

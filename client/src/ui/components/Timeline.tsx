@@ -225,11 +225,14 @@ function ApprovalCard({
   usersById,
   selfId,
   onAnswer,
+  formReply,
 }: {
   body: ApprovalBody
   usersById: Record<string, User>
   selfId?: UserId
   onAnswer?: (option: string) => void
+  // ADR-103 (Proposto): who answered a form the agent opened from this card (§26 item 8).
+  formReply?: Message['formReply']
 }) {
   const labelId = useId()
   const groupRef = useRef<HTMLDivElement>(null)
@@ -326,9 +329,17 @@ function ApprovalCard({
       {body.request ? <RichText doc={body.request} /> : <span className="message__body">{body.text}</span>}
       <div className="approval__slot" aria-live={engaged ? 'polite' : undefined} aria-atomic={engaged ? true : undefined}>
         {footer}
+        {formReply && <span className="approval__form-reply">{formReplyLine(formReply, usersById, selfId)}</span>}
       </div>
     </div>
   )
+}
+
+// ADR-103 (Proposto), workspace.md §26 item 8 (fork I5): "{nome} respondeu às {hora}", "Você" for the
+// viewer. The name comes from the answer's real author, never from text the agent wrote (P6).
+function formReplyLine(reply: NonNullable<Message['formReply']>, usersById: Record<string, User>, selfId?: UserId): string {
+  const name = selfId !== undefined && reply.by === selfId ? t('timeline.you') : resolveAuthor({ author: reply.by }, usersById, t('timeline.someone')).name
+  return t('form.replied', { name, time: timeOf(reply.at) })
 }
 
 // 'unsupported' is the visible branded D3 placeholder (ADR-007 §3 — content-carrying
@@ -339,11 +350,13 @@ function MessageBodyView({
   selfId,
   onAnswer,
   command,
+  formReply,
 }: {
   body: MessageBody
   usersById?: Record<string, User>
   selfId?: UserId
   onAnswer?: (option: string) => void
+  formReply?: Message['formReply']
   // ADR-093 (Proposto): the message's `/` command — its chip replaces the leading "/nome" (§21.1 item 8).
   command?: Message['command']
 }) {
@@ -370,7 +383,7 @@ function MessageBodyView({
       )
     }
     case 'approval':
-      return <ApprovalCard body={body} usersById={usersById} selfId={selfId} onAnswer={onAnswer} />
+      return <ApprovalCard body={body} usersById={usersById} selfId={selfId} onAnswer={onAnswer} formReply={formReply} />
     case 'image':
       return <ImageBody body={body} />
     case 'file':
@@ -579,6 +592,7 @@ export function MessageRow({
         selfId={selfId}
         onAnswer={onAnswer ? (option) => onAnswer(m, option) : undefined}
         command={m.command}
+        formReply={m.formReply}
       />
     )
 
@@ -644,10 +658,14 @@ export function MessageRow({
 
   // ADR-093 (Proposto), workspace.md §21.1 item 8: "comando para {agente}" under the body of a command
   // message, where "menção a você" sits — in a continuation and in the thread too.
+  // ADR-103 (Proposto), §26 item 8: who answered a form the agent opened from the command, under that line.
   const commandBlock = m.command ? (
-    <span className="message__command-line">
-      {t('timeline.commandFor', { agent: usersById[m.command.agent]?.displayName ?? t('timeline.someone') })}
-    </span>
+    <>
+      <span className="message__command-line">
+        {t('timeline.commandFor', { agent: usersById[m.command.agent]?.displayName ?? t('timeline.someone') })}
+      </span>
+      {m.formReply && <span className="message__form-reply">{formReplyLine(m.formReply, usersById, selfId)}</span>}
+    </>
   ) : null
 
   // Only with a reaction: a message without one reserves no line (§11 items 2 and 8, #277).

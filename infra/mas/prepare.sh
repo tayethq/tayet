@@ -2,7 +2,7 @@
 # Prepara os templates próprios do MAS (ADR-084): gera infra/mas/templates/_generated/ a partir de
 # artefatos do repo — nunca re-autora nada.
 #
-#   prepare.sh        gera _generated/ (tokens.html, google-g.html, fonts/)
+#   prepare.sh        gera _generated/ (tokens.html, google-g.html, icon.html, theme-color.html, fonts/)
 #   prepare.sh sum    imprime o sha256 da árvore inteira (com _generated/), para o marcador de
 #                     restart do MAS: o MAS só lê templates no boot, e o compose não recria o
 #                     serviço quando muda só o conteúdo de um bind mount (PLANO-PESSOAS §8.4).
@@ -20,6 +20,7 @@ REPO_ROOT="$(cd "$MAS_DIR/../.." && pwd)"
 TEMPLATES="$MAS_DIR/templates"
 GEN="$TEMPLATES/_generated"
 TOKENS="$REPO_ROOT/client/src/ui/tokens/tokens.css"
+ICON="$REPO_ROOT/client/public/icon.svg"
 FONT="$REPO_ROOT/client/node_modules/@fontsource-variable/hanken-grotesk/files/hanken-grotesk-latin-wght-normal.woff2"
 
 sha256() {
@@ -27,13 +28,28 @@ sha256() {
   else shasum -a 256 | cut -d' ' -f1; fi
 }
 
+# O --color-bg do tema claro: a primeira declaração dentro do bloco `:root` do tokens.css.
+light_bg() {
+  awk '/^:root/{f=1} f && /--color-bg:/{print; exit} f && /^}/{exit}' "$TOKENS" \
+    | sed -E 's/.*--color-bg:[[:space:]]*([^;[:space:]]+);.*/\1/'
+}
+
 cmd_prepare() {
   [[ -f "$TOKENS" ]] || { echo "ERROR: $TOKENS missing (npm run tokens in the client)." >&2; exit 1; }
+  [[ -f "$ICON" ]] || { echo "ERROR: $ICON missing (the brand icon of the client)." >&2; exit 1; }
+  local bg
+  bg="$(light_bg)"
+  [[ -n "$bg" ]] || { echo "ERROR: no light --color-bg in $TOKENS." >&2; exit 1; }
   # Apaga só o conteúdo: os composes montam o diretório pai, que não muda de inode.
   mkdir -p "$GEN"
   rm -rf "${GEN:?}"/*
   cp "$TOKENS" "$GEN/tokens.html"
   cp "$TEMPLATES/_assets/google-g.svg" "$GEN/google-g.html"
+  # Ícone da aba embutido (o MAS não serve o arquivo) e a cor do chrome do tema claro, o único que
+  # as páginas do MAS têm. `base64 | tr` dá uma linha só no macOS e no Linux.
+  printf '<link rel="icon" href="data:image/svg+xml;base64,%s" type="image/svg+xml">\n' \
+    "$(base64 < "$ICON" | tr -d '\n')" > "$GEN/icon.html"
+  printf '<meta name="theme-color" content="%s">\n' "$bg" > "$GEN/theme-color.html"
   if [[ -f "$FONT" ]]; then
     mkdir -p "$GEN/fonts"
     cp "$FONT" "$GEN/fonts/"

@@ -111,6 +111,8 @@ function canonicalRich(doc: RichDoc): RichDoc {
   return doc.map(canonicalBlock)
 }
 
+const copyText = (v: string | string[]): string | string[] => (Array.isArray(v) ? [...v] : v)
+
 function emptyCounts(): ExportCounts {
   return { messages: 0, deleted: 0, attachments: 0, gaps: 0 }
 }
@@ -226,6 +228,21 @@ export function createExportBuilder(start: ExportStartInput): ExportBuilder {
             kind: 'ready',
             sentAt: item.sentAt,
             item: { type: 'approvalResponse', id: mid, sentAt, option: item.option, requestedBy: person(item.requestedBy) },
+          })
+          return undefined
+        case 'formSubmission':
+          counts.messages += 1
+          pending.push({
+            kind: 'ready',
+            sentAt: item.sentAt,
+            item: {
+              type: 'formSubmission',
+              id: mid,
+              sentAt,
+              title: item.title,
+              requestedBy: person(item.requestedBy),
+              fields: item.fields.map((f) => ({ label: f.label, value: copyText(f.value), ...opt('option', f.option === undefined ? undefined : copyText(f.option)) })),
+            },
           })
           return undefined
         case 'message': {

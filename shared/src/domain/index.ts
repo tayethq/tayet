@@ -2,7 +2,7 @@
 // Pure types, no runtime, no protocol terminology. Re-exported by acl/index.ts so
 // consumers have a single import surface.
 export type { Brand } from './brand'
-export type { ChannelId, UserId, MessageId, DeviceId, MediaRef, AccessId } from './ids'
+export type { ChannelId, UserId, MessageId, DeviceId, MediaRef, AccessId, FormId } from './ids'
 export type { RichInline, RichBlock, RichDoc } from './rich'
 export type {
   Timestamp,
@@ -24,6 +24,14 @@ export type {
   MessageBody,
   ApprovalOption,
   ApprovalState,
+  AgentForm,
+  FormChoices,
+  FormField,
+  FormIssue,
+  FormOption,
+  FormOptionGroup,
+  FormState,
+  FormValues,
   AgentCommand,
   AgentPanel,
   ThreadSummary,

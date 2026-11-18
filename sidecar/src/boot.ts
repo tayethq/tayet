@@ -101,6 +101,7 @@ import { ApprovalWatch, createApprovalCore, createCardReader, locateWith } from 
 import { createPanelCore } from './core/panels'
 import { createAnchoredScheduler } from './core/anchored'
 import { createCommandsCore } from './core/commands'
+import { createFormCore } from './core/forms'
 import { createReadSide, infraAccounts } from './core/read'
 import { personToken as personTokenOf } from './api/ids'
 import { createWriteGateway } from './core/send'
@@ -601,7 +602,7 @@ async function run(cli: CliOptions, manifest?: SlackManifest): Promise<Core> {
   const joins = createJoinLoop(createJoinPorts(client, log, operator), () => ({ healthy: syncHealthy, state: syncState }))
   // Read path (S-c1): created before startClient so it sees the first healthy sync. The write path
   // (S-c2) shares its resolver: one set of reverse lookups, one ts index, one file map.
-  const { facade: read, resolver, announce, bindApprovals, bindCommands } = createReadSide(client, log)
+  const { facade: read, resolver, announce, bindApprovals, bindCommands, commandAt } = createReadSide(client, log)
   // ADR-091 (A3-3): the approval cards — one reader of card state (the same rule and order as the client),
   // the watch of the agent's open cards (kept in the store) and the facade of the routes.
   const infra = infraAccounts(identity.userId)
@@ -622,6 +623,9 @@ async function run(cli: CliOptions, manifest?: SlackManifest): Promise<Core> {
   const approvals = createApprovalCore({ ...writeDeps, reader: cards, watch })
   sealCard = approvals.seal
   bindApprovals(approvals.approvalOf)
+  // An agent's forms: written from a click on its own card or a command for it; a valid live submission goes
+  // to one in-memory listener, outside the bus (nothing binds it here).
+  const forms = createFormCore({ ...writeDeps, reader: cards, commandAt })
   // ADR-087 dec. 8: an unknown token on an upload/download (outside the queue) revokes as the queue does.
   const write = createWriteFacade({ ...writeDeps, editCard: approvals.editCard })
   // ADR-091 dec. 13 (A3-6) and ADR-093 (A4-2a): the agent's pinned panel and its commands manifest share ONE
@@ -650,7 +654,10 @@ async function run(cli: CliOptions, manifest?: SlackManifest): Promise<Core> {
   // same event, but only while the API listens — the re-edit cannot depend on that).
   client.on(sdk.RoomEvent.Timeline, (ev, room, toStart, removed, data) => {
     if (toStart !== true && !removed) watch.noteEvent(ev)
-    if (livePrepared && room !== undefined && toStart !== true && !removed && data.liveEvent === true) panels.noteEvent(ev, room)
+    if (livePrepared && room !== undefined && toStart !== true && !removed && data.liveEvent === true) {
+      panels.noteEvent(ev, room)
+      if (ev.getId()?.startsWith('$') === true) forms.noteEvent(ev, room)
+    }
   })
   client.on(sdk.MatrixEventEvent.Decrypted, (ev) => watch.noteEvent(ev))
   let directBackfilled = false
@@ -731,6 +738,7 @@ async function run(cli: CliOptions, manifest?: SlackManifest): Promise<Core> {
     read,
     write,
     approvals: approvals.facade,
+    forms: forms.facade,
     panels: panels.facade,
     commands: commands.facade,
     storeDir,

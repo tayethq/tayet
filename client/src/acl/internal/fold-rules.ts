@@ -1,6 +1,6 @@
 import { ConditionKind, PushRuleKind, type IPushRule, type MatrixClient } from 'matrix-js-sdk'
 import type { AclTelemetry } from '@tayet/shared'
-import { COMMANDS_REL_TYPE, PANEL_REL_TYPE, RESPONSE_REL_TYPE } from '@tayet/shared/internal'
+import { COMMANDS_REL_TYPE, FORM_REL_TYPE, PANEL_REL_TYPE, RESPONSE_REL_TYPE } from '@tayet/shared/internal'
 
 // ADR-091 dec. 10; PLANO-AGENTES §0.3.16 item 9: the answer to an approval card and the pinned
 // panel never count as unread — nor the agents' commands manifest (ADR-093 (Proposto), PLANO-AGENTES
@@ -16,6 +16,8 @@ export const FOLD_RULES: ReadonlyArray<{ ruleId: string; relType: string }> = [
   { ruleId: 'io.tayet.fold.response', relType: RESPONSE_REL_TYPE },
   { ruleId: 'io.tayet.fold.panel', relType: PANEL_REL_TYPE },
   { ruleId: 'io.tayet.fold.commands', relType: COMMANDS_REL_TYPE },
+  // The three messages of an agent's form, by their relation type.
+  { ruleId: 'io.tayet.fold.form', relType: FORM_REL_TYPE },
 ]
 
 export type FoldRulesClient = Pick<MatrixClient, 'getPushRules' | 'addPushRule' | 'setPushRuleEnabled'>

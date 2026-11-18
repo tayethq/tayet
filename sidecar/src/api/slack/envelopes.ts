@@ -46,6 +46,11 @@ export interface EnvelopeTimers {
   clearTimeout(handle: unknown): void
 }
 
+export interface EnvelopeTiming {
+  ackTimeoutMs: number
+  maxRetries: number
+}
+
 export interface EnvelopeDispatcherOptions {
   log: Log
   timers: EnvelopeTimers
@@ -57,8 +62,9 @@ export interface EnvelopeDispatcher {
   // A new kind (A3: `interactive` with its own response handling).
   register(type: string, kind: EnvelopeKind): void
   readonly kinds: readonly string[]
-  // One envelope to one connection; the outcome settles on its ack, its drop or its connection's close.
-  dispatch(target: EnvelopeTarget, type: string, payload: Record<string, unknown>): { id: string; outcome: Promise<AckOutcome> }
+  // One envelope to one connection; the outcome settles on its ack, its drop or its connection's close. `timing`
+  // overrides the ack timeout and the redeliveries of this envelope (a form's submission: one attempt, 10 s).
+  dispatch(target: EnvelopeTarget, type: string, payload: Record<string, unknown>, timing?: EnvelopeTiming): { id: string; outcome: Promise<AckOutcome> }
   // A frame from a client (already parsed, or the raw text): resolves the matching entry.
   ack(frame: unknown): void
   // The connection closed: what it still owes is dropped.
@@ -74,6 +80,7 @@ interface Entry {
   kind: EnvelopeKind
   attempt: number
   timer: unknown
+  timing: EnvelopeTiming
   settle: (o: AckOutcome) => void
 }
 
@@ -107,14 +114,14 @@ export function createEnvelopeDispatcher(opts: EnvelopeDispatcherOptions): Envel
     }
     e.timer = timers.setTimeout(() => {
       if (!table.has(e.id)) return
-      if (e.attempt >= maxRetries) {
+      if (e.attempt >= e.timing.maxRetries) {
         log({ evt: 'envelope-dropped', envelope_id: e.id, type: e.type, reason: 'timeout' })
         return finish(e, { acked: false, reason: 'timeout' })
       }
       e.attempt += 1
       log({ evt: 'envelope-redelivered', envelope_id: e.id, type: e.type, attempt: e.attempt })
       send(e)
-    }, ackTimeoutMs)
+    }, e.timing.ackTimeoutMs)
   }
 
   const parse = (frame: unknown): Record<string, unknown> | null => {
@@ -140,13 +147,13 @@ export function createEnvelopeDispatcher(opts: EnvelopeDispatcherOptions): Envel
       return table.size
     },
 
-    dispatch(target, type, payload) {
+    dispatch(target, type, payload, timing = { ackTimeoutMs, maxRetries }) {
       const kind = kinds.get(type)
       if (kind === undefined) throw new Error(`unknown envelope kind: ${type}`)
       const id = randomUUID()
       let settle: (o: AckOutcome) => void = () => {}
       const outcome = new Promise<AckOutcome>((r) => (settle = r))
-      const e: Entry = { id, target, type, payload, kind, attempt: 0, timer: undefined, settle }
+      const e: Entry = { id, target, type, payload, kind, attempt: 0, timer: undefined, timing, settle }
       table.set(id, e)
       send(e)
       return { id, outcome }

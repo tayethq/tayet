@@ -6,11 +6,13 @@ Copyright 2021-2024 The Matrix.org Foundation C.I.C.
 SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 Please see LICENSE files in the repository root for full details.
 
-Modified by Tayet (first on 2026-11-03, last on 2026-11-15). A page that sets `tayet_page` before
+Modified by Tayet (first on 2026-11-03, last on 2026-11-17). A page that sets `tayet_page` before
 `extends` gets the Tayet shell: pt-BR, the client's design tokens inline (`_generated/tokens.html`, a
 copy of client/src/ui/tokens/tokens.css), the font served at /fonts/, no Compound, no JS, no stock
 footer. The page's CSS goes in the `tayet_style` block. Without `tayet_page` the shell is the stock
-one, verbatim: every page Tayet does not own extends this file.
+one, verbatim: every page Tayet does not own extends this file. Every page, Tayet's or stock, gets
+the Tayet tab icon (`_generated/icon.html`, client/public/icon.svg inline as `data:`) and the light
+theme's browser color (`_generated/theme-color.html`, the light --color-bg of the same tokens.css).
 The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and infra/mas/NOTICE.md.
 -#}
 
@@ -31,6 +33,8 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
     <meta charset="utf-8">
     <title>{% block title %}{% if tayet_page is defined %}Tayet{% else %}{{ _("app.name") }}{% endif %}{% endblock title %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% include "_generated/icon.html" %}
+    {% include "_generated/theme-color.html" %}
     {% if tayet_page is defined %}
     <style>
 {% include "_generated/tokens.html" %}

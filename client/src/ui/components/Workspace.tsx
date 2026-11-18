@@ -43,6 +43,8 @@ import { NewConversationDialog } from './NewConversationDialog'
 import { AccountSettings, type KnownAccess } from './AccountSettings'
 import type { DataExportVerb } from '../useDataExport'
 import { UserProfileDialog } from './UserProfileDialog'
+import { AgentFormDialog } from './AgentFormDialog'
+import type { AgentFormSlice } from '../useAgentForm'
 import { NewAccessBanner, type NewAccess } from './NewAccessBanner'
 import { ResetAccessBanner, type ResetStatus } from './ResetAccessBanner'
 import { PinnedPanel } from './PinnedPanel'
@@ -155,6 +157,7 @@ export function Workspace({
   notificationsPrompt,
   search,
   jump,
+  agentForm,
   highlight,
   onHighlightEnd,
   newAccesses,
@@ -267,6 +270,8 @@ export function Workspace({
   // Search jump (§8 items 9–10): in flight → the timeline pill; the row reached → highlighted in the
   // timeline or in the open thread, whichever holds it.
   jump?: { target: MessageId; failed: boolean }
+  // ADR-103 (Proposto): the agent's form open in this session (useAgentForm), drawn as a dialog.
+  agentForm?: AgentFormSlice
   highlight?: { id: MessageId; seq: number }
   onHighlightEnd?: () => void
   // Avisos de segurança (ADR-018/019), trazidos pra coluna de conteúdo (PR-S1): o banner passivo de
@@ -656,6 +661,16 @@ export function Workspace({
           onSubscribePresence={onSubscribePresence}
           onOpenDirectMessage={canDm ? onOpenDirectMessage : undefined}
           onClose={() => setOpenProfile(null)}
+        />
+      )}
+      {agentForm?.form && (
+        // Keyed on the form: a new form starts with its own values and no errors.
+        <AgentFormDialog
+          key={agentForm.form.id}
+          form={agentForm.form}
+          agent={agentForm.agent}
+          onSubmit={agentForm.submit}
+          onClose={agentForm.close}
         />
       )}
     </div>

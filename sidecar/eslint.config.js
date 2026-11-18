@@ -93,7 +93,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['eslint.config.js', 'build.mjs', 'contract-vocabulary.mjs', 'scripts/gen-emoji.mjs', 'test/support/count-hook.mjs', 'test/support/bolt-agent.mjs', 'test/support/bolt-http-agent.mjs', 'test/support/no-execve.mjs'],
+    files: ['eslint.config.js', 'build.mjs', 'contract-vocabulary.mjs', 'scripts/gen-emoji.mjs', 'test/support/count-hook.mjs', 'test/support/bolt-agent.mjs', 'test/support/bolt-http-agent.mjs', 'test/support/bolt-forms-agent.mjs', 'test/support/no-execve.mjs'],
     extends: [tseslint.configs.disableTypeChecked],
   },
 )

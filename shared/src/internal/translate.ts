@@ -36,6 +36,10 @@ import {
   APPROVAL_RESPONSE_MSGTYPE,
   COMMANDS_MSGTYPE,
   COMMANDS_REL_TYPE,
+  FORM_MSGTYPE,
+  FORM_REL_TYPE,
+  FORM_RESULT_MSGTYPE,
+  FORM_SUBMISSION_MSGTYPE,
   CONVERSATION_EVENT,
   PANEL_MSGTYPE,
   PANEL_REL_TYPE,
@@ -108,6 +112,18 @@ export interface Ctx {
   // timeline never waits; the resolution arrives as message.edited of the card). Absent (sidecar in
   // A3-1, unit fakes) → the card reads 'closed' when closed, else 'open'.
   approvalStateFor?: (realEventId: string, card: ApprovalCardFacts) => ApprovalState
+  // Who answered a form opened from this message (a card, or a command message), keyed by its REAL event
+  // id, given what the rule needs of the anchor. Synchronous, from a cache that loads in the background;
+  // the answer arrives as message.edited. Absent → no reply is shown.
+  formReplyFor?: (realEventId: string, anchor: FormAnchorFacts) => { by: string; at: number } | undefined
+}
+
+// What the form reply rule needs of an anchor: the agent that may open a form from it, whether it is a
+// card or a command, and its author.
+export interface FormAnchorFacts {
+  agent: string
+  kind: 'card' | 'command'
+  sender: string
 }
 
 // What the aggregator needs of a card to decide its state. The close is permanent and dated by the
@@ -746,8 +762,9 @@ function approvalBody(
 // ADR-091 dec. 2/12; PLANO-AGENTES §0.3.16 item 8: an answer to a card and a panel never become
 // a line, read or not — nor a commands manifest (ADR-093 (Proposto), §0.3.21 item 3). The relation type in
 // clear decides first (the wire content of an encrypted event carries it), then the type of the content, of
-// an edit's new content too. 'response' | 'panel' | 'commands' | undefined.
-export function foldedKind(event: MatrixEvent): 'response' | 'panel' | 'commands' | undefined {
+// an edit's new content too. The three messages of an agent's form fold the same way.
+// 'response' | 'panel' | 'commands' | 'form' | undefined.
+export function foldedKind(event: MatrixEvent): 'response' | 'panel' | 'commands' | 'form' | undefined {
   // Optional calls: the SDK's MatrixEvent has both; the hand-built fakes of the existing suites may not.
   const wire = (event.getWireContent?.() ?? {}) as Record<string, unknown>
   const original = (event.getOriginalContent?.() ?? event.getContent?.() ?? {}) as Record<string, unknown>
@@ -756,11 +773,13 @@ export function foldedKind(event: MatrixEvent): 'response' | 'panel' | 'commands
   if (relType === RESPONSE_REL_TYPE) return 'response'
   if (relType === PANEL_REL_TYPE) return 'panel'
   if (relType === COMMANDS_REL_TYPE) return 'commands'
+  if (relType === FORM_REL_TYPE) return 'form'
   const newContent = (original['m.new_content'] ?? {}) as Record<string, unknown>
   for (const msgtype of [original.msgtype, newContent.msgtype]) {
     if (msgtype === APPROVAL_RESPONSE_MSGTYPE) return 'response'
     if (msgtype === PANEL_MSGTYPE) return 'panel'
     if (msgtype === COMMANDS_MSGTYPE) return 'commands'
+    if (msgtype === FORM_MSGTYPE || msgtype === FORM_SUBMISSION_MSGTYPE || msgtype === FORM_RESULT_MSGTYPE) return 'form'
   }
   return undefined
 }
@@ -1031,7 +1050,32 @@ export function eventToMessage(event: MatrixEvent, ctx: Ctx): Message | null {
     mentionsMe: mentionsUserInContent(content, ctx.myUserId),
     ...mentionsOf(content),
     ...commandOf(original, body, [sender]),
+    ...formReplyOf(event, body, commandOf(original, body, [sender]).command, ctx),
     ...authorAtOf(event, sender, ctx),
     status: statusOf(event),
   }
 }
+
+// The reply to a form opened from this message: only a card (the agent is its author) or a command (the
+// agent it names) can be an anchor.
+function formReplyOf(
+  event: MatrixEvent,
+  body: MessageBody,
+  command: Message['command'],
+  ctx: Ctx,
+): Pick<Message, 'formReply'> {
+  const realId = event.getId()
+  const sender = event.getSender() ?? ''
+  if (!ctx.formReplyFor || !realId || !hasServerIdShape(realId)) return {}
+  const anchor: FormAnchorFacts | undefined =
+    body.kind === 'approval'
+      ? { agent: sender, kind: 'card', sender }
+      : command
+        ? { agent: command.agent as string, kind: 'command', sender }
+        : undefined
+  const reply = anchor ? ctx.formReplyFor(realId, anchor) : undefined
+  return reply ? { formReply: { by: brandUserId(reply.by), at: ts(reply.at) } } : {}
+}
+
+// A local echo's id (the SDK's `~` prefix) is not a server id; no reply can name it.
+const hasServerIdShape = (id: string): boolean => !id.startsWith('~')

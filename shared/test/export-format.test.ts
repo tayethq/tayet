@@ -83,9 +83,9 @@ describe('golden example', () => {
       if (!path.startsWith('conversations/')) continue
       for (const item of (JSON.parse(content) as ExportConversationFile).items) types.add(item.type)
     }
-    expect([...types].sort()).toEqual(['approvalResponse', 'deleted', 'message', 'unreadable', 'unsupported'])
+    expect([...types].sort()).toEqual(['approvalResponse', 'deleted', 'formSubmission', 'message', 'unreadable', 'unsupported'])
     const manifest = JSON.parse(out['manifest.json']!) as ExportManifest
-    expect(manifest.conversations.map((c) => c.kind).sort()).toEqual(['dm', 'group', 'private', 'public'])
+    expect([...new Set(manifest.conversations.map((c) => c.kind))].sort()).toEqual(['dm', 'group', 'private', 'public'])
     expect(Object.keys(JSON.parse(files(runExport(MINIMAL))['account.json']!).profile)).toEqual(['fullName'])
   })
 })
@@ -105,6 +105,39 @@ describe('items', () => {
     expect(replyOther).toMatchObject({ inThread: false, isReply: true })
     expect(replyOther).not.toHaveProperty('replyTo')
     expect(byText('Corrigindo: na sexta.')).toMatchObject({ isReply: true, replyTo: replyOther.id })
+  })
+
+  it('a form submission: title, the agent that asked, and each field as text, choice or list of choices', () => {
+    const c5 = JSON.parse(out['conversations/c5.json']!) as ExportConversationFile
+    const manifest = JSON.parse(out['manifest.json']!) as ExportManifest
+    const item = c5.items[0]!
+    expect(Object.keys(item)).toEqual(['type', 'id', 'sentAt', 'title', 'requestedBy', 'fields'])
+    expect(item).toEqual({
+      type: 'formSubmission',
+      id: expect.stringMatching(/^m\d+$/),
+      sentAt: '2026-11-12T09:30:00.000Z',
+      title: 'Pedido de compra',
+      requestedBy: manifest.people.find((p) => p.name === 'Relatórios')!.id,
+      fields: [
+        { label: 'Fornecedor', value: 'Porto Print' },
+        { label: 'Centro de custo', value: 'cc-210', option: 'Marketing' },
+        { label: 'Itens', value: ['a4', 'toner'], option: ['Papel A4', 'Toner'] },
+      ],
+    })
+    if (item.type !== 'formSubmission') throw new Error('not a form submission')
+    expect(item.fields.map((f) => Object.keys(f))).toEqual([['label', 'value'], ['label', 'value', 'option'], ['label', 'value', 'option']])
+  })
+
+  it('a form submission counts in messages, never in gaps', () => {
+    const b = createExportBuilder({ ...MINIMAL.start })
+    const w = b.openConversation({ key: 'k', name: 'n', kind: 'private' })
+    const requestedBy = { key: 'agent', name: 'Agent', kind: 'agent' as const }
+    w.add({ type: 'formSubmission', key: 'f1', sentAt: 1000, title: 'T', requestedBy, fields: [{ label: 'A', value: 'x' }] })
+    w.add({ type: 'formSubmission', key: 'f2', sentAt: 2000, title: 'T', requestedBy, fields: [] })
+    w.close()
+    const manifest = JSON.parse(b.finish('r').find((f) => f.path === 'manifest.json')!.content) as ExportManifest
+    expect(manifest.conversations[0]).toMatchObject({ messages: 2, deleted: 0, attachments: 0, gaps: 0 })
+    expect(manifest.totals).toMatchObject({ messages: 2, gaps: 0 })
   })
 
   it('a deleted marker carries id and send time only', () => {
@@ -194,7 +227,7 @@ describe('counts', () => {
       for (const entry of manifest.conversations) {
         const { items } = JSON.parse(out[entry.file]!) as ExportConversationFile
         const expected = {
-          messages: items.filter((i) => i.type === 'message' || i.type === 'approvalResponse').length,
+          messages: items.filter((i) => i.type === 'message' || i.type === 'approvalResponse' || i.type === 'formSubmission').length,
           deleted: items.filter((i) => i.type === 'deleted').length,
           attachments: items.filter((i) => i.type === 'message' && i.attachment?.file !== undefined).length,
           gaps:

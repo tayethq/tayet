@@ -150,6 +150,23 @@ export const COMPLETE: GoldenInput = {
       input: { key: '!geral:tayet.local', name: 'geral', kind: 'public', joinedAt: at('2026-10-01T08:00:00.000Z') },
       items: [],
     },
+    {
+      input: { key: '!compras:tayet.local', name: 'compras', kind: 'private', joinedAt: at('2026-10-03T10:00:00.000Z') },
+      items: [
+        {
+          type: 'formSubmission',
+          key: ev(40),
+          sentAt: at('2026-11-12T09:30:00.000Z'),
+          title: 'Pedido de compra',
+          requestedBy: RELATORIOS,
+          fields: [
+            { label: 'Fornecedor', value: 'Porto Print' },
+            { label: 'Centro de custo', value: 'cc-210', option: 'Marketing' },
+            { label: 'Itens', value: ['a4', 'toner'], option: ['Papel A4', 'Toner'] },
+          ],
+        },
+      ],
+    },
   ],
 }
 
@@ -178,7 +195,7 @@ export function keysOf(input: GoldenInput): string[] {
         if (item.threadRoot) keys.add(item.threadRoot)
         if (item.replyTo) keys.add(item.replyTo)
       }
-      if (item.type === 'approvalResponse') keys.add(item.requestedBy.key)
+      if (item.type === 'approvalResponse' || item.type === 'formSubmission') keys.add(item.requestedBy.key)
     }
   }
   return [...keys]

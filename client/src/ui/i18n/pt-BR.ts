@@ -196,6 +196,32 @@ export const ptBR = {
     answeredNoOption: '{name} respondeu às {time}',
     closed: 'Pedido encerrado',
   },
+  // ADR-103 (Proposto): o formulário do agente (workspace.md §25.5, §25.8, §26, §27). "Enviando…", "Não
+  // enviado", "Tentar de novo" e "Você" são as chaves de `timeline`; "Fechar" é a de `dialog`. Título,
+  // rótulos, dicas, opções, textos de contexto, erros do agente e o rótulo do envio são do agente.
+  form: {
+    cancel: 'Cancelar',
+    noAnswer: '{agent} não respondeu',
+    upTo: 'Até {n}',
+    // workspace.md §26 item 8 (I5): no rodapé do cartão e sob a mensagem do comando; {name} é "Você" para
+    // a própria pessoa.
+    replied: '{name} respondeu às {time}',
+    // Os códigos de validação do ACL (FormIssue), forks I1 de 17/Nov/2026.
+    issue: {
+      required: 'Campo obrigatório',
+      minLength: 'Use pelo menos {min} caracteres',
+      maxLength: 'Use no máximo {max} caracteres',
+      email: 'Use um email válido',
+      url: 'Use um endereço completo, como https://exemplo.com',
+      number: 'Use um número',
+      integer: 'Use um número inteiro',
+      between: 'Use um valor entre {min} e {max}',
+      atLeast: 'Use um valor de {min} ou mais',
+      atMost: 'Use um valor de até {max}',
+      date: 'Use uma data válida',
+      option: 'Escolha uma das opções',
+    },
+  },
   // ADR-091 (Proposto) dec. 12 (A3-5): o painel fixado de um agente (manifesto workspace.md §17.4, §19.3).
   panel: {
     section: 'Painel de {agent}',
@@ -500,8 +526,9 @@ O QUE ESTÁ AQUI
 
 - Seu perfil, os acessos à sua conta e os agentes que você opera: account.json
 - A lista das suas conversas, com nome, tipo e a data em que você entrou: manifest.json
-- As mensagens que você enviou, na versão final, e suas respostas a pedidos
-  de aprovação: um arquivo por conversa, na pasta conversations
+- As mensagens que você enviou, na versão final, suas respostas a pedidos
+  de aprovação e os formulários que você enviou: um arquivo por conversa,
+  na pasta conversations
 - Os arquivos que você enviou e a sua foto de perfil: pasta attachments
 
 O QUE NÃO ESTÁ AQUI
@@ -536,5 +563,9 @@ Esta cópia serve para leitura e para levar seus dados a outro lugar. Ela não
   dialog: {
     back: 'Voltar',
     close: 'Fechar',
+  },
+  // O primitivo Field (workspace.md §25.8, §26 item 4): depois do rótulo de um campo opcional.
+  field: {
+    optional: '(opcional)',
   },
 } as const satisfies Messages

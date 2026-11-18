@@ -1,5 +1,5 @@
 import type { Brand } from './brand'
-import type { ChannelId, UserId, MessageId, DeviceId, MediaRef } from './ids'
+import type { ChannelId, UserId, MessageId, DeviceId, MediaRef, FormId } from './ids'
 import type { RichDoc } from './rich'
 
 // Domain entities — zero protocol terminology (PLANO-FASE-1 §1.2). Power levels, mxids,
@@ -291,6 +291,79 @@ export interface AgentCommand {
   hint?: string
 }
 
+// A choice of a form field. `value` is what the submission carries back; `label` what the person reads.
+export interface FormOption {
+  value: string
+  label: string
+  description?: string
+}
+
+export interface FormOptionGroup {
+  label: string
+  options: FormOption[]
+}
+
+// A list of choices: flat, or in labelled groups (never both).
+export type FormChoices = { options: FormOption[] } | { groups: FormOptionGroup[] }
+
+// What every input field carries. `optional` false = required.
+interface FormFieldBase {
+  id: string
+  label: string
+  hint?: string
+  optional: boolean
+}
+
+// One field of an agent's form. `context` is read-only text (the same formatted subset as a card's body),
+// with no value. Number values, bounds and initial travel as decimal text.
+export type FormField =
+  | (FormFieldBase & { kind: 'text' | 'longText'; placeholder?: string; minLength: number; maxLength: number; initial?: string })
+  | (FormFieldBase & { kind: 'email' | 'url'; placeholder?: string; initial?: string })
+  | (FormFieldBase & { kind: 'number'; placeholder?: string; decimal: boolean; min?: string; max?: string; initial?: string })
+  | (FormFieldBase & { kind: 'date'; placeholder?: string; initial?: string })
+  | (FormFieldBase & { kind: 'select'; placeholder?: string; choices: FormChoices; initial?: string })
+  | (FormFieldBase & { kind: 'multiSelect'; placeholder?: string; choices: FormChoices; maxSelected?: number; initial?: string[] })
+  | (FormFieldBase & { kind: 'radio'; options: FormOption[]; initial?: string })
+  | (FormFieldBase & { kind: 'checkboxes'; options: FormOption[]; initial?: string[] })
+  | { kind: 'context'; text: string; rich?: RichDoc }
+
+// The values a person submits, by field id: a list only for multiSelect and checkboxes.
+export type FormValues = Record<string, string | string[]>
+
+// Why a value was refused before sending, per field. The bounds travel with their codes.
+export type FormIssue =
+  | { code: 'required' }
+  | { code: 'minLength'; min: number }
+  | { code: 'maxLength'; max: number }
+  | { code: 'email' }
+  | { code: 'url' }
+  | { code: 'number' }
+  | { code: 'range'; min?: string; max?: string }
+  | { code: 'date' }
+  | { code: 'option' }
+
+// The form's state in this session. 'errors' carries the agent's messages per field id.
+export type FormState =
+  | { kind: 'open' }
+  | { kind: 'sending' }
+  | { kind: 'failed' }
+  | { kind: 'noAnswer' }
+  | { kind: 'errors'; errors: Record<string, string> }
+  | { kind: 'done' }
+
+// A form an agent opened for this session: only the session that clicked the card or sent the command
+// gets it. `anchor` is the card or the command message; `agent` the author (P6: always identified).
+export interface AgentForm {
+  id: FormId
+  channelId: ChannelId
+  agent: UserId
+  anchor: MessageId
+  title: string
+  submitLabel: string
+  fields: FormField[]
+  state: FormState
+}
+
 // ADR-066: reply count + when the latest reply was sent. replyCount ≥ 1 whenever present.
 export interface ThreadSummary {
   replyCount: number
@@ -339,6 +412,10 @@ export interface Message {
   // Absent = not a command. Never checked against the agent's manifest: it records the intent, and the
   // manifest may change later.
   command?: { agent: UserId; name: string }
+  // The person who answered a form an agent opened from this message (an approval card, or the person's
+  // own command message): the first accepted submission's author and instant. Absent = no accepted
+  // answer. Updates arrive as message.edited. Never carries the values.
+  formReply?: { by: UserId; at: Timestamp }
   // P6 / ADR-086 dec. 2: a portrait of the author AT THE EVENT — read by the UI only when the author is no
   // longer in the conversation's member map (left, removed). `name` is the explicit display name of the
   // sender's member event at that point (never the SDK's computed name, which falls back to the id — P1);

@@ -30,7 +30,7 @@ edição à mão.
 |---|---|
 | `UPSTREAM.md` | este arquivo (o MAS só carrega `.html`/`.txt`/`.subject`) |
 | `_assets/google-g.svg` | asset oficial do Google, verbatim (abaixo) |
-| `_generated/` | gerado por `infra/mas/prepare.sh`, gitignored: `tokens.html` (cópia de `client/src/ui/tokens/tokens.css`), `google-g.html` (cópia do asset, para o `include`), `fonts/` |
+| `_generated/` | gerado por `infra/mas/prepare.sh`, gitignored: `tokens.html` (cópia de `client/src/ui/tokens/tokens.css`), `google-g.html` (cópia do asset, para o `include`), `icon.html` (`<link rel="icon">` com `client/public/icon.svg` embutido como `data:`), `theme-color.html` (`<meta name="theme-color">` com o `--color-bg` claro de `client/src/ui/tokens/tokens.css`), `fonts/` |
 
 ### `_assets/google-g.svg`
 

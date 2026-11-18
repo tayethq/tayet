@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { createAcl } from '../../src/acl'
-import type { Acl, AclTelemetry, ChannelId, DataExportPart, DomainEvent, MessageId, UserId } from '../../src/acl'
+import type { Acl, AclTelemetry, AgentForm, ChannelId, DataExportPart, DomainEvent, MessageId, UserId } from '../../src/acl'
 import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
 import { readExportManifest } from '@tayet/shared'
-import { HOMESERVER, synapseReachable, whoami, invite, join, setDisplayName } from '../support/synapse'
+import { FORM_BLOCK, FORM_MSGTYPE, FORM_REL_TYPE, FORM_RESULT_BLOCK, FORM_RESULT_MSGTYPE } from '@tayet/shared/internal'
+import { HOMESERVER, synapseReachable, whoami, invite, join, mintToken, setDisplayName } from '../support/synapse'
+import { registerUser } from '../support/escrow-harness'
 import { freshUsers } from '../support/fresh-users'
 import { until } from '../support/until'
 
@@ -11,7 +13,9 @@ import { until } from '../support/until'
 // conversation and a public channel where the person sends, edits, deletes, sends files, answers in
 // threads, replies, mentions and reacts; a third conversation she leaves and a fourth she archives. The
 // export is checked against the format's reader and against what was sent. The walk filtered by the person
-// (H1), the first entry (H2) and both redaction shapes (H5) close here.
+// (H1), the first entry (H2) and both redaction shapes (H5) close here. A form an agent opens in the
+// encrypted conversation, sent twice by the person through the real verb, comes out as two items carrying
+// only the title and the labels the person saw.
 
 const SYNAPSE = synapseReachable()
 const noopTelemetry: AclTelemetry = { untranslated: () => {} }
@@ -215,6 +219,147 @@ describe.skipIf(!SYNAPSE)('exportMyData (integration)', () => {
     }
     for (const path of attachments.keys()) expect(findProtocolLeaksInText(path)).toEqual([])
   }, 900_000)
+
+  // An agent driven raw by fetch, as in the form's own stack test: it never decrypts; it finds the command
+  // and the submissions by the envelope and the relations, which are in clear.
+  async function raw(token: string, roomId: string, content: Record<string, unknown>): Promise<string> {
+    const res = await fetch(`${HOMESERVER}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/exp${Date.now()}_${Math.random()}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(content),
+    })
+    if (!res.ok) throw new Error(`send -> ${res.status}`)
+    return ((await res.json()) as { event_id: string }).event_id
+  }
+  type RawEvent = { event_id: string; sender: string; type: string }
+  async function chunk(token: string, url: string): Promise<RawEvent[]> {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    if (!res.ok) throw new Error(`read -> ${res.status}`)
+    return ((await res.json()) as { chunk: RawEvent[] }).chunk
+  }
+
+  it('a form sent through the verb in an encrypted conversation: one item per send, title, labels, values and the agent; no other text of the form', async () => {
+    const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567'
+    const localpart = `a-expf${Array.from({ length: 8 }, () => BASE32[Math.floor(Math.random() * 32)]).join('')}`
+    registerUser(localpart)
+    const agentToken = await mintToken(localpart)
+    const agentMxid = await whoami(agentToken)
+    await setDisplayName(agentToken, agentMxid, 'Export Agent')
+
+    const conv = await createChannel('private', 'formulario')
+    const roomId = conv.ch as unknown as string
+    await invite(meToken, roomId, agentMxid)
+    await join(agentToken, roomId)
+    await until('agent is in', async () => ((await me.getMembers(conv.ch)).some((m) => (m.user.id as unknown as string) === agentMxid && m.state === 'active') ? true : undefined))
+
+    const commandId = await retrying(() => me.sendMessage(conv.ch, { kind: 'text', text: '/pedido' }, { command: { agent: agentMxid as UserId, name: 'pedido' } }))
+    await until('command sent', () => meEvents.find((e) => e.t === 'message.status' && e.messageId === commandId && e.status === 'sent'))
+    const messagesUrl = `${HOMESERVER}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/messages?dir=b&limit=30`
+    const command = await until('command seen by the agent', async () => (await chunk(agentToken, messagesUrl)).find((e) => e.sender === meMxid && e.type === 'm.room.encrypted'))
+
+    // Every text of the definition except the title and the labels is marked, to be looked for in the files.
+    const definitionId = await raw(agentToken, roomId, {
+      msgtype: FORM_MSGTYPE,
+      body: 'Pedido de compra',
+      [FORM_BLOCK]: {
+        trigger: command.event_id,
+        title: 'Pedido de compra',
+        submitLabel: 'Enviar NOSUBMIT',
+        meta: '{"secret":"NOMETA"}',
+        fields: [
+          { kind: 'context', text: 'Leia antes NOCONTEXT' },
+          { kind: 'text', id: 'supplier', label: 'Fornecedor', hint: 'Quem vende NOHINT', placeholder: 'NOPLACEHOLDER' },
+          {
+            kind: 'select',
+            id: 'centre',
+            label: 'Centro de custo',
+            options: [
+              { value: 'cc-210', label: 'Marketing', description: 'Verba NODESCRIPTION' },
+              { value: 'cc-300', label: 'Vendas NOUNCHOSEN' },
+            ],
+          },
+          { kind: 'multiSelect', id: 'items', label: 'Itens', options: [{ value: 'a4', label: 'Papel A4' }, { value: 'toner', label: 'Toner' }, { value: 'clips', label: 'Clipes NOUNCHOSEN' }] },
+          { kind: 'text', id: 'notes', label: 'Observações NOEMPTY', optional: true },
+        ],
+      },
+      'm.relates_to': { rel_type: FORM_REL_TYPE, event_id: command.event_id },
+    })
+    const form = await until('form opened', () =>
+      meEvents.flatMap((e) => (e.t === 'form.opened' && (e.form.id as unknown as string) === definitionId ? [e.form] : [])).at(0),
+    )
+    const lastState = (): AgentForm['state']['kind'] | undefined =>
+      meEvents.flatMap((e) => ((e.t === 'form.opened' || e.t === 'form.changed') && e.form.id === form.id ? [e.form.state.kind] : [])).at(-1)
+    const relationsUrl = `${HOMESERVER}/_matrix/client/v1/rooms/${encodeURIComponent(roomId)}/relations/${encodeURIComponent(command.event_id)}/${encodeURIComponent(FORM_REL_TYPE)}?dir=f&limit=100`
+    const submissionsSeen = async (): Promise<RawEvent[]> => (await chunk(agentToken, relationsUrl)).filter((e) => e.sender === meMxid)
+
+    // First send: the agent rejects it with a message of its own; the second is accepted.
+    expect(await me.submitForm(form.id, { supplier: 'Porto Print', centre: 'cc-300', items: ['toner'], notes: '' })).toEqual({ ok: true })
+    const [first] = await until('first submission', async () => {
+      const seen = await submissionsSeen()
+      return seen.length === 1 ? seen : undefined
+    })
+    await raw(agentToken, roomId, {
+      msgtype: FORM_RESULT_MSGTYPE,
+      body: 'erro',
+      [FORM_RESULT_BLOCK]: { submission: first!.event_id, errors: { centre: 'Centro fechado NORESULT' } },
+      'm.relates_to': { rel_type: FORM_REL_TYPE, event_id: command.event_id },
+    })
+    await until('errors', () => (lastState() === 'errors' ? true : undefined))
+    expect(await me.submitForm(form.id, { supplier: 'Porto Print', centre: 'cc-210', items: ['a4', 'toner'], notes: '' })).toEqual({ ok: true })
+    const second = await until('second submission', async () => (await submissionsSeen()).find((e) => e.event_id !== first!.event_id))
+    expect(second.type).toBe('m.room.encrypted')
+    await raw(agentToken, roomId, {
+      msgtype: FORM_RESULT_MSGTYPE,
+      body: 'ok',
+      [FORM_RESULT_BLOCK]: { submission: second.event_id, ok: true },
+      'm.relates_to': { rel_type: FORM_REL_TYPE, event_id: command.event_id },
+    })
+    await until('done', () => (lastState() === 'done' ? true : undefined))
+
+    const parts: DataExportPart[] = []
+    for await (const part of me.exportMyData({ readme: 'Export test README.', unnamedAccess: 'Unnamed access' })) parts.push(part)
+    const files = new Map(parts.flatMap((p) => (p.t === 'file' ? [[p.path, p.content] as const] : [])))
+    const manifest = readExportManifest(files.get('manifest.json')!)
+    const entry = manifest.conversations.find((c) => c.name === conv.name)!
+    const agent = manifest.people.find((p) => p.name === 'Export Agent')
+    expect(agent).toMatchObject({ kind: 'agent' })
+    const forms = (JSON.parse(files.get(entry.file)!) as { items: Item[] }).items.filter((i) => i.type === 'formSubmission')
+    expect(forms.map(({ id: _id, sentAt: _sentAt, ...rest }) => rest)).toEqual([
+      {
+        type: 'formSubmission',
+        title: 'Pedido de compra',
+        requestedBy: agent!.id,
+        fields: [
+          { label: 'Fornecedor', value: 'Porto Print' },
+          { label: 'Centro de custo', value: 'cc-300', option: 'Vendas NOUNCHOSEN' },
+          { label: 'Itens', value: ['toner'], option: ['Toner'] },
+        ],
+      },
+      {
+        type: 'formSubmission',
+        title: 'Pedido de compra',
+        requestedBy: agent!.id,
+        fields: [
+          { label: 'Fornecedor', value: 'Porto Print' },
+          { label: 'Centro de custo', value: 'cc-210', option: 'Marketing' },
+          { label: 'Itens', value: ['a4', 'toner'], option: ['Papel A4', 'Toner'] },
+        ],
+      },
+    ])
+    // The command message, the two submissions; no gap.
+    expect(entry).toMatchObject({ messages: 3, gaps: 0 })
+
+    // No other text of the form in any file: hints, descriptions, context, the submit label, the meta, the
+    // agent's answer, the label of a field left empty; the unchosen option only where the person chose it.
+    for (const [path, content] of files) {
+      for (const mark of ['NOSUBMIT', 'NOMETA', 'NOCONTEXT', 'NOHINT', 'NOPLACEHOLDER', 'NODESCRIPTION', 'NORESULT', 'NOEMPTY', 'Clipes']) {
+        expect(content, `${path} ${mark}`).not.toContain(mark)
+      }
+      expect(findProtocolLeaksInText(content)).toEqual([])
+      for (const s of [agentMxid, roomId, definitionId, command.event_id]) expect(content).not.toContain(s)
+    }
+    me.closeForm(form.id)
+  }, 600_000)
 
   it('aborting rejects with the reason and lets the export go', async () => {
     const reason = new Error('cancelled in the test')

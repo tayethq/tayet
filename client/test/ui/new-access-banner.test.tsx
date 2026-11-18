@@ -79,7 +79,8 @@ describe('NewAccessBanner (ADR-018 §3.3, colapsado — PR-S2)', () => {
 // A fake Acl that captures the global subscribe handler so the test can emit an account.newAccess,
 // and spies acknowledgeAccess to prove dismiss calls it with the opaque id.
 function fakeAcl(): { acl: Acl; emit: (e: DomainEvent) => void; acked: AccessId[] } {
-  let handler: ((e: DomainEvent) => void) | undefined
+  // Every global subscriber (useChat, useAgentForm…) — the App subscribes more than once.
+  const handlers = new Set<(e: DomainEvent) => void>()
   const acked: AccessId[] = []
   const noop = async () => {}
   const acl: Acl = {
@@ -102,14 +103,16 @@ function fakeAcl(): { acl: Acl; emit: (e: DomainEvent) => void; acked: AccessId[
     searchMessages: async () => [],
     getMessage: async () => undefined,
     subscribe: (h) => {
-      handler = h
+      handlers.add(h)
       return () => {
-        handler = undefined
+        handlers.delete(h)
       }
     },
     subscribeChannel: () => () => {},
     sendMessage: async () => 'm' as never,
     answerApproval: async () => {},
+    submitForm: async () => ({ ok: true }),
+    closeForm: () => {},
     listPanels: async () => [],
     listCommands: async () => [],
     editMessage: noop,
@@ -153,7 +156,7 @@ createChannel: async () => { throw new Error('membership verb not used in this t
     removeAgent: async () => {},
     signOut: noop,
   }
-  return { acl, emit: (e) => handler?.(e), acked }
+  return { acl, emit: (e) => handlers.forEach((h) => h(e)), acked }
 }
 
 const dev = (id: string, friendlyName: string): Device => ({ id: id as Device['id'], friendlyName, current: false })

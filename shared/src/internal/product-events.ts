@@ -47,3 +47,16 @@ export const CONVERSATION_EVENT = 'io.tayet.conversation'
 
 // ADR-075 addendum: carried (`true`) by the redaction of one's own edit, never by that of the message itself.
 export const EDIT_REDACTION_FIELD = 'io.tayet.edit_redaction'
+
+// An agent's form: three messages of their own type, each with a block of the same name, all related to
+// the anchor (the approval card that was clicked, or the person's own command message) by the relation
+// type below, in clear. The definition (from the agent) names its `trigger` (the answer to the card, or
+// the command message); the submission (from the person) names its `form`; the result (from the agent)
+// names its `submission`. The submission's plain body is the form's title, never a value.
+export const FORM_MSGTYPE = 'io.tayet.form'
+export const FORM_BLOCK = 'io.tayet.form'
+export const FORM_SUBMISSION_MSGTYPE = 'io.tayet.form.submission'
+export const FORM_SUBMISSION_BLOCK = 'io.tayet.form.submission'
+export const FORM_RESULT_MSGTYPE = 'io.tayet.form.result'
+export const FORM_RESULT_BLOCK = 'io.tayet.form.result'
+export const FORM_REL_TYPE = 'io.tayet.form'

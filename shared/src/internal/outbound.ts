@@ -1,11 +1,19 @@
 import { RelationType } from 'matrix-js-sdk'
-import type { ApprovalOption, RichDoc, UserId } from '../domain'
+import type { ApprovalOption, FormField, FormValues, RichDoc, UserId } from '../domain'
 import { richTextContent } from './rich-text'
 import { userIdToRaw } from './protocol-ids'
 import type { MatrixMsgtype } from './msgtype'
 import type { EncryptedFile } from './wire-types'
 import type { CommandEntry } from './commands'
+import type { FormSubmissionLabel } from './forms'
 import {
+  FORM_BLOCK,
+  FORM_MSGTYPE,
+  FORM_REL_TYPE,
+  FORM_RESULT_BLOCK,
+  FORM_RESULT_MSGTYPE,
+  FORM_SUBMISSION_BLOCK,
+  FORM_SUBMISSION_MSGTYPE,
   APPROVAL_BLOCK,
   APPROVAL_MSGTYPE,
   APPROVAL_RESPONSE_BLOCK,
@@ -245,5 +253,68 @@ export function buildCommandsEditContent(edit: { commands: readonly CommandEntry
       [COMMANDS_BLOCK]: cleared ? { cleared: true as const } : { commands: commandsOf(edit.commands) },
     },
     'm.relates_to': { rel_type: RelationType.Replace, event_id: targetEventId },
+  }
+}
+
+// The person's submission of an agent's form: its own type, the form's title as the plain body (never a
+// value), the block naming the definition and carrying the values and the copy of the labels the person
+// saw, and the form relation to the anchor.
+export function buildFormSubmissionContent(
+  anchorEventId: string,
+  formEventId: string,
+  title: string,
+  values: FormValues,
+  labels: readonly FormSubmissionLabel[],
+) {
+  return {
+    msgtype: FORM_SUBMISSION_MSGTYPE,
+    body: title,
+    [FORM_SUBMISSION_BLOCK]: { form: formEventId, values, labels },
+    'm.relates_to': { rel_type: FORM_REL_TYPE, event_id: anchorEventId },
+  }
+}
+
+// One field of a definition as it travels: the domain field with a list's choices lifted to the field
+// (`options` or `groups`), and a context's formatted text as the usual format/formatted body pair.
+export function formFieldWire(field: FormField): Record<string, unknown> {
+  if (field.kind === 'context') {
+    const { body: _body, ...format } = richTextContent(field.text, field.rich)
+    return { kind: 'context', text: field.text, ...format }
+  }
+  if (field.kind === 'select' || field.kind === 'multiSelect') {
+    const { choices, ...rest } = field
+    return { ...rest, ...choices }
+  }
+  return { ...field }
+}
+
+// The agent's definition of a form: its own type, the title as the plain body, the block naming the
+// trigger (the answer to the card, or the command message) and carrying the title, the submit label, the
+// fields and the agent's optional state, and the form relation to the anchor, last.
+export function buildFormDefinitionContent(
+  anchorEventId: string,
+  trigger: string,
+  title: string,
+  submitLabel: string,
+  fields: readonly FormField[],
+  meta?: string,
+) {
+  return {
+    msgtype: FORM_MSGTYPE,
+    body: title,
+    [FORM_BLOCK]: { trigger, title, submitLabel, fields: fields.map(formFieldWire), ...(meta !== undefined && { meta }) },
+    'm.relates_to': { rel_type: FORM_REL_TYPE, event_id: anchorEventId },
+  }
+}
+
+// The agent's result for a submission: its own type, a plain body (the messages, or "ok"), the block
+// naming the submission with `ok: true` or the errors by field id, and the form relation to the anchor.
+export function buildFormResultContent(anchorEventId: string, submissionEventId: string, outcome: { ok: true } | { errors: Record<string, string> }) {
+  const errors = 'errors' in outcome ? outcome.errors : undefined
+  return {
+    msgtype: FORM_RESULT_MSGTYPE,
+    body: errors !== undefined ? Object.values(errors).join('\n') : 'ok',
+    [FORM_RESULT_BLOCK]: errors !== undefined ? { submission: submissionEventId, errors: { ...errors } } : { submission: submissionEventId, ok: true as const },
+    'm.relates_to': { rel_type: FORM_REL_TYPE, event_id: anchorEventId },
   }
 }

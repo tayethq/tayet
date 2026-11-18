@@ -97,6 +97,8 @@ import type {
   ThreadUnread,
   AgentPanel,
   AgentCommand,
+  FormId,
+  FormValues,
 } from '@tayet/shared'
 import { GROUP_MAX_OTHERS } from '@tayet/shared'
 import { threadUnreadOf, latestReplyFromAggregation, type LatestReply } from './thread-unread'
@@ -141,11 +143,13 @@ import { encryptAttachment, type EncryptedFile } from '@tayet/shared/internal/at
 import { decryptAttachmentBytes, disposeDecryptWorker } from './attachment-decrypt'
 import {
   buildApprovalAnswerContent,
+  buildFormSubmissionContent,
   buildAttachmentContent,
   buildEditContent,
   buildReactionContent,
   buildTextContent,
   type AttachmentMedia,
+  type FormSubmissionLabel,
 } from '@tayet/shared/internal'
 import { LocalMediaRegistry } from './local-media'
 import { createEscrowClient, createPeopleClient, type EscrowClient, type PeopleClient } from './escrow-client'
@@ -212,6 +216,7 @@ import {
 import { ApprovalAggregator, PendingAnswers, answerFactOf, answeredCardOf, editFactOf, fetchAnswerPage, fetchEditPage, type PendingAnswer } from './approval-state'
 import { PanelAggregator, fetchPanelPage } from './panel-state'
 import { CommandAggregator, fetchCommandsPage } from './command-state'
+import { FormReplies, FormSession, fetchFormPage, formRelatedOf, realClock, type FormClock, type SubmitOutcome } from './form-state'
 import { isReaderCopy } from './anchored-state'
 import { ensureFoldRules } from './fold-rules'
 import { isAgentColor, normalizeName } from '@tayet/shared/internal'
@@ -372,6 +377,8 @@ function channelKeyOf(e: DomainEvent): string | undefined {
     case 'content.unsupported':
     case 'panels.changed':
     case 'commands.changed':
+    case 'form.opened':
+    case 'form.changed':
       return e.channelId
     case 'channel.changed':
     case 'channel.added':
@@ -648,6 +655,8 @@ export class MatrixGateway {
   private maxUploadBytes: number | undefined
   private mediaConfigFetched = false
 
+  private formClock: FormClock = realClock
+
   private mintMediaRef(mxc: string, encrypted?: EncryptedFile, mimetype?: string): MediaRef {
     const existing = this.mediaByMxc.get(mxc)
     if (existing) return existing
@@ -661,7 +670,8 @@ export class MatrixGateway {
 
   // `internal` is not on the barrel: integration tests that need the index without the idle backfill
   // racing them turn it off (ADR-074 dec. 3).
-  constructor(opts: AclOptions, internal?: { searchBackfill?: boolean }) {
+  constructor(opts: AclOptions, internal?: { searchBackfill?: boolean; formClock?: FormClock }) {
+    this.formClock = internal?.formClock ?? realClock
     this.opts = opts
     this.searchBackfill = internal?.searchBackfill ?? true
   }
@@ -707,6 +717,22 @@ export class MatrixGateway {
     isMember: (roomId, sender) => this.client?.getRoom(roomId)?.getMember(sender)?.membership === 'join',
     nameOf: (roomId, sender) => cleanDisplayName(this.client?.getRoom(roomId)?.getMember(sender)?.rawDisplayName, sender),
     changed: (roomId, commands) => this.emit({ t: 'commands.changed', channelId: brandChannelId(roomId), commands }),
+    detach: (work) => this.detach(work),
+  })
+  // An agent's form: the forms this session may open and the one it has open (form-state.ts).
+  private readonly forms = new FormSession({
+    send: (roomId, anchorId, formId, title, values, labels) => this.sendFormSubmission(roomId, anchorId, formId, title, values, labels),
+    emit: (e) => this.emit(e),
+    clock: {
+      setTimeout: (fn, ms) => this.formClock.setTimeout(fn, ms),
+      clearTimeout: (handle) => this.formClock.clearTimeout(handle),
+    },
+  })
+  // Who answered a form opened from a card or a command message, for every member.
+  private readonly formReplies = new FormReplies({
+    fetchPage: (roomId, anchorId, from) => fetchFormPage(this.require(), roomId, anchorId, from),
+    senderOf: (roomId, eventId) => this.senderOfEvent(roomId, eventId),
+    changed: (roomId, anchorId) => this.emitAnchorChanged(roomId, anchorId),
     detach: (work) => this.detach(work),
   })
   // The anchored readers, one per relation type (ADR-093 dec. 5): the gateway's hooks run over both.
@@ -1705,7 +1731,12 @@ export class MatrixGateway {
       // the UI holds.
       if (event.getType() === EventType.RoomRedaction) return
       // Nor is the echo of our own answer to a card (A3-2): it folds into the card, never a line.
-      if (foldedKind(event) !== undefined) return
+      // Our own form submission reaches the reply rule here: the SDK reconciles the server's echo into the
+      // local one (status null, server id and instant) without a timeline event.
+      if (foldedKind(event) !== undefined) {
+        if (foldedKind(event) === 'form' && event.status === null && hasServerId(event)) this.noteForm(event, room)
+        return
+      }
       const status =
         event.status === EventStatus.SENT || (event.status === null && oldStatus !== EventStatus.SENT)
           ? 'sent'
@@ -2110,6 +2141,8 @@ export class MatrixGateway {
     this.pendingAnswers.clear()
     this.panels.clear()
     this.commands.clear()
+    this.forms.clear()
+    this.formReplies.clear()
     // ADR-074: the backfill stops at its next step; the index's store connection closes with the
     // session (a sign-out wipe follows).
     this.searchBackfillRun += 1
@@ -2289,6 +2322,7 @@ export class MatrixGateway {
       approvalStateFor: room
         ? (realEventId, card) => this.pendingAnswers.overlay(room.roomId, realEventId, this.approvals.stateFor(room.roomId, realEventId, card))
         : undefined,
+      formReplyFor: room ? (realEventId, anchor) => this.formReplies.replyFor(room.roomId, realEventId, anchor) : undefined,
     }
   }
 
@@ -2308,7 +2342,75 @@ export class MatrixGateway {
       if (cardId && fact) this.approvals.noteAnswer(room.roomId, cardId, fact)
     }
     if (kind === 'panel' || kind === 'commands') this.noteAnchored(event, room, kind)
+    if (kind === 'form' && hasServerId(event)) this.noteForm(event, room)
     return true
+  }
+
+  // A live form message: the reply aggregator learns of all three; a definition may open a form for this
+  // session and a result may move it. A readable message of a form type that breaks the rule is
+  // ignored and signalled by its shape only.
+  private noteForm(event: MatrixEvent, room: Room): void {
+    const { related, anchorId, malformed } = formRelatedOf(event)
+    if (malformed && !event.isDecryptionFailure() && !(event.isEncrypted() && event.getClearContent() === null)) {
+      const msgtype = (event.getContent() as Record<string, unknown>).msgtype
+      this.opts.telemetry.untranslated({
+        conceptKind: 'message-content',
+        shape: { eventType: 'm.room.message', ...(typeof msgtype === 'string' && { msgtype }) },
+      })
+    }
+    if (!related || !anchorId) return
+    this.formReplies.noteLive(room.roomId, anchorId, related)
+    if (related.kind === 'definition') {
+      const anchor = room.findEventById(anchorId)
+      this.forms.noteDefinition({
+        id: related.id,
+        roomId: room.roomId,
+        sender: related.sender,
+        anchorId,
+        anchorMessage: anchor ? stableMessageId(anchor) : anchorId,
+        definition: related.definition,
+      })
+    } else if (related.kind === 'result') {
+      this.forms.noteResult({ roomId: room.roomId, sender: related.sender, result: related.result })
+    }
+  }
+
+  // The submission goes by the ordinary message path, encrypted where the room is.
+  private async sendFormSubmission(
+    roomId: string,
+    anchorId: string,
+    formId: string,
+    title: string,
+    values: FormValues,
+    labels: FormSubmissionLabel[],
+  ): Promise<string> {
+    const client = this.require()
+    const content = buildFormSubmissionContent(anchorId, formId, title, values, labels)
+    const res = await client.sendEvent(roomId, EventType.RoomMessage, content as never, client.makeTxnId())
+    return res.event_id
+  }
+
+  // The author of an event: from the room, else from the server.
+  private async senderOfEvent(roomId: string, eventId: string): Promise<string | undefined> {
+    const client = this.client
+    if (!client) return undefined
+    const local = client.getRoom(roomId)?.findEventById(eventId)?.getSender()
+    if (local) return local
+    const raw = await client.http.authedRequest<{ sender?: unknown }>(
+      Method.Get,
+      `/rooms/${encodeURIComponent(roomId)}/event/${encodeURIComponent(eventId)}`,
+    )
+    return typeof raw.sender === 'string' ? raw.sender : undefined
+  }
+
+  // A form reply on an anchor moved: re-translate it and emit it in place.
+  private emitAnchorChanged(roomId: string, anchorId: string): void {
+    const room = this.client?.getRoom(roomId)
+    if (!room) return
+    const anchor = room.findEventById(anchorId) ?? this.approvalCards.get(anchorId) ?? this.readTargets.get(anchorId)
+    if (!anchor) return
+    const msg = eventToMessage(anchor, this.ctx(room))
+    if (msg) this.emit({ t: 'message.edited', channelId: msg.channelId, message: msg })
   }
 
   // A3-5, on the live stream before the decrypt deferral: an edit of a panel (A4-1: or manifest) that arrives
@@ -4173,22 +4275,35 @@ export class MatrixGateway {
       // ADR-093: the command rides as the encrypted marker and implies the mention of its agent (the
       // builder adds the agent to m.mentions once).
       const command = opts?.command
+      // A command message may open a form for this session: its id joins the session's triggers.
+      const settleTrigger = command ? this.forms.beginOwnSend() : undefined
       let sent: { event_id: string }
-      if (threadRootId) {
-        const content = buildTextContent(body.text, body.rich, mentions, { thread: threadRootId }, command)
-        sent = await client.sendMessage(roomId, threadRootId, content as never, txnId)
-      } else if (replyTargetId) {
-        // Reply envelope (PLANO-FASE-1-REPLY §0.4 — the deliberate extension of the manual relation
-        // builder, THREADS §9 option (b)): EXACTLY { 'm.in_reply_to': { event_id } }, built by the
-        // builder. No threadId is passed, so the SDK's addThreadRelationIfNeeded stays a no-op
-        // (verified on 41.6.0: it only acts when a threadId is given). The envelope assert (§5.3)
-        // proves all of this fail-closed.
-        const content = buildTextContent(body.text, body.rich, mentions, { replyTo: replyTargetId }, command)
-        sent = await client.sendMessage(roomId, content as never, txnId)
-      } else if (body.rich || mentions?.length || command) {
-        sent = await client.sendMessage(roomId, buildTextContent(body.text, body.rich, mentions, undefined, command) as never, txnId)
-      } else {
-        sent = await client.sendTextMessage(roomId, body.text, txnId)
+      try {
+        if (threadRootId) {
+          const content = buildTextContent(body.text, body.rich, mentions, { thread: threadRootId }, command)
+          sent = await client.sendMessage(roomId, threadRootId, content as never, txnId)
+        } else if (replyTargetId) {
+          // Reply envelope (PLANO-FASE-1-REPLY §0.4 — the deliberate extension of the manual relation
+          // builder, THREADS §9 option (b)): EXACTLY { 'm.in_reply_to': { event_id } }, built by the
+          // builder. No threadId is passed, so the SDK's addThreadRelationIfNeeded stays a no-op
+          // (verified on 41.6.0: it only acts when a threadId is given). The envelope assert (§5.3)
+          // proves all of this fail-closed.
+          const content = buildTextContent(body.text, body.rich, mentions, { replyTo: replyTargetId }, command)
+          sent = await client.sendMessage(roomId, content as never, txnId)
+        } else if (body.rich || mentions?.length || command) {
+          sent = await client.sendMessage(roomId, buildTextContent(body.text, body.rich, mentions, undefined, command) as never, txnId)
+        } else {
+          sent = await client.sendTextMessage(roomId, body.text, txnId)
+        }
+      } catch (err) {
+        settleTrigger?.()
+        throw err
+      }
+      if (command) {
+        const agent = userIdToRaw(command.agent)
+        settleTrigger?.({ id: sent.event_id, roomId, anchorId: sent.event_id, agent })
+        // Its reply is re-emitted on the message in place as soon as an accepted result arrives.
+        this.formReplies.watch(roomId, sent.event_id, { agent, kind: 'command', sender: client.getUserId() ?? '' })
       }
       this.readOwnSend(room, sent.event_id)
       return brandMessageId(txnId)
@@ -4408,11 +4523,14 @@ export class MatrixGateway {
 
     const pending: PendingAnswer = { option, status: 'sending' }
     const txnId = client.makeTxnId()
+    const cardAuthor = (room.findEventById(cardId) ?? this.approvalCards.get(cardId) ?? this.readTargets.get(cardId))?.getSender()
+    const settleTrigger = this.forms.beginOwnSend()
     this.pendingAnswers.set(roomId, cardId, pending)
     this.emitApprovalCard(roomId, cardId)
     const work = (async (): Promise<void> => {
       try {
         const res = await client.sendEvent(roomId, EventType.RoomMessage, buildApprovalAnswerContent(cardId, option, chosen.label) as never, txnId)
+        settleTrigger(cardAuthor ? { id: res.event_id, roomId, anchorId: cardId, agent: cardAuthor } : undefined)
         if (this.client !== client) return
         // Sent: 'sending' until the aggregator resolves the card (the overlay drops it then).
         this.pendingAnswers.update(roomId, cardId, pending, { status: 'sent', work: undefined })
@@ -4425,6 +4543,7 @@ export class MatrixGateway {
         })
         this.emitApprovalCard(roomId, cardId)
       } catch (err) {
+        settleTrigger()
         if (this.client !== client) throw err
         // The SDK keeps a failed echo queued; the retry is a new send, so the old one goes.
         const echo = room
@@ -4444,6 +4563,17 @@ export class MatrixGateway {
     })()
     if (pending.status === 'sending') pending.work = work
     return work
+  }
+
+  // ── Inbound: an agent's form ───────────────────────────────────────────────────────────
+  // Checked before any effect: values with issues come back by field and nothing is sent.
+  submitForm(formId: FormId, values: FormValues): Promise<SubmitOutcome> {
+    this.require()
+    return this.forms.submit(formId, values)
+  }
+
+  closeForm(formId: FormId): void {
+    this.forms.close(formId)
   }
 
   // The card a MessageId names, translated as this session shows it (the pending answer folded in): from

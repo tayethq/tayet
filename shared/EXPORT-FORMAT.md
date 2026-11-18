@@ -66,7 +66,7 @@ attachments/
 | `conversations[].name` | string | yes | The conversation's name as the person saw it. |
 | `conversations[].kind` | string | yes | `"public"` or `"private"` (channels), `"dm"` (direct conversation), `"group"` (group conversation). |
 | `conversations[].joinedAt` | instant | no | When the person first joined the conversation, when known. |
-| `conversations[].messages` | integer | yes | Items of type `message` and `approvalResponse`. |
+| `conversations[].messages` | integer | yes | Items of type `message`, `approvalResponse` and `formSubmission`. |
 | `conversations[].deleted` | integer | yes | Items of type `deleted`. |
 | `conversations[].attachments` | integer | yes | Attachments included as files. |
 | `conversations[].gaps` | integer | yes | Items of type `unreadable` plus attachments marked `missing`. |
@@ -133,12 +133,13 @@ When a thread was started, or a replied-to message was written, by someone else,
 ### `deleted`
 
 A message the person deleted. Only `type`, `id` and `sentAt`: no content and no attachment. It shows that
-there was a message there. An answer to an approval request that the person deleted appears the same way:
-once deleted, the device cannot tell it from a message.
+there was a message there. An answer to an approval request or a form the person sent, once deleted, appears
+the same way: the device cannot tell it from a message.
 
 ### `unreadable`
 
-A message the device that made the export could not read. Only `type`, `id` and `sentAt`. Counts as a gap.
+A message, an answer or a sent form that the device that made the export could not read in full. Only `type`,
+`id` and `sentAt`. Counts as a gap.
 
 ### `unsupported`
 
@@ -154,6 +155,23 @@ The person's answer to an approval request an agent made.
 | `requestedBy` | person id | yes | The agent that asked. |
 
 The text of the request is not included: it is a message from someone else.
+
+### `formSubmission`
+
+A form the person filled in and sent, at an agent's request. Each time the person sent the form is one
+item, whether or not the agent accepted it.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `title` | string | yes | The form's title. |
+| `requestedBy` | person id | yes | The agent that opened the form. |
+| `fields` | array | yes | The fields the person filled in, in the form's order. A field left empty is not listed. |
+| `fields[].label` | string | yes | The field's label, as the person saw it. |
+| `fields[].value` | string or array of strings | yes | What the person sent. An array for a field that takes several choices. A number has a dot as the decimal mark; a date is `YYYY-MM-DD`. For a choice, it is the value the agent gave the option. |
+| `fields[].option` | string or array of strings | no | Only for a choice: the label of each option chosen, in the order of `value`. |
+
+The rest of the form is not included: hints, option descriptions, explanatory text and the agent's answer
+are messages from someone else.
 
 ### Rich text
 
@@ -184,7 +202,7 @@ not a known one).
 
 ## Gaps
 
-A gap is something the export should hold and does not: a message the device could not read (an
+A gap is something the export should hold and does not: an item the device could not read in full (an
 `unreadable` item) or an attachment that could not be obtained (`missing: true`). Gaps are never dropped
 silently: each one is an item or a mark in its conversation file and is counted in the manifest, per
 conversation and in the totals.
@@ -193,6 +211,7 @@ conversation and in the totals.
 
 - Messages from other people, including the ones that mention the person.
 - Messages written by the agents the person operates.
+- The text of an agent's form, other than its title and the labels of what the person filled in.
 - Reactions. They are left out of this version.
 - Conversations the person has left.
 - The network address of each access to the account.
@@ -200,8 +219,8 @@ conversation and in the totals.
 
 ## Versions
 
-`formatVersion` is `1`. A new optional field does not change the version; a change that would break an
-existing reader increments it. A reader must ignore fields it does not know, and should refuse a
+`formatVersion` is `1`. A new optional field or a new item type does not change the version; a change that would break an
+existing reader increments it. A reader must ignore fields it does not know, must skip an item whose `type` it does not know, and should refuse a
 `formatVersion` higher than the one it knows.
 
 ## Example
@@ -217,6 +236,7 @@ conversations/
   c2.json
   c3.json
   c4.json
+  c5.json
 attachments/
   account/
     avatar.webp
@@ -315,11 +335,22 @@ Ela traz o que você enviou: mensagens, arquivos e respostas a pedidos de aprova
       "deleted": 0,
       "attachments": 0,
       "gaps": 0
+    },
+    {
+      "id": "c5",
+      "file": "conversations/c5.json",
+      "name": "compras",
+      "kind": "private",
+      "joinedAt": "2026-10-03T10:00:00.000Z",
+      "messages": 1,
+      "deleted": 0,
+      "attachments": 0,
+      "gaps": 0
     }
   ],
   "totals": {
-    "conversations": 4,
-    "messages": 13,
+    "conversations": 5,
+    "messages": 14,
     "deleted": 1,
     "attachments": 2,
     "gaps": 2
@@ -596,5 +627,45 @@ Ela traz o que você enviou: mensagens, arquivos e respostas a pedidos de aprova
   "formatVersion": 1,
   "conversation": "c4",
   "items": []
+}
+```
+
+### `conversations/c5.json`
+
+```json
+{
+  "formatVersion": 1,
+  "conversation": "c5",
+  "items": [
+    {
+      "type": "formSubmission",
+      "id": "m17",
+      "sentAt": "2026-11-12T09:30:00.000Z",
+      "title": "Pedido de compra",
+      "requestedBy": "p4",
+      "fields": [
+        {
+          "label": "Fornecedor",
+          "value": "Porto Print"
+        },
+        {
+          "label": "Centro de custo",
+          "value": "cc-210",
+          "option": "Marketing"
+        },
+        {
+          "label": "Itens",
+          "value": [
+            "a4",
+            "toner"
+          ],
+          "option": [
+            "Papel A4",
+            "Toner"
+          ]
+        }
+      ]
+    }
+  ]
 }
 ```

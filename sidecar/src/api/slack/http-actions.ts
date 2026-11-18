@@ -81,6 +81,57 @@ export const formBody = (payload: Record<string, unknown>): string => new URLSea
 
 type Attempt = { ok: true; status: number } | { ok: false; reason: RetryReason }
 
+// The answer to one POST of a form's submission: the status line and the body as text (up to `bodyMax` bytes;
+// a longer body reads as a refused one), a refused connection, or no answer in time.
+export type PostAnswer = { kind: 'answer'; status: number; body: string } | { kind: 'refused' } | { kind: 'timeout' }
+
+// One signed POST of a payload, as a click is sent, but on its own: no retry, no queue, and the body of the answer
+// is read. The payload has passed the Slack edge (the caller's).
+export function postOnce(opts: { url: string; secret: string; clock?: SocketClock; timeoutMs: number; bodyMax: number }, payload: Record<string, unknown>): Promise<PostAnswer> {
+  const clock = opts.clock ?? SYSTEM_CLOCK
+  const body = formBody(payload)
+  return new Promise((resolve) => {
+    const timestamp = Math.floor(clock.now() / 1000)
+    let settled = false
+    const req = request(opts.url, {
+      method: 'POST',
+      agent: false,
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'content-length': String(Buffer.byteLength(body)),
+        'user-agent': USER_AGENT,
+        'x-slack-request-timestamp': String(timestamp),
+        'x-slack-signature': slackSignature(opts.secret, timestamp, body),
+      },
+    })
+    const settle = (a: PostAnswer): void => {
+      if (settled) return
+      settled = true
+      clock.clearTimeout(handle)
+      resolve(a)
+    }
+    const handle = clock.setTimeout(() => {
+      settle({ kind: 'timeout' })
+      req.destroy()
+    }, opts.timeoutMs)
+    req.on('response', (res) => {
+      const chunks: Buffer[] = []
+      let size = 0
+      res.on('data', (c: Buffer) => {
+        size += c.length
+        if (size > opts.bodyMax) {
+          settle({ kind: 'refused' })
+          req.destroy()
+        } else chunks.push(c)
+      })
+      res.on('end', () => settle({ kind: 'answer', status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }))
+      res.on('error', () => settle({ kind: 'refused' }))
+    })
+    req.on('error', () => settle({ kind: 'refused' }))
+    req.end(body)
+  })
+}
+
 export function createHttpActions(opts: HttpActionsOptions): HttpActions {
   const { log, url, secret } = opts
   const clock = opts.clock ?? SYSTEM_CLOCK

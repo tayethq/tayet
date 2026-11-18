@@ -23,6 +23,7 @@ import {
   APPROVAL,
   PANEL,
   COMMANDS,
+  FORMS,
 } from '../e2e/support/labels'
 import { APP_NAME, GLYPH } from '../src/ui/i18n'
 
@@ -206,6 +207,23 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
     expect(COMMANDS.placeholderFor('Ana')).toBe(fill(copy.composer.commandFor, { agent: 'Ana' }))
     expect(COMMANDS.placeholderHintFor('semana', 'Ana')).toBe(fill(copy.composer.commandHintFor, { hint: 'semana', agent: 'Ana' }))
     expect(COMMANDS.lineFor('Ana')).toBe(fill(copy.timeline.commandFor, { agent: 'Ana' }))
+    expect(FORMS.noAnswer('Ana')).toBe(fill(copy.form.noAnswer, { agent: 'Ana' }))
+    expect(FORMS.upTo(2)).toBe(fill(copy.form.upTo, { n: 2 }))
+    expect(FORMS.replied('Ana', '09:05')).toBe(fill(copy.form.replied, { name: 'Ana', time: '09:05' }))
+    expect(FORMS.minLength(3)).toBe(fill(copy.form.issue.minLength, { min: 3 }))
+    expect(FORMS.between('1', '9')).toBe(fill(copy.form.issue.between, { min: '1', max: '9' }))
+    const { noAnswer: _n, upTo: _u, replied: _r, minLength: _m, between: _b, ...forms } = FORMS
+    expect(forms).toEqual({
+      cancel: copy.form.cancel,
+      close: copy.dialog.close,
+      optional: copy.field.optional,
+      failed: copy.timeline.failed,
+      retry: copy.timeline.retry,
+      sending: copy.timeline.sending,
+      you: copy.timeline.you,
+      required: copy.form.issue.required,
+      integer: copy.form.issue.integer,
+    })
     expect(PLACEHOLDER_TEXTS).toEqual([copy.timeline.awaited, copy.timeline.unavailable])
     expect(THREAD).toEqual({ panel: copy.thread.title, replies: copy.thread.replies, close: copy.thread.close })
     expect(COMPOSER.placeholderFor('x')).toBe(fill(copy.composer.placeholderFor, { name: 'x' }))

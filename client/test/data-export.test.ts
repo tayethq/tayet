@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
 import { readExportManifest, type Channel, type MediaRef, type Message } from '@tayet/shared'
-import { APPROVAL_RESPONSE_MSGTYPE, EDIT_REDACTION_FIELD, RESPONSE_REL_TYPE } from '@tayet/shared/internal'
+import {
+  APPROVAL_RESPONSE_MSGTYPE,
+  EDIT_REDACTION_FIELD,
+  FORM_REL_TYPE,
+  FORM_RESULT_BLOCK,
+  FORM_RESULT_MSGTYPE,
+  FORM_SUBMISSION_BLOCK,
+  RESPONSE_REL_TYPE,
+  buildFormSubmissionContent,
+  type FormSubmissionLabel,
+} from '@tayet/shared/internal'
 import {
   EXPORT_ATTACHMENT_ATTEMPTS,
   EXPORT_KEY_WAIT_PER_CONVERSATION_MS,
@@ -16,7 +26,7 @@ import {
 import type { DataExportPart } from '../src/acl'
 
 // ADR-096, PLANO-EXPORT-DADOS §0.3.3 and §0.3.5: the export engine over fake ports — the walk, the
-// classification of the raw events (deleted markers, edits, answers to cards), the wait for keys, the
+// classification of the raw events (deleted markers, edits, answers to cards, form submissions), the wait for keys, the
 // attachments, the failure window, cancellation and the order of the parts. The ids below are shaped like
 // protocol ids on purpose: none of them may reach a path or a file.
 
@@ -69,6 +79,33 @@ function member(sentAt: number, membership: string, stateKey = ME): Ev {
 function answer(sentAt: number, card: string, label: string): Ev {
   const content = { msgtype: APPROVAL_RESPONSE_MSGTYPE, body: label, 'm.relates_to': { rel_type: RESPONSE_REL_TYPE, event_id: card } }
   return { id: nextId(), type: 'm.room.encrypted', sentAt, redacted: false, wire: pickRel(content), content, folded: 'response' }
+}
+
+const PURCHASE_LABELS: FormSubmissionLabel[] = [
+  { id: 'supplier', label: 'Supplier' },
+  { id: 'centre', label: 'Cost centre', options: [{ value: 'cc-210', label: 'Marketing' }] },
+  { id: 'items', label: 'Items', options: [{ value: 'a4', label: 'A4 paper' }, { value: 'toner', label: 'Toner' }] },
+]
+const PURCHASE_VALUES = { supplier: 'Porto Print', centre: 'cc-210', items: ['a4', 'toner'] }
+
+// The person's submission of a form, as the client writes it; `labels: null` = one sent before the copy.
+function submission(
+  sentAt: number,
+  form: string,
+  o: { values?: Record<string, string | string[]>; labels?: FormSubmissionLabel[] | null; title?: string } = {},
+): Ev {
+  const content = buildFormSubmissionContent('$anchor:test.example', form, o.title ?? 'Purchase order', o.values ?? PURCHASE_VALUES, o.labels ?? PURCHASE_LABELS) as Record<string, unknown>
+  if (o.labels === null) {
+    const { labels: _labels, ...block } = content[FORM_SUBMISSION_BLOCK] as Record<string, unknown>
+    content[FORM_SUBMISSION_BLOCK] = block
+  }
+  return { id: nextId(), type: 'm.room.encrypted', sentAt, redacted: false, wire: pickRel(content), content, folded: 'form' }
+}
+
+// Another form event of the person's: a result, which never enters the export.
+function formResult(sentAt: number, sub: string): Ev {
+  const content = { msgtype: FORM_RESULT_MSGTYPE, body: 'ok', [FORM_RESULT_BLOCK]: { submission: sub, ok: true }, 'm.relates_to': { rel_type: FORM_REL_TYPE, event_id: '$anchor:test.example' } }
+  return { id: nextId(), type: 'm.room.encrypted', sentAt, redacted: false, wire: pickRel(content), content, folded: 'form' }
 }
 
 function unread(ev: Ev, arrival: 'awaited' | 'stalled' = 'awaited'): Ev {
@@ -394,6 +431,95 @@ describe('data export engine — answers to approval requests (§0.3.5 items 2 a
   it('a deleted answer is a deleted marker (C1): the device cannot tell it from a message', async () => {
     const parts = await collect(harness({ conversations: one([gone(100)]) }).ports)
     expect(items(parts)).toEqual([expect.objectContaining({ type: 'deleted' })])
+  })
+})
+
+describe('data export engine — form submissions', () => {
+  const FORM = '$form:test.example'
+
+  it('read: title, the agent that opened the form, and each field as text, choice or list of choices', async () => {
+    const parts = await collect(harness({ conversations: one([submission(100, FORM)]), cards: { [FORM]: AGENT } }).ports)
+    const agent = manifestOf(parts).people.find((p) => p.name === 'Helper')!
+    expect(items(parts)).toEqual([
+      {
+        type: 'formSubmission',
+        id: 'm1',
+        sentAt: new Date(100).toISOString(),
+        title: 'Purchase order',
+        requestedBy: agent.id,
+        fields: [
+          { label: 'Supplier', value: 'Porto Print' },
+          { label: 'Cost centre', value: 'cc-210', option: 'Marketing' },
+          { label: 'Items', value: ['a4', 'toner'], option: ['A4 paper', 'Toner'] },
+        ],
+      },
+    ])
+  })
+
+  it('an optional field left empty is not in the submission, so not in the item', async () => {
+    const values = { supplier: 'Porto Print', centre: 'cc-210' }
+    const labels = PURCHASE_LABELS.slice(0, 2)
+    const parts = await collect(harness({ conversations: one([submission(100, FORM, { values, labels })]), cards: { [FORM]: AGENT } }).ports)
+    expect((items(parts)[0]!.fields as Array<{ label: string }>).map((f) => f.label)).toEqual(['Supplier', 'Cost centre'])
+  })
+
+  it('two submissions of the same form are two items; the form’s author is read once', async () => {
+    const second = { values: { ...PURCHASE_VALUES, supplier: 'Gráfica Sul' } }
+    const h = harness({ conversations: one([submission(100, FORM), submission(200, FORM, second)]), cards: { [FORM]: AGENT } })
+    const parts = await collect(h.ports)
+    expect(items(parts).map((i) => [i.type, (i.fields as Array<{ value: unknown }>)[0]!.value])).toEqual([
+      ['formSubmission', 'Porto Print'],
+      ['formSubmission', 'Gráfica Sul'],
+    ])
+    expect(h.cardCalls).toEqual([FORM])
+  })
+
+  it('a submission without the copy of the labels is unreadable and counts as a gap', async () => {
+    const parts = await collect(harness({ conversations: one([submission(100, FORM, { labels: null })]), cards: { [FORM]: AGENT } }).ports)
+    expect(items(parts)).toEqual([expect.objectContaining({ type: 'unreadable' })])
+    expect(manifestOf(parts).totals).toMatchObject({ messages: 0, gaps: 1 })
+  })
+
+  it('a copy of the labels that breaks a rule, or an empty title, is unreadable', async () => {
+    const wrong = [PURCHASE_LABELS[0]!, { id: 'centre', label: 'Cost centre', options: [{ value: 'cc-999', label: 'Other' }] }, PURCHASE_LABELS[2]!]
+    const parts = await collect(harness({ conversations: one([submission(100, FORM, { labels: wrong }), submission(200, FORM, { title: '' })]), cards: { [FORM]: AGENT } }).ports)
+    expect(items(parts).map((i) => i.type)).toEqual(['unreadable', 'unreadable'])
+  })
+
+  it('a submission that does not decrypt is unreadable and counts as a gap', async () => {
+    const parts = await collect(harness({ conversations: one([unread(submission(100, FORM), 'stalled')]), cards: { [FORM]: AGENT } }).ports)
+    expect(items(parts)).toEqual([expect.objectContaining({ type: 'unreadable' })])
+    expect(manifestOf(parts).totals.gaps).toBe(1)
+  })
+
+  it('a submission whose key arrives within the wait is read', async () => {
+    const ev = unread(submission(100, FORM))
+    const h = harness({ conversations: one([ev]), cards: { [FORM]: AGENT }, onSleep: (now) => now >= 1_000 && arrive(ev) })
+    expect(items(await collect(h.ports))).toEqual([expect.objectContaining({ type: 'formSubmission' })])
+  })
+
+  it('a deleted submission is a deleted marker', async () => {
+    const parts = await collect(harness({ conversations: one([{ ...gone(100), folded: 'form' }]) }).ports)
+    expect(items(parts)).toEqual([expect.objectContaining({ type: 'deleted' })])
+  })
+
+  it('a form whose author cannot be read, or has no name in the conversation, makes the submission unreadable', async () => {
+    expect(items(await collect(harness({ conversations: one([submission(100, FORM)]), cards: {} }).ports))).toEqual([expect.objectContaining({ type: 'unreadable' })])
+    const nameless = harness({ conversations: one([submission(100, FORM)]), cards: { [FORM]: AGENT }, names: {} })
+    expect(items(await collect(nameless.ports))).toEqual([expect.objectContaining({ type: 'unreadable' })])
+  })
+
+  it('another form event of the person is no item; one that decrypts into it is dropped after the wait', async () => {
+    const hidden = unread(formResult(300, '$s:test.example'))
+    const h = harness({ conversations: one([submission(100, FORM), formResult(200, '$s:test.example'), hidden]), cards: { [FORM]: AGENT }, onSleep: () => arrive(hidden) })
+    const parts = await collect(h.ports)
+    expect(items(parts).map((i) => i.type)).toEqual(['formSubmission'])
+  })
+
+  it('counts in messages, beside messages and answers', async () => {
+    const parts = await collect(harness({ conversations: one([text(50, 'hi'), answer(60, '$card:test.example', 'Approve'), submission(100, FORM)]), cards: { [FORM]: AGENT, '$card:test.example': AGENT } }).ports)
+    expect(manifestOf(parts).conversations[0]).toMatchObject({ messages: 3, gaps: 0 })
+    expect(manifestOf(parts).totals.messages).toBe(3)
   })
 })
 
@@ -723,6 +849,7 @@ describe('data export engine — the account and the output (§0.3.5 items 1, 6 
   it('leak-scan: no protocol shape and no input key in any path or file', async () => {
     const root = text(100, 'root text')
     const card = '$card:test.example'
+    const form = '$form:test.example'
     const conversations: Conv[] = [
       {
         key: '!leak:test.example',
@@ -736,12 +863,14 @@ describe('data export engine — the account and the output (§0.3.5 items 1, 6 
           gone(140),
           unread(text(150, 'no'), 'stalled'),
           answer(160, card, 'Approve'),
+          submission(170, form),
         ],
       },
     ]
     const account = { ...baseAccount(), profile: { ...baseAccount().profile, avatar: 'ref-avatar' as MediaRef } }
-    const parts = await collect(harness({ conversations, cards: { [card]: AGENT }, account }).ports)
-    const keys = [ME, OTHER, AGENT, card, '!leak:test.example', ...conversations[0]!.events.map((e) => e.id)]
+    const parts = await collect(harness({ conversations, cards: { [card]: AGENT, [form]: AGENT }, account }).ports)
+    expect(items(parts).some((i) => i.type === 'formSubmission')).toBe(true)
+    const keys = [ME, OTHER, AGENT, card, form, '$anchor:test.example', '!leak:test.example', ...conversations[0]!.events.map((e) => e.id)]
     for (const p of parts) {
       if (p.t !== 'file' && p.t !== 'attachment') continue
       expect(findProtocolLeaksInText(p.path)).toEqual([])

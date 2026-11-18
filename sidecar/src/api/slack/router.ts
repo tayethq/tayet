@@ -37,6 +37,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import type { ApprovalFacade } from '../../core/approvals'
+import type { FormFacade } from '../../core/forms'
 import { ReadError, type ReadFacade } from '../../core/read'
 import { WriteError, type WriteFacade } from '../../core/write'
 import type { BusEntry, EventBus, Opened } from '../bus'
@@ -51,11 +52,13 @@ import { SOCKET_PATH, SocketTickets } from './connections'
 import { boundaryOf } from './multipart'
 import { createSlackEvents } from './events'
 import { dispatchCommand, replyArgsOf, type ResponseVia } from './commands'
-import { createHttpActions, type HttpActions } from './http-actions'
+import { createHttpActions, postOnce, type HttpActions } from './http-actions'
 import { blockActionsOf, dispatchAnswered } from './interactive'
 import { ResponseTickets, type CommandTarget } from './response'
 import { createSocketHub, type SocketOptions } from './socket'
 import { MULTIPART_OVERHEAD, UploadStaging } from './staging'
+import { TriggerTable } from './triggers'
+import { createViews, SUBMISSION_TIMEOUT_MS, SUBMISSION_TIMING, type Views } from './views'
 
 type Log = (line: Record<string, unknown>) => void
 
@@ -90,6 +93,9 @@ export interface SlackLayerOptions {
   // The clicks over HTTP (`--slack-actions-url`; slack/http-actions.ts): the destination and the signing secret
   // (the local token). Absent → the clicks go to the sockets, as before.
   actions?: { url: string; secret: string; redeliveryMs?: number }
+  // An agent's forms (core/forms.ts): `views.open` and the submissions as `view_submission` (slack/views.ts).
+  // Absent → `views.open` is `unknown_method`.
+  forms?: FormFacade
 }
 
 // What a method sees: the facades, the agent (cached), and the edge helpers.
@@ -348,6 +354,7 @@ export function createSlackLayer(opts: SlackLayerOptions, families: readonly Sla
   const tickets = new SocketTickets(now)
   const cards = new SlackCards(opts.cardsFile, log)
   const responses = new ResponseTickets(now)
+  const triggers = new TriggerTable(now)
   // The Slack bus consumer (A3-4): open while a socket is (slack/socket.ts hooks) — or, with the clicks over
   // HTTP, from the start for as long as the layer lives.
   let consumer: Opened | null = null
@@ -393,6 +400,28 @@ export function createSlackLayer(opts: SlackLayerOptions, families: readonly Sla
     return value
   }
   const approvals = opts.approvals
+  const actionsTarget = opts.actions
+  const views: Views | null =
+    opts.forms !== undefined
+      ? createViews({
+          forms: opts.forms,
+          read: opts.read,
+          log,
+          triggers,
+          tickets: responses,
+          baseUrl: opts.baseUrl,
+          now,
+          ctx: () => ctxOf(undefined),
+          broadcast: (payload) => hub.broadcast('interactive', payload, SUBMISSION_TIMING),
+          ...(actionsTarget !== undefined && {
+            post: (payload: Record<string, unknown>) => postOnce({ url: actionsTarget.url, secret: actionsTarget.secret, ...(opts.socket?.clock !== undefined && { clock: opts.socket.clock }), timeoutMs: SUBMISSION_TIMEOUT_MS, bodyMax: SLACK_BODY_MAX }, payload),
+          }),
+        })
+      : null
+  if (views !== null) {
+    methods['views.open'] = views.open
+    opts.forms?.listen(views.submitted)
+  }
   // A `/` command's response (A4-3, §0.3.25 item 6): an ordinary reply in the command's thread, by the
   // chat.postMessage method itself (the same path and preflight); nothing to write → nothing written.
   const replyToCommand = async (target: CommandTarget, body: Record<string, unknown>, via: ResponseVia): Promise<boolean> => {
@@ -415,6 +444,7 @@ export function createSlackLayer(opts: SlackLayerOptions, families: readonly Sla
         read: opts.read,
         log,
         tickets: responses,
+        triggers,
         baseUrl: opts.baseUrl,
         native,
         broadcast: (type, payload) => hub.broadcast(type, payload),
@@ -422,7 +452,7 @@ export function createSlackLayer(opts: SlackLayerOptions, families: readonly Sla
       }),
     ...(approvals !== undefined && {
       answered: (e, agent, bot, view) => {
-        const interactive = { read: opts.read, log, cards, tickets: responses, baseUrl: opts.baseUrl, native }
+        const interactive = { read: opts.read, log, cards, tickets: responses, triggers, baseUrl: opts.baseUrl, native }
         if (httpActions === null) return dispatchAnswered(e, agent, bot, view, { ...interactive, broadcast: (type, payload) => hub.broadcast(type, payload) })
         return httpActions.deliver({
           build: async () => (await blockActionsOf(e, agent, bot, view, interactive)) as unknown as Record<string, unknown>,
@@ -456,6 +486,10 @@ export function createSlackLayer(opts: SlackLayerOptions, families: readonly Sla
     events.stop()
     httpActions?.stop()
     responses.clear()
+    if (views !== null) {
+      opts.forms?.listen(undefined)
+      views.clear()
+    }
   }
 
   const ctxOf = (req: IncomingMessage | undefined): SlackCtx => ({

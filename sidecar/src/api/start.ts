@@ -19,6 +19,7 @@ export async function startLocalApi(core: Core, listen: ListenAddress, log: (lin
     read: core.read,
     write: core.write,
     ...(core.approvals !== undefined && { approvals: core.approvals }),
+    ...(core.forms !== undefined && { forms: core.forms }),
     ...(core.panels !== undefined && { panels: core.panels }),
     ...(core.commands !== undefined && { commands: core.commands }),
     state: () => core.state(),

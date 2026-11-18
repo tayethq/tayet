@@ -142,7 +142,8 @@ describe('AccountSettings (ADR-019 §3.4 — always available)', () => {
 function fakeAcl(
   resetAccess?: Acl['resetAccess'],
 ): { acl: Acl; emit: (e: DomainEvent) => void; resetCalls: () => number } {
-  let handler: ((e: DomainEvent) => void) | undefined
+  // Every global subscriber (useChat, useAgentForm…) — the App subscribes more than once.
+  const handlers = new Set<(e: DomainEvent) => void>()
   let resets = 0
   const noop = async () => {}
   const acl: Acl = {
@@ -165,14 +166,16 @@ function fakeAcl(
     searchMessages: async () => [],
     getMessage: async () => undefined,
     subscribe: (h) => {
-      handler = h
+      handlers.add(h)
       return () => {
-        handler = undefined
+        handlers.delete(h)
       }
     },
     subscribeChannel: () => () => {},
     sendMessage: async () => 'm' as never,
     answerApproval: async () => {},
+    submitForm: async () => ({ ok: true }),
+    closeForm: () => {},
     listPanels: async () => [],
     listCommands: async () => [],
     editMessage: noop,
@@ -217,7 +220,7 @@ createChannel: async () => { throw new Error('membership verb not used in this t
     removeAgent: async () => {},
     signOut: noop,
   }
-  return { acl, emit: (e) => handler?.(e), resetCalls: () => resets }
+  return { acl, emit: (e) => handlers.forEach((h) => h(e)), resetCalls: () => resets }
 }
 
 const dev = (id: string, friendlyName: string): Device => ({ id: id as Device['id'], friendlyName, current: false })

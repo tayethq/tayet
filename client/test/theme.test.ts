@@ -54,3 +54,52 @@ describe('theme (app-side, persistência + aplicação)', () => {
     expect(t).toBe('light')
   })
 })
+
+// The browser-chrome color follows the applied theme: a minimal stylesheet stands in for tokens.css.
+describe('theme-color meta follows the applied theme', () => {
+  const LIGHT = 'rgb(1, 2, 3)'
+  const DARK = 'rgb(4, 5, 6)'
+  let style: HTMLStyleElement | null = null
+  const metas = () => document.head.querySelectorAll('meta[name="theme-color"]')
+
+  const injectCss = () => {
+    style = document.createElement('style')
+    style.textContent = `:root { --color-bg: ${LIGHT}; } [data-theme="dark"] { --color-bg: ${DARK}; }`
+    document.head.appendChild(style)
+  }
+
+  afterEach(() => {
+    style?.remove()
+    style = null
+    metas().forEach((m) => m.remove())
+  })
+
+  it('light → the light value', () => {
+    injectCss()
+    applyTheme('light')
+    expect(metas()).toHaveLength(1)
+    expect(metas()[0]?.getAttribute('content')).toBe(LIGHT)
+  })
+
+  it('dark → the dark value', () => {
+    injectCss()
+    applyTheme('dark')
+    expect(metas()).toHaveLength(1)
+    expect(metas()[0]?.getAttribute('content')).toBe(DARK)
+  })
+
+  it('back to light → the light value, still a single meta', () => {
+    injectCss()
+    applyTheme('light')
+    applyTheme('dark')
+    applyTheme('light')
+    expect(metas()).toHaveLength(1)
+    expect(metas()[0]?.getAttribute('content')).toBe(LIGHT)
+  })
+
+  it('without the variable → no meta', () => {
+    applyTheme('light')
+    applyTheme('dark')
+    expect(metas()).toHaveLength(0)
+  })
+})

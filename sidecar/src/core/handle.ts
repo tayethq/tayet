@@ -4,6 +4,7 @@
 // the process: cli.ts owns it.
 import type { ApprovalFacade } from './approvals'
 import type { CommandsFacade } from './commands'
+import type { FormFacade } from './forms'
 import type { PanelFacade } from './panels'
 import type { ReadFacade } from './read'
 import type { WriteFacade } from './write'
@@ -18,6 +19,9 @@ export interface Core {
   write: WriteFacade
   // The approval cards (ADR-091, A3-3; core/approvals.ts): send, close, state. Absent in fakes.
   approvals?: ApprovalFacade
+  // An agent's forms (core/forms.ts): open, result, the in-memory listener of submissions. Only the Slack layer
+  // reaches it (views.open, view_submission); no native route or tool. Absent in fakes.
+  forms?: FormFacade
   // The agent's pinned panel (ADR-091 dec. 13, A3-6; core/panels.ts): write, clear, read. Absent in fakes.
   panels?: PanelFacade
   // The agent's `/` commands (ADR-093, A4-2a; core/commands.ts): declare, clear, read. Absent in fakes.

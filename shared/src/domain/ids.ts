@@ -21,6 +21,9 @@ export type DeviceId = Brand<string, 'DeviceId'> // domain sense, not the SDK de
 // branded-opaque residual as the other ids (ADR-008); the rebrand lives in acl/internal.
 export type AccessId = Brand<string, 'AccessId'>
 
+// An agent's form opened for this session: opaque, minted by the ACL, never parsed above it.
+export type FormId = Brand<string, 'FormId'>
+
 // ADR-009: an opaque, per-session, NON-persistable reference to media. NOT a deep-link key
 // (the persistable key stays Message/Channel/UserId). The bytes are never in the domain — only
 // safe synchronous metadata; resolution is lazy via the barrel's resolveMedia(). The runtime

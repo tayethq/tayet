@@ -39,7 +39,7 @@ import { logLeaks } from '../edge'
 import type { SocketTickets } from './connections'
 import type { SlackDisconnect, SlackEnvelope, SlackHello } from './contract'
 import { scanSlack } from './edge'
-import { createEnvelopeDispatcher, type AckOutcome, type EnvelopeDispatcher, type EnvelopeTarget } from './envelopes'
+import { createEnvelopeDispatcher, type AckOutcome, type EnvelopeDispatcher, type EnvelopeTarget, type EnvelopeTiming } from './envelopes'
 
 type Log = (line: Record<string, unknown>) => void
 
@@ -101,8 +101,8 @@ export interface SocketHub {
   readonly connections: number
   // The envelope kinds and their acks (A3 registers its own kind here).
   readonly envelopes: EnvelopeDispatcher
-  // One envelope to every open connection (each with its own id and ack).
-  broadcast(type: string, payload: Record<string, unknown>): Array<{ id: string; outcome: Promise<AckOutcome> }>
+  // One envelope to every open connection (each with its own id and ack); `timing` as in the dispatcher.
+  broadcast(type: string, payload: Record<string, unknown>, timing?: EnvelopeTiming): Array<{ id: string; outcome: Promise<AckOutcome> }>
   // The revocation: `link_disabled` to every socket, then they close; no ticket is valid any more.
   revoke(): Promise<void>
   // Clean shutdown: `refresh_requested` to every socket, then they close.
@@ -193,7 +193,7 @@ export function createSocketHub(opts: SocketHubOptions): SocketHub {
 
     envelopes,
 
-    broadcast: (type, payload) => [...conns].map((c) => envelopes.dispatch(c.target, type, payload)),
+    broadcast: (type, payload, timing) => [...conns].map((c) => envelopes.dispatch(c.target, type, payload, timing)),
 
     upgrade(req, socket, head, url) {
       if (!opts.tickets.spend(url.searchParams.get('ticket'))) return refuseUpgrade(socket, 401)

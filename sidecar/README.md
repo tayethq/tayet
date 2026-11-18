@@ -284,6 +284,7 @@ The methods (Slack's cut for v1). Ids are the same opaque ids as the native API,
 | `files.info` | A file the agent has seen (`F…`): name, type, size, `url_private`, `url_private_download`. |
 | `users.info` | A person. |
 | `users.list` | **The people of the agent's conversations**, once each, sorted by name (a documented difference: no directory of the whole workspace). `limit`, `cursor`. |
+| `views.open` | A form for the person who clicked a card or sent a command, with that `trigger_id` ([Forms](#forms)). |
 
 - **Messages.** Text is mrkdwn both ways: mentions are `<@U…>`. Without `text`, `blocks` are turned into
   text; inputs are dropped and named in `response_metadata.warnings`, and a read never returns `blocks`.
@@ -361,8 +362,7 @@ The methods (Slack's cut for v1). Ids are the same opaque ids as the native API,
 - **Fixed Slack domains.** An app that checks Slack's domains in its code must also accept the sidecar's
   addresses: the `response_url` is on this listener (`<api.json url>/slack/response/…`, not
   `https://hooks.slack.com`), and so is the `upload_url` of upload v2 (not `files.slack.com`). A button whose
-  click opens a form (`views.open`) shows on the card and its click arrives, but the form does not open
-  (`views.*` is under "Not supported", in Socket Mode below).
+  click opens a form (`views.open`) works as in Slack, within the limits of [Forms](#forms).
 
 Node verified: `@slack/web-api` 8.3.0.
 
@@ -417,11 +417,14 @@ at once are fine: every event goes to each of them.
   with `delete_original` → HTTP 400 `invalid_arguments`; an unknown, expired or used-up URL → 404
   `expired_url`.
 - **Slash commands.** A person's `/` command to your app comes as a `slash_commands` envelope (below).
-- **Not supported:** `views.*` (modals, App Home), ephemeral messages (`response_type: 'ephemeral'`,
-  `chat.postEphemeral`), selects and other inputs, `trigger_id` (sent, opaque, opens nothing).
+- **Forms.** The `trigger_id` of a click or of a command opens one form with `views.open`, and the person's
+  submission comes as a `view_submission` in an `interactive` envelope ([Forms](#forms)).
+- **Not supported:** `views.update`, `views.push` and `views.publish` (App Home), ephemeral messages
+  (`response_type: 'ephemeral'`, `chat.postEphemeral`), selects and other inputs in messages.
 - **Acks and redelivery.** Ack every envelope (Bolt does it for you for events; for a click, call `ack()`). Without an ack within 3 seconds the
   envelope is sent again, up to three times (`retry_attempt` 1, 2, 3, `retry_reason: 'timeout'`), then it is
-  dropped and a line is logged.
+  dropped and a line is logged. A form's submission is the exception: one envelope, never sent again, with 10
+  seconds for the ack.
 - **Keepalive.** The sidecar pings every 10 seconds and answers the client's pings; a connection that does
   not answer for 30 seconds is closed.
 - **Disconnect.** On a clean stop every connection gets `{ type: 'disconnect', reason: 'refresh_requested' }`
@@ -456,7 +459,7 @@ npx tayet-agent --server <your Tayet address> --token <credential> --slack-manif
   place of the `message` and the `app_mention` of that message (also when the message could only be decrypted
   later). Bolt's `app.command('/name', …)` matches on `command`. The payload: `command` (`/name`), `text` (the
   arguments), `channel_id`, `channel_name` (`directmessage` in a DM), `user_id`, `user_name`, `team_id`,
-  `api_app_id`, `trigger_id` (opaque, opens nothing) and `response_url`, plus two fields Slack does not have:
+  `api_app_id`, `trigger_id` (opens one form, [Forms](#forms)) and `response_url`, plus two fields Slack does not have:
   `message_ts` (the command's message) and `thread_ts` (only when the command was sent in a thread). A message that
   names another agent's command, or a name the agent did not declare, comes as `message` + `app_mention` as before.
   `conversations.history` and `conversations.replies` show the command's message as text, with the agent's mention
@@ -482,8 +485,8 @@ Differences from Slack: in `conversations.history` and `conversations.replies` t
 agent's mention first (`<@U…> /name args`): the command implies the mention, which the text does not carry, and a
 read's mrkdwn puts first every mention missing from the text; the envelope's `text` carries only the arguments. No
 ephemeral responses (every response is a reply in the thread, visible to everyone);
-the commands come from the manifest file or the native API, not from Slack's app configuration; `trigger_id` opens
-nothing; `message_ts` and `thread_ts` are extra.
+the commands come from the manifest file or the native API, not from Slack's app configuration; `message_ts` and
+`thread_ts` are extra.
 
 Node verified: `@slack/bolt` 5.1.0 with `@slack/socket-mode` 3.1.1. Python `slack_sdk`: the `builtin`,
 `aiohttp` and `websockets` adapters; the `websocket-client` adapter is not supported (it sends an `Origin`
@@ -513,8 +516,9 @@ app.action('approve', async ({ ack, body, respond }) => {
 await app.start({ port: 3000, host: '127.0.0.1' })
 ```
 
-- **Only clicks.** `block_actions` go over HTTP. Events (`message`, `app_mention`) and slash commands stay on
-  Socket Mode; with the option, no socket gets an `interactive` envelope. Without the option nothing changes.
+- **Only clicks and form submissions.** `block_actions` and `view_submission` ([Forms](#forms)) go over HTTP.
+  Events (`message`, `app_mention`) and slash commands stay on Socket Mode; with the option, no socket gets an
+  `interactive` envelope. Without the option nothing changes.
 - **The request.** `POST`, `Content-Type: application/x-www-form-urlencoded`, one field: `payload`, the same
   `block_actions` JSON a socket gets (above). Signed as Slack signs: `X-Slack-Request-Timestamp` (seconds) and
   `X-Slack-Signature: v0=<hex>`, the HMAC-SHA256 of `v0:<timestamp>:<body>`. The signing secret is the local
@@ -523,8 +527,14 @@ await app.start({ port: 3000, host: '127.0.0.1' })
 - **On this machine only.** The URL must be `http` with host `127.0.0.1` (or another `127.x.y.z`), `::1` or
   `localhost`, without user or password; anything else stops the start (exit code 64) with a usage line that
   names the rule. The URL never appears in the log.
-- **The ack.** Any 2xx within 3 seconds; the body of the answer is ignored. Bolt's `ack()` sends it. The ack
-  removes the card's entry from `<store>/slack-cards.json`, as a socket's ack does.
+- **The ack.** Any 2xx within 3 seconds; the body of the answer to a click is ignored. Bolt's `ack()` sends it.
+  The ack removes the card's entry from `<store>/slack-cards.json`, as a socket's ack does.
+- **Form submissions.** A `view_submission` goes to the same URL, signed the same way, in one attempt: no retry,
+  10 seconds to answer, and it never waits behind kept clicks. The body of the answer is read: an empty body or a
+  `response_action` ([Forms](#forms)). With `processBeforeResponse: true`, a `views.open` in your click handler
+  answers once the server has the form; under the server's send limit that can take longer than the 3 seconds
+  Bolt allows, and the click is then sent again (its `views.open` answers `exchanged_trigger_id`; the first one
+  opened the form).
 - **Retries and redelivery.** No 2xx within 3 seconds (an error status, no answer, a refused connection): the
   click is sent again at once, up to three times, each with a new timestamp and signature and Slack's headers
   `X-Slack-Retry-Num` (1, 2, 3) and `X-Slack-Retry-Reason` (`http_timeout`, `http_error`, `connection_failed`;
@@ -549,6 +559,92 @@ await app.start({ port: 3000, host: '127.0.0.1' })
 - **Rotation.** `--rotate-local-token` also replaces the signing secret: give your app the new local token.
 
 Node verified: `@slack/bolt` 5.1.0 in HTTP mode (`HTTPReceiver`, `signingSecret`, `endpoints`).
+
+### Forms
+
+An agent opens a form for the person who clicked one of its cards, or who sent one of its commands, with
+`views.open` and the `trigger_id` of that click or command. The person fills it in the product; your app gets the
+submission as a `view_submission` and answers it as it would answer Slack.
+
+```js
+app.action('edit', async ({ ack, body, client }) => {
+  await ack()
+  await client.views.open({
+    trigger_id: body.trigger_id,
+    view: {
+      type: 'modal',
+      callback_id: 'edit',
+      title: { type: 'plain_text', text: 'Edit' },
+      submit: { type: 'plain_text', text: 'Save' },
+      blocks: [{ type: 'input', block_id: 'why', label: { type: 'plain_text', text: 'Reason' }, element: { type: 'plain_text_input', action_id: 'text', multiline: true } }],
+    },
+  })
+})
+app.view('edit', async ({ ack, view }) => {
+  if (view.state.values.why.text.value.length < 10) return ack({ response_action: 'errors', errors: { why: 'Tell us more.' } })
+  await ack()
+})
+```
+
+- **The `trigger_id`.** Valid for 30 seconds from when the click or the command is sent to your app (a
+  redelivery carries the same one), and it opens one form: once a form opens, every `trigger_id` of that click or
+  command is used. An open that fails uses nothing. A click whose answer, or a command whose message, is more than
+  60 seconds old when it is sent to your app opens nothing. It lives in memory: a `trigger_id` from before a
+  restart opens nothing. Errors: `invalid_trigger_id` (not one the sidecar makes), `expired_trigger_id` (unknown,
+  expired, too old, or the card is no longer decided by that person), `exchanged_trigger_id` (already used, or an
+  open with it is in progress). `interactivity_pointer` in place of `trigger_id` → `invalid_arguments`.
+- **Fields.** `input` blocks with `plain_text_input` (`multiline` makes it a long text; `min_length`,
+  `max_length`, `initial_value`, `placeholder`), `number_input` (`is_decimal_allowed`, `min_value`, `max_value`,
+  `initial_value`), `email_text_input`, `url_text_input`, `static_select` and `multi_static_select` (`options` or
+  `option_groups`, `initial_option`/`initial_options`, `max_selected_items`), `radio_buttons` and `checkboxes`,
+  and `datepicker` (`initial_date`); with `label`, `hint` and `optional`. Option texts in mrkdwn are flattened to
+  plain text.
+- **Text.** `section` (`text` and `fields`), `context`, `header`, `rich_text`, `markdown` and `image` (as
+  `[imagem: alt]`) become read-only text, with the formatting of a message; neighbouring text blocks become one.
+  `divider` is dropped.
+- **Refused.** `invalid_blocks`: the user, conversation and channel selects, the external selects, `timepicker`,
+  `datetimepicker`, `rich_text_input`, `file_input`, `dispatch_action` on an input, a `section` with an
+  `accessory`, `actions` and any other block type, a repeated `block_id`, more than 100 blocks, more than 25
+  fields once neighbouring texts are joined, a `block_id` and `action_id` that together pass about 250 characters,
+  a field that breaks a limit below. `view_too_large`: a form over 32 KiB. `invalid_arguments`: a `type` other
+  than `modal`; `title` or `submit` missing or over 24 characters (`submit` is always required); `close` over 24;
+  `private_metadata` over 3,000 characters or `callback_id` over 255.
+- **Dropped, with a log line:** `notify_on_close` (no `view_closed` is ever sent), `clear_on_close`,
+  `external_id`, `focus_on_load`, `divider`. A valid `close` is dropped with no line: the product draws its own.
+- **Limits** (Slack's): title and submit label 1 to 24 characters; 1 to 25 fields; label up to 2,000, hint up to
+  2,000, placeholder up to 150; a text's `min_length` 0 to 3,000 and `max_length` 1 to 3,000; 1 to 100 options or
+  groups (group label up to 75); radio buttons and checkboxes 1 to 10 options; option value 1 to 150 characters,
+  text 1 to 75, description up to 75, values unique in the field.
+- **The answer to `views.open`.** `{ ok: true, view }`: the blocks rebuilt from the form (a `block_id` or
+  `action_id` you left out gets a positional one, the same in the submission), `private_metadata` and
+  `callback_id` as you sent them, and a `view.id` and `hash` derived from the form.
+- **The submission.** `view_submission` with `user.id` (the person), `team`, `api_app_id`, `token: ''`,
+  `view` (`callback_id`, `private_metadata`, the blocks, and `state.values[block_id][action_id]` in Slack's shape
+  for each element: an optional field left empty comes with a `null` value, a `null` option or an empty list) and
+  `response_urls: []`. Bolt's `app.view(callback_id, …)` matches on it. Without `--slack-actions-url` it comes as
+  an `interactive` envelope to every open connection; with it, as a signed POST to that URL
+  ([Clicks over HTTP](#clicks-over-http)). One attempt: never sent again, 10 seconds to answer, and only the first
+  ack counts.
+- **Your answer.** An empty ack (or an empty 2xx), or `response_action: 'clear'` → accepted, and the form closes.
+  `response_action: 'errors'` → each error shows on its field, keyed by `block_id`; a key that is no field's
+  block is dropped, a message over 300 characters is cut, and when no error is left the person sees "not sent".
+  `update`, `push`, a body that is not one of these, a status other than 2xx, a refused connection, a connection
+  that closes before its ack, or no connection open → the person sees "not sent" at once. No answer within 10
+  seconds → nothing is written, and the person sees that the agent did not answer; a later ack is ignored with a
+  log line.
+- **Not private.** The form, the values the person sent and your answer are messages of the conversation: every
+  member has access to them at the protocol level, though the product shows the others only who answered and
+  when. Do not ask for what the conversation's members should not read.
+- **A `response_url` in `private_metadata`.** It comes back in the submission and works there: valid for 30
+  minutes and 5 calls from the click, as always. The conversation never holds the ticket: the sidecar writes a
+  derived value of the same length in its place and puts the ticket back in the submission. After a restart, or
+  once the ticket has expired, your app gets the derived value, and the URL answers 404 `expired_url`.
+- **Not supported:** `views.update`, `views.push` and `views.publish` answer `unknown_method`.
+
+Forms need a Tayet server later than 0.1.1. A tab opened before the server was updated shows the form's messages
+as not displayable until it is reloaded.
+
+Node verified: `@slack/bolt` 5.1.0 in Socket Mode and in HTTP mode (with `processBeforeResponse: true`).
 
 ## MCP
 

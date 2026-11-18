@@ -16,13 +16,13 @@
 //   the event for the next consumer (slack/router.ts, api/bus.ts).
 // - With `--slack-actions-url`, `dispatchAnswered` is not used: the same payload (`blockActionsOf`) leaves as a
 //   signed HTTP POST (slack/http-actions.ts), whatever the sockets, and no socket gets an `interactive` envelope.
-import { randomBytes } from 'node:crypto'
 import type { ApiEvent, ApiMe, ApiMessage } from '../contract'
 import type { ReadFacade } from '../../core/read'
 import type { AckOutcome } from './envelopes'
 import type { SlackCards } from './cards'
 import type { SlackBlockActions, SlackButtonAction, SlackMessage } from './contract'
 import type { ResponseTickets } from './response'
+import type { TriggerTable } from './triggers'
 import { slackMessage, tsOfMs, type MessageView } from './translate'
 
 type Log = (line: Record<string, unknown>) => void
@@ -36,6 +36,8 @@ export interface InteractiveOptions {
   log: Log
   cards: SlackCards
   tickets: ResponseTickets
+  // The trigger_ids (slack/triggers.ts): each click's opens one form, from the click itself.
+  triggers: TriggerTable
   baseUrl: () => string | null
   // The native edge on every native value before it is translated (slack/router.ts ctx.native).
   native<T>(value: T, where: string): T
@@ -87,7 +89,7 @@ export async function blockActionsOf(e: Answered, me: ApiMe, bot: string, view: 
     container: { type: 'message', message_ts: opts.cards.originOf(e.conversation, e.id), channel_id: e.conversation, is_ephemeral: false },
     message,
     state: { values: {} },
-    trigger_id: randomBytes(16).toString('hex'),
+    trigger_id: opts.triggers.issue({ kind: 'card', conversation: e.conversation, card: e.id, person: e.by }, e.at),
     response_url: `${opts.baseUrl() ?? ''}${RESPONSE_PATH}${ticket}`,
     actions: [action],
   }

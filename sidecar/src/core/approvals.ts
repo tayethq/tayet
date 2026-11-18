@@ -91,6 +91,8 @@ export interface CardReading {
   answerIds: string[]
   // The deciding answer when it cannot be read yet: the watch waits for its key.
   pending?: MatrixEvent
+  // The id of the answer that decided the card, when one did.
+  decidedId?: string
 }
 
 export interface CardReader {
@@ -175,15 +177,24 @@ export function createCardReader(client: RelationsClient, accounts: () => Approv
       }
       const ignored: CardReading['ignored'] = []
       let pending: MatrixEvent | undefined
+      let decidedId: string | undefined
       for (const a of answers) {
         const verdict = verdictOf(a, options, closedAt, accounts())
         if (verdict === 'counts') {
           if (!a.decrypted) pending = a.event
+          if (state.kind === 'answered') decidedId = a.eventId
           break
         }
         if (verdict !== 'redacted') ignored.push({ eventId: a.eventId, reason: verdict })
       }
-      const reading: CardReading = { state, closedAt, ignored, answerIds: answers.map((a) => a.eventId), ...(pending !== undefined && { pending }) }
+      const reading: CardReading = {
+        state,
+        closedAt,
+        ignored,
+        answerIds: answers.map((a) => a.eventId),
+        ...(pending !== undefined && { pending }),
+        ...(decidedId !== undefined && { decidedId }),
+      }
       if (closedAt !== undefined && pending === undefined) {
         settled.delete(key)
         settled.set(key, reading)

@@ -4,7 +4,7 @@
 // every open socket, in place of the `message` and the `app_mention` of that message (slack/events.ts).
 //
 // - The payload (item 5): `command` ("/name"), `text` (the args), `channel_id`, `channel_name`, `user_id`,
-//   `user_name`, `team_id`, `api_app_id`, `trigger_id` (opaque, opens nothing: `views.*` is out) and `response_url`;
+//   `user_name`, `team_id`, `api_app_id`, `trigger_id` (opens one form with views.open, slack/triggers.ts) and `response_url`;
 //   two fields Slack does not have: `message_ts` (the command's message) and `thread_ts` (only when the command was
 //   sent in a thread).
 // - The response (item 6): the payload of the ack and every call to the `response_url` become an ordinary reply in
@@ -16,13 +16,14 @@
 // - The `response_url` (item 7): one ticket per command (slack/response.ts), bound to the conversation, the message
 //   and the thread of the command.
 // Lines never carry the command's name, its args or the response's text.
-import { randomBytes } from 'node:crypto'
 import type { ApiEvent, ApiMe } from '../contract'
 import type { ReadFacade } from '../../core/read'
 import type { AckOutcome } from './envelopes'
 import type { SlackSlashCommand } from './contract'
 import { RESPONSE_PATH } from './interactive'
 import type { CommandTarget, ResponseTickets } from './response'
+import type { TriggerTable } from './triggers'
+import { parseTs } from '../ids'
 import type { SlackArgs } from './router'
 
 type Log = (line: Record<string, unknown>) => void
@@ -34,6 +35,8 @@ export interface CommandOptions {
   read: ReadFacade
   log: Log
   tickets: ResponseTickets
+  // The trigger_ids (slack/triggers.ts): each command's opens one form, from the command itself.
+  triggers: TriggerTable
   baseUrl: () => string | null
   // The native edge on every native value before it is translated (slack/router.ts ctx.native).
   native<T>(value: T, where: string): T
@@ -51,7 +54,7 @@ const nameOr = (fn: () => string, fallback = ''): string => {
 }
 
 // The payload of one command (pure but for the reads and the ticket).
-export function slashCommandOf(e: Mention, me: ApiMe, bot: string, opts: Pick<CommandOptions, 'read' | 'tickets' | 'baseUrl' | 'native'>): SlackSlashCommand {
+export function slashCommandOf(e: Mention, me: ApiMe, bot: string, opts: Pick<CommandOptions, 'read' | 'tickets' | 'triggers' | 'baseUrl' | 'native'>): SlackSlashCommand {
   const m = opts.native(e.message, 'slash_commands')
   const command = m.command
   if (command === undefined) throw new Error('not a command')
@@ -69,7 +72,7 @@ export function slashCommandOf(e: Mention, me: ApiMe, bot: string, opts: Pick<Co
     user_name: nameOr(() => opts.read.person(m.author).name),
     team_id: me.workspace,
     api_app_id: bot,
-    trigger_id: randomBytes(16).toString('hex'),
+    trigger_id: opts.triggers.issue({ kind: 'command', conversation: e.conversation, message: m.id, person: m.author }, parseTs(m.id)?.ms ?? 0),
     response_url: `${opts.baseUrl() ?? ''}${RESPONSE_PATH}${ticket}`,
     message_ts: m.id,
     ...(m.thread !== undefined && { thread_ts: m.thread }),

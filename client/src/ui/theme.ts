@@ -38,4 +38,20 @@ export function applyTheme(theme: Theme): void {
   const root = document.documentElement
   if (theme === 'dark') root.setAttribute('data-theme', 'dark')
   else root.removeAttribute('data-theme') // light = sem atributo (contrato de styles.css)
+  syncThemeColor(root)
+}
+
+// Keeps a single <meta name="theme-color"> in the head equal to the computed --color-bg of the
+// theme just applied, so the browser chrome matches the window floor. The color comes only from the
+// stylesheet; with the variable unresolved (no CSS loaded) the meta is neither created nor touched.
+function syncThemeColor(root: HTMLElement): void {
+  const color = getComputedStyle(root).getPropertyValue('--color-bg').trim()
+  if (color === '') return
+  let meta = document.head.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+  if (meta === null) {
+    meta = document.createElement('meta')
+    meta.name = 'theme-color'
+    document.head.appendChild(meta)
+  }
+  meta.content = color
 }

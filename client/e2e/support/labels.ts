@@ -146,6 +146,26 @@ export const COMMANDS = {
   lineFor: (agent: string) => `comando para ${agent}`,
 } as const
 
+// The agent's form (ADR-103, Proposto; Formulários 1b). Fonte: AgentFormDialog.tsx (footer, status, the
+// checkbox list's ceiling, the copy of the validation codes), Field.tsx ("(opcional)"), Timeline.tsx
+// formReplyLine. "Enviando…", "Não enviado", "Tentar de novo", "Você" and "Fechar" are other surfaces' keys.
+export const FORMS = {
+  cancel: 'Cancelar',
+  close: 'Fechar',
+  optional: '(opcional)',
+  failed: 'Não enviado',
+  retry: 'Tentar de novo',
+  sending: 'Enviando…',
+  noAnswer: (agent: string) => `${agent} não respondeu`,
+  upTo: (n: number) => `Até ${n}`,
+  replied: (name: string, time: string) => `${name} respondeu às ${time}`,
+  you: 'Você',
+  required: 'Campo obrigatório',
+  minLength: (min: number) => `Use pelo menos ${min} caracteres`,
+  between: (min: string, max: string) => `Use um valor entre ${min} e ${max}`,
+  integer: 'Use um número inteiro',
+} as const
+
 // What a row shows while a message is not decrypted yet / could not be. Fonte: Timeline.tsx:178.
 export const PLACEHOLDER_TEXTS = ['Aguardando a mensagem…', 'Mensagem indisponível'] as const
 

@@ -96,6 +96,7 @@ The documents themselves live in the private development repository.
 - ADR-096 — Export de dados: formato aberto em pasta e export por pessoa no app (Aceito)
 - ADR-100 — A conversa aberta é lida conforme as mensagens chegam: recibo na chegada com a conversa à vista, na thread aberta e na volta da aba (Aceito)
 - ADR-101 — Cartão de aprovação com até 25 opções e edição com botões pela camada Slack (Aceito)
+- ADR-103 — Formulários do agente: o agente abre um formulário para a pessoa que clicou ou mandou o comando (Aceito)
 
 ## Plans
 
@@ -135,4 +136,4 @@ The documents themselves live in the private development repository.
 
 ---
 
-87 architecture decision records, 33 plans, tree adbf08547d206e80cddc4f8d404ceef956e6682b.
+88 architecture decision records, 33 plans, tree 21356a1b29152bfc72153d672abe737df52fc93a.

@@ -66,6 +66,7 @@ import type { CoreState } from '../core/handle'
 import { ReadError, type ReadFacade } from '../core/read'
 import { WriteError, type WriteFacade } from '../core/write'
 import { approvalOptionsOf, type ApprovalFacade } from '../core/approvals'
+import type { FormFacade } from '../core/forms'
 import { PANEL_TEXT_MAX, type PanelFacade } from '../core/panels'
 import { validateCommands, type CommandsFacade } from '../core/commands'
 import { parseCompose, type RichDoc } from '@tayet/shared'
@@ -98,6 +99,8 @@ export interface ApiServerOptions {
   write: WriteFacade
   // The approval cards (A3-3): absent → their routes answer 404.
   approvals?: ApprovalFacade
+  // An agent's forms (core/forms.ts): only the Slack layer reaches them (views.open). Absent → unknown_method.
+  forms?: FormFacade
   // The pinned panel (A3-6): absent → its routes answer 404, as the cards'.
   panels?: PanelFacade
   // The agent's commands (A4-2a): absent → their routes answer 404, as the panel's.
@@ -607,6 +610,7 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
             bus,
             // The approval cards (A3-4): an `actions` block becomes a card, its click a `block_actions`.
             ...(opts.approvals !== undefined && { approvals: opts.approvals }),
+            ...(opts.forms !== undefined && { forms: opts.forms }),
             ...(opts.slack.cardsFile !== undefined && { cardsFile: opts.slack.cardsFile }),
             ...(opts.slack.now !== undefined && { now: opts.slack.now }),
             ...(opts.slack.socket !== undefined && { socket: opts.slack.socket }),

@@ -430,6 +430,8 @@ export interface ReadSide {
   bindApprovals: (view: ApprovalView) => void
   // The set the agent declared (core/commands.ts `declares`). Unbound, no message carries a command.
   bindCommands: (declares: (name: string) => boolean) => void
+  // Whether a message (read and decrypted) carries a command for this agent, by the rule of the listing.
+  commandAt: (room: Room, ev: MatrixEvent) => boolean
 }
 
 // PLANO-AGENTES §0.3.23 items 1, 3, 5, 6: the command a message carries for this agent. The translator gave
@@ -958,6 +960,10 @@ export function createReadSide(client: ReadClient, log: Log, opts: { now?: () =>
     },
     bindCommands: (port) => {
       declares = port
+    },
+    commandAt: (room, ev) => {
+      const m = eventToMessage(ev, sidecarCtx(client, room, files, log))
+      return m !== null && commandFor(m, me(), declares, log) !== undefined
     },
   }
 }

@@ -26,6 +26,10 @@ import type {
   Timestamp,
   AgentCommand,
   AgentPanel,
+  AgentForm,
+  FormId,
+  FormIssue,
+  FormValues,
 } from '@tayet/shared'
 import type { OpaqueSession } from './session'
 
@@ -106,6 +110,10 @@ export type DomainEvent =
   // members, not cleared), ordered by the command's name and then the agent's name, exactly as
   // listCommands hands it. Emitted only when the list changes. Channel stream (and global).
   | { t: 'commands.changed'; channelId: ChannelId; commands: AgentCommand[] }
+  // An agent opened a form for THIS session (only the session that clicked the card or sent the command
+  // gets it), and later its state moved. Channel stream (and global).
+  | { t: 'form.opened'; channelId: ChannelId; form: AgentForm }
+  | { t: 'form.changed'; channelId: ChannelId; form: AgentForm }
 
 // ── Inbound (domain→SDK) ─────────────────────────────────────────────────────────────────
 // INVARIANTE (P1 / ADR-007): uma única variante `attachment` — o cliente NUNCA nomeia um
@@ -390,6 +398,14 @@ export interface Acl {
   // promise rejects; calling again with the same option retries. A call while the answer is in flight
   // joins it (no second send).
   answerApproval(messageId: MessageId, option: string): Promise<void>
+  // Submit the open form. The values are checked first: with issues, they come back per field and
+  // nothing is sent. Otherwise the form goes 'sending', then 'failed' (the promise rejects), 'noAnswer'
+  // (no result 15 s after the server accepted it), 'errors' or 'done', by form.changed. From 'failed',
+  // 'noAnswer' or 'errors' a call sends again. 'done' ends the form and frees the session for the next
+  // one. Rejects for a form that is not open in this session.
+  submitForm(formId: FormId, values: FormValues): Promise<{ ok: true } | { issues: Record<string, FormIssue> }>
+  // Discard the open form without confirming; a later result for it is ignored.
+  closeForm(formId: FormId): void
   // ADR-075 dec. 5: own message only; not optimistic — resolves after the server accepts, then message.removed.
   deleteMessage(messageId: MessageId): Promise<void>
   react(messageId: MessageId, emoji: string): Promise<void>

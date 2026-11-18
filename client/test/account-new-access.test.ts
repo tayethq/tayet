@@ -61,6 +61,8 @@ describe('account.newAccess — union member (ADR-018 §2.1)', () => {
         case 'content.unsupported':
         case 'panels.changed':
         case 'commands.changed':
+        case 'form.opened':
+        case 'form.changed':
           return 'channel'
         case 'connection.changed':
           return 'connection'

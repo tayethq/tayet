@@ -11,7 +11,14 @@ import {
   type MediaRef,
   type Message,
 } from '@tayet/shared'
-import { EDIT_REDACTION_FIELD, RESPONSE_REL_TYPE, genuineReplyTarget, userIdToRaw } from '@tayet/shared/internal'
+import {
+  EDIT_REDACTION_FIELD,
+  FORM_SUBMISSION_MSGTYPE,
+  RESPONSE_REL_TYPE,
+  genuineReplyTarget,
+  readFormSubmission,
+  userIdToRaw,
+} from '@tayet/shared/internal'
 import type { DataExportOptions, DataExportPart } from '../types'
 
 // ADR-096: the export of one person's data, in the open format of shared/src/export. Pure: the gateway
@@ -69,7 +76,7 @@ export interface ExportEventView {
   /** The target of a redaction given at the top of the event (H5). */
   redacts?: string
   /** The product's own message types that never become a line (an answer to a card, a panel, a manifest). */
-  folded?: 'response' | 'panel' | 'commands'
+  folded?: 'response' | 'panel' | 'commands' | 'form'
 }
 
 /** How the engine treats a failed request. */
@@ -266,6 +273,9 @@ export async function* runDataExport<E>(p: DataExportPorts<E>, opts: DataExportO
       const deleted: ExportItemInput[] = []
       const messages: E[] = []
       const responses: E[] = []
+      // The person's form submissions: a form event that cannot be read can only be one; a readable form
+      // event of another kind never enters the export.
+      const submissions: E[] = []
       const edits = new Map<string, E[]>()
       for (const [e, v] of views) {
         if (!ENVELOPE_MESSAGE.has(v.type)) continue
@@ -279,7 +289,9 @@ export async function* runDataExport<E>(p: DataExportPorts<E>, opts: DataExportO
           continue
         }
         if (v.folded === 'response') responses.push(e)
-        else if (v.folded === undefined) messages.push(e)
+        else if (v.folded === 'form') {
+          if (v.undecrypted || v.content?.msgtype === FORM_SUBMISSION_MSGTYPE) submissions.push(e)
+        } else if (v.folded === undefined) messages.push(e)
       }
       // A live edit applies to a live message of the person in this walk, the most recent one only; an
       // edit of a deleted or absent message is dropped.
@@ -292,7 +304,7 @@ export async function* runDataExport<E>(p: DataExportPorts<E>, opts: DataExportO
 
       // 5. A7: wait only when something of this conversation may still arrive.
       const awaited = (): boolean =>
-        [...messages, ...responses, ...latestEdit.values()].some((e) => {
+        [...messages, ...responses, ...submissions, ...latestEdit.values()].some((e) => {
           const v = p.view(e)
           return v.undecrypted === 'awaited'
         })
@@ -359,6 +371,19 @@ export async function* runDataExport<E>(p: DataExportPorts<E>, opts: DataExportO
         }
       }
 
+      // The author of a card or of a form's definition, read once per id: the only read outside the
+      // person's own events, and only of the envelope.
+      const requester = async (id: string): Promise<ExportPersonInput | undefined> => {
+        let author = cardAuthors.get(id)
+        if (!author) {
+          author = request(() => p.cardAuthor(key, id, signal))
+          cardAuthors.set(id, author)
+        }
+        const sender = await author
+        const who = sender === undefined ? undefined : p.person(key, sender)
+        return sender === undefined || !who ? undefined : { key: sender, name: who.name, kind: who.kind }
+      }
+
       for (const e of responses) {
         const v = p.view(e)
         const option = v.content?.body
@@ -367,21 +392,45 @@ export async function* runDataExport<E>(p: DataExportPorts<E>, opts: DataExportO
           planned.push(unreadable(v))
           continue
         }
-        let author = cardAuthors.get(cardId)
-        if (!author) {
-          author = request(() => p.cardAuthor(key, cardId, signal))
-          cardAuthors.set(cardId, author)
-        }
-        const sender = await author
-        const who = sender === undefined ? undefined : p.person(key, sender)
-        if (sender === undefined || !who) {
+        const requestedBy = await requester(cardId)
+        if (!requestedBy) {
           planned.push(unreadable(v))
           continue
         }
         planned.push({
           kind: 'ready',
-          item: { type: 'approvalResponse', key: v.id, sentAt: v.sentAt, option, requestedBy: { key: sender, name: who.name, kind: who.kind } },
+          item: { type: 'approvalResponse', key: v.id, sentAt: v.sentAt, option, requestedBy },
         })
+      }
+
+      // Each submission is one item, accepted by the agent or not. Only what the submission itself carries:
+      // the title in the body and the copy of the labels; without that copy, it is a gap.
+      for (const e of submissions) {
+        const v = p.view(e)
+        if (v.undecrypted) {
+          planned.push(unreadable(v))
+          continue
+        }
+        const content = v.content ?? {}
+        if (content.msgtype !== FORM_SUBMISSION_MSGTYPE) continue // decrypted into another form event
+        const submission = readFormSubmission(content)
+        const title = content.body
+        if (!submission?.labels || typeof title !== 'string' || title === '') {
+          planned.push(unreadable(v))
+          continue
+        }
+        const requestedBy = await requester(submission.form)
+        if (!requestedBy) {
+          planned.push(unreadable(v))
+          continue
+        }
+        const fields = submission.labels.map((entry) => {
+          const value = submission.values[entry.id]!
+          const labels = entry.options?.map((o) => o.label)
+          const option = labels === undefined ? undefined : Array.isArray(value) ? labels : labels[0]
+          return { label: entry.label, value, ...(option !== undefined && { option }) }
+        })
+        planned.push({ kind: 'ready', item: { type: 'formSubmission', key: v.id, sentAt: v.sentAt, title, requestedBy, fields } })
       }
 
       // 6. One conversation in the builder, in the order the items were sent (the walk came newest first,

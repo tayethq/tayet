@@ -147,6 +147,7 @@ describe('card reader (ADR-091 decs. 4, 5, 7, 9)', () => {
     const r = reader({ answers: [[answer('$a1', OTHER_AGENT, 10, 'approve')], [answer('$a2', BOB, 20, 'reject'), answer('$a3', ALICE, 15, 'approve')], [answer('$a4', ALICE, 30, 'approve')]] })
     const out = await r.reader.read(ROOM, CARD, OPTIONS)
     expect(out.state).toEqual({ kind: 'answered', by: BOB, at: 20, option: 'reject' })
+    expect(out.decidedId).toBe('$a2')
     expect(r.calls.filter((c) => c.relType === 'io.tayet.response')).toEqual([
       { relType: 'io.tayet.response', dir: 'f', from: undefined },
       { relType: 'io.tayet.response', dir: 'f', from: '1' },
@@ -167,6 +168,7 @@ describe('card reader (ADR-091 decs. 4, 5, 7, 9)', () => {
       { eventId: '$x', reason: 'unknown-option' },
     ])
     expect(out.answerIds).toEqual(['$c', '$s', '$x', '$d'])
+    expect(out.decidedId).toBeUndefined()
   })
 
   it('the close is the author’s FIRST closing edit; an answer after it does not count; another sender’s close is no close', async () => {
@@ -185,6 +187,7 @@ describe('card reader (ADR-091 decs. 4, 5, 7, 9)', () => {
     const out = await reader({ answers: [[utd, answer('$b', BOB, 6, 'approve')]] }).reader.read(ROOM, CARD, OPTIONS)
     expect(out.state).toEqual({ kind: 'answered', by: ALICE, at: 5 })
     expect(out.pending).toBe(utd)
+    expect(out.decidedId).toBe('$u')
   })
 
   it('a closed card’s reading is kept (nothing changes after the close); `fresh` reads again; open cards are never kept', async () => {

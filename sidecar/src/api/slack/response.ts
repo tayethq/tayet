@@ -66,6 +66,12 @@ export class ResponseTickets {
     return { ...e.target }
   }
 
+  // When a live ticket expires; undefined when it is unknown, expired or spent (nothing is used).
+  expiry(ticket: string): number | undefined {
+    const e = this.table.get(ticket)
+    return e !== undefined && this.now() < e.expires && e.uses < this.maxUses ? e.expires : undefined
+  }
+
   // Revocation and shutdown: no ticket is valid any more.
   clear(): void {
     this.table.clear()

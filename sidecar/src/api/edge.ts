@@ -24,6 +24,13 @@ import { findProtocolLeaks, ID_SHAPE_PATTERNS, type Leak } from '@tayet/shared/l
 //   `updatedAt` and the rest of the answer are structural.
 // - the agent's `/` commands (ADR-089 addendum, A4-2a): `name`, `description` and `hint` of each command, in the
 //   `commands` of the commands' GET: the agent wrote them. `pending` is structural.
+// - an agent's form, as the core hands a submission to its listener and as the probes below build it: in
+//   `form`, the `title`, the `submitLabel`, the `meta` and, in each of `fields[]`, the `id`, `label`, `hint`,
+//   `placeholder`, `initial`, a context's `text` and `rich`, and each option's `value`, `label` and
+//   `description` (in `options[]`, `choices.options[]` and `choices.groups[].options[]`, with each group's
+//   `label`): the agent wrote them. In `submission`, the `values` (keys and values: the person chose them).
+//   In `result`, the `errors` (field ids and messages: the agent wrote them). The rest (`kind`, `optional`,
+//   the bounds, ids, `by`, `at`, `origin`) is structural.
 // Any other `name` (conversation, person, the agent) is structural.
 export const CONTENT_FIELDS = [
   'message.text',
@@ -40,6 +47,28 @@ export const CONTENT_FIELDS = [
   'commands[].hint',
   'message.command.name',
   'message.command.args',
+  'form.title',
+  'form.submitLabel',
+  'form.meta',
+  'form.fields[].id',
+  'form.fields[].label',
+  'form.fields[].hint',
+  'form.fields[].placeholder',
+  'form.fields[].initial',
+  'form.fields[].text',
+  'form.fields[].rich',
+  'form.fields[].options[].value',
+  'form.fields[].options[].label',
+  'form.fields[].options[].description',
+  'form.fields[].choices.options[].value',
+  'form.fields[].choices.options[].label',
+  'form.fields[].choices.options[].description',
+  'form.fields[].choices.groups[].label',
+  'form.fields[].choices.groups[].options[].value',
+  'form.fields[].choices.groups[].options[].label',
+  'form.fields[].choices.groups[].options[].description',
+  'submission.values',
+  'result.errors',
 ] as const
 
 const NO_OPAQUE: ReadonlySet<string> = new Set()
@@ -55,6 +84,8 @@ interface Split {
 function isMessage(v: Record<string, unknown>): boolean {
   return typeof v.id === 'string' && typeof v.conversation === 'string' && typeof v.author === 'string' && typeof v.text === 'string'
 }
+
+const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
 
 function split(root: unknown): Split {
   const content: Split['content'] = []
@@ -82,6 +113,28 @@ function split(root: unknown): Split {
     }
     return out
   }
+  // An object whose listed keys are content (stripped when present) and whose `nested` keys are handled
+  // by their own function; every other key is walked as structural.
+  const mixed = (v: unknown, path: string, keys: readonly string[], nested: Record<string, (val: unknown, p: string) => unknown> = {}): unknown => {
+    if (!isRecord(v)) return walk(v, path)
+    const out: Record<string, unknown> = {}
+    for (const [k, val] of Object.entries(v)) {
+      const p = `${path}.${k}`
+      const own = nested[k]
+      out[k] = keys.includes(k) ? strip(val, p) : own !== undefined ? own(val, p) : walk(val, p)
+    }
+    return out
+  }
+  const list = (each: (val: unknown, p: string) => unknown) => (val: unknown, p: string): unknown =>
+    Array.isArray(val) ? val.map((x, i) => each(x, `${p}[${i}]`)) : walk(val, p)
+  const option = (o: unknown, p: string): unknown => mixed(o, p, ['value', 'label', 'description'])
+  const group = (g: unknown, p: string): unknown => mixed(g, p, ['label'], { options: list(option) })
+  const field = (f: unknown, p: string): unknown =>
+    mixed(f, p, ['id', 'label', 'hint', 'placeholder', 'initial', 'text', 'rich'], {
+      options: list(option),
+      choices: (c, q) => mixed(c, q, [], { options: list(option), groups: list(group) }),
+    })
+  const form = (v: unknown, path: string): unknown => mixed(v, path, ['title', 'submitLabel', 'meta'], { fields: list(field) })
   const walk = (v: unknown, path: string): unknown => {
     if (Array.isArray(v)) return v.map((x, i) => walk(x, `${path}[${i}]`))
     if (v === null || typeof v !== 'object') return v
@@ -107,6 +160,12 @@ function split(root: unknown): Split {
         // ADR-089 addendum (A4-2b): a command's name and args are what the person typed.
         const { name, args, ...rest } = val as Record<string, unknown>
         out[k] = walk({ ...rest, name: strip(name, `${p}.name`), args: strip(args, `${p}.args`) }, p)
+      } else if (k === 'form' && isRecord(val) && Array.isArray(val.fields)) {
+        out[k] = form(val, p)
+      } else if (k === 'submission' && isRecord(val) && Object.hasOwn(val, 'values')) {
+        out[k] = mixed(val, p, ['values'])
+      } else if (k === 'result' && isRecord(val) && Object.hasOwn(val, 'errors')) {
+        out[k] = mixed(val, p, ['errors'])
       } else if (answered && k === 'option') {
         out[k] = strip(val, p)
       } else if (message && (k === 'text' || k === 'rich')) {
@@ -170,6 +229,17 @@ export function scanPanelProbe(conversation: string, text: string, title?: strin
 // hint is refused before anything is written (ADR-093; PLANO-AGENTES §0.3.22 item 1).
 export function scanCommandsProbe(commands: ReadonlyArray<{ name: unknown; description: unknown; hint?: unknown }>): Leak[] {
   return scanEdge({ commands, pending: 0 })
+}
+
+// A form's definition before it is written (title, submit label, fields, meta): an id shape in any of its
+// texts is refused before any effect.
+export function scanFormProbe(conversation: string, form: { title: unknown; submitLabel: unknown; fields: unknown; meta?: unknown }): Leak[] {
+  return scanEdge({ conversation, form: { id: '0.000000', ...form, fields: Array.isArray(form.fields) ? form.fields : [] } })
+}
+
+// A result's errors before they are written (field ids and messages): an id shape is refused before any effect.
+export function scanFormResultProbe(conversation: string, errors: Record<string, unknown>): Leak[] {
+  return scanEdge({ conversation, result: { submission: '0.000000', errors } })
 }
 
 // One user-content value alone (a file name in a header): the id shapes and the envelope keys only.

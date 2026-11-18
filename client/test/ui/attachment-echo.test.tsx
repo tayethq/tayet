@@ -94,6 +94,8 @@ function fakeAcl() {
       return mid('txn-text')
     }),
     answerApproval: async () => {},
+    submitForm: async () => ({ ok: true }),
+    closeForm: () => {},
     listPanels: async () => [],
     listCommands: async () => [],
     editMessage: async () => {},

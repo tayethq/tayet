@@ -69,6 +69,8 @@ function fakeAcl(initial: Message): Acl {
     },
     sendMessage: async () => mid('x'),
     answerApproval: async () => {},
+    submitForm: async () => ({ ok: true }),
+    closeForm: () => {},
     listPanels: async () => [],
     listCommands: async () => [],
     editMessage: async (messageId, body) => {

@@ -39,6 +39,15 @@ export type {
   MessageBody,
   AgentPanel, // ADR-091 dec. 12: o painel fixado de um agente numa conversa, a forma de listPanels.
   AgentCommand, // ADR-093 (Proposto): um comando `/` de um agente numa conversa, a forma de listCommands.
+  AgentForm, // An agent's form opened for this session, the shape of form.opened and form.changed.
+  FormId,
+  FormField,
+  FormChoices,
+  FormOption,
+  FormOptionGroup,
+  FormState,
+  FormIssue,
+  FormValues,
   ThreadSummary, // ADR-066: resumo de thread na raiz (contagem + horário da última resposta), derivado na ACL.
   Message,
   Device,

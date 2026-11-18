@@ -57,6 +57,8 @@ export function createAcl(opts: AclOptions): Acl {
     sendMessage: (channelId, body, opts) => gateway.sendMessage(channelId, body, opts),
     editMessage: (messageId, body) => gateway.editMessage(messageId, body),
     answerApproval: (messageId, option) => gateway.answerApproval(messageId, option),
+    submitForm: (formId, values) => gateway.submitForm(formId, values),
+    closeForm: (formId) => gateway.closeForm(formId),
     deleteMessage: (messageId) => gateway.deleteMessage(messageId),
     react: (messageId, emoji) => gateway.react(messageId, emoji),
     removeReaction: (messageId, emoji) => gateway.removeReaction(messageId, emoji),

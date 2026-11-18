@@ -74,11 +74,22 @@
       "deleted": 0,
       "attachments": 0,
       "gaps": 0
+    },
+    {
+      "id": "c5",
+      "file": "conversations/c5.json",
+      "name": "compras",
+      "kind": "private",
+      "joinedAt": "2026-10-03T10:00:00.000Z",
+      "messages": 1,
+      "deleted": 0,
+      "attachments": 0,
+      "gaps": 0
     }
   ],
   "totals": {
-    "conversations": 4,
-    "messages": 13,
+    "conversations": 5,
+    "messages": 14,
     "deleted": 1,
     "attachments": 2,
     "gaps": 2

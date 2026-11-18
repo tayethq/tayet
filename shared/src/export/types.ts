@@ -14,8 +14,9 @@ import type { RichDoc } from '../domain'
 export const EXPORT_FORMAT = 'tayet-export'
 
 /**
- * The format version this code writes and the highest it reads. A new optional field does not change
- * it; a change that breaks a reader increments it. Readers ignore fields they do not know.
+ * The format version this code writes and the highest it reads. A new optional field or a new item type
+ * does not change it; a change that breaks a reader increments it. Readers ignore fields they do not know
+ * and skip items whose type they do not know.
  */
 export const EXPORT_FORMAT_VERSION = 1
 
@@ -138,12 +139,30 @@ export interface ExportApprovalResponseItem {
   requestedBy: string
 }
 
+/** One field of a form the person sent: an array `value` for a field that takes several choices. */
+export interface ExportFormField {
+  label: string
+  value: string | string[]
+  /** Only for a choice: the label of each option chosen, in the shape and order of `value`. */
+  option?: string | string[]
+}
+
+export interface ExportFormSubmissionItem {
+  type: 'formSubmission'
+  id: string
+  sentAt: string
+  title: string
+  requestedBy: string
+  fields: ExportFormField[]
+}
+
 export type ExportItem =
   | ExportMessageItem
   | ExportDeletedItem
   | ExportUnreadableItem
   | ExportUnsupportedItem
   | ExportApprovalResponseItem
+  | ExportFormSubmissionItem
 
 /** `conversations/<id>.json`. */
 export interface ExportConversationFile {
@@ -239,4 +258,16 @@ export interface ExportApprovalResponseInput {
   requestedBy: ExportPersonInput
 }
 
-export type ExportItemInput = ExportMessageInput | ExportMarkerInput | ExportApprovalResponseInput
+export interface ExportFormSubmissionInput {
+  type: 'formSubmission'
+  key: string
+  sentAt: number
+  /** The form's title. */
+  title: string
+  /** The agent that opened the form. */
+  requestedBy: ExportPersonInput
+  /** The fields the person sent, in the form's order. */
+  fields: ExportFormField[]
+}
+
+export type ExportItemInput = ExportMessageInput | ExportMarkerInput | ExportApprovalResponseInput | ExportFormSubmissionInput
