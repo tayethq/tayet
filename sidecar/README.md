@@ -641,7 +641,7 @@ app.view('edit', async ({ ack, view }) => {
   once the ticket has expired, your app gets the derived value, and the URL answers 404 `expired_url`.
 - **Not supported:** `views.update`, `views.push` and `views.publish` answer `unknown_method`.
 
-Forms need a Tayet server later than 0.1.1. A tab opened before the server was updated shows the form's messages
+Forms need a Tayet server at 0.1.2 or later. A tab opened before the server was updated shows the form's messages
 as not displayable until it is reloaded.
 
 Node verified: `@slack/bolt` 5.1.0 in Socket Mode and in HTTP mode (with `processBeforeResponse: true`).
