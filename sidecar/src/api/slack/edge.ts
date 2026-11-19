@@ -5,8 +5,17 @@
 //   `name`/`title` of its files; at the top of an answer, the `text` (chat.update echoes the message's
 //   text there, §8.20), the `files` (files.completeUploadExternal) and the `file` (files.info, S-f3) — gets
 //   the id shapes only (an mrkdwn
-//   `<@U…>` is a token, never an id). The content paths are these and nothing else: a `text` or a `name`
-//   anywhere else (a topic, a person, an object that is not a message) stays structural;
+//   `<@U…>` is a token, never an id). A reaction's `name` in the `reactions` of a message object is user content
+//   too: whoever reacted chose it. The content paths are these and nothing else: a `text` or a `name` anywhere
+//   else (an object that is not a message) stays structural, except the names below;
+// - NAMES WRITTEN BY PEOPLE — what translates a conversation's name and topic, a person's name and the agent's own
+//   name — get the id shapes and the two internal account identifiers; a person's name also the custody account's.
+//   By the shape of their object: a channel (`is_channel` and `is_im`): `name` and `topic.value` (`purpose` is not
+//   one of them); a user (`is_bot`, `team_id` and `profile`): `name`, `real_name`, `profile.display_name` and
+//   `profile.real_name`; the auth.test answer (`url`, `user_id` and `bot_id` at the top): `user`; in a
+//   `block_actions` payload, `channel.name`, `user.name` and `user.username`; in a `view_submission` payload,
+//   `user.name` and `user.username`; in a `slash_commands` payload, `channel_name` and `user_name`. A finding there
+//   is `internal_error`, as in a structural field;
 // - in a `block_actions` payload (A3-4, slack/interactive.ts), the agent's own button fields —
 //   `actions[].action_id`, `actions[].block_id`, `actions[].value` and `actions[].text.text` — are user
 //   content too (ADR-089 addendum, A3-4); the rest of the payload is structural;
@@ -21,7 +30,7 @@
 // - every other field is STRUCTURAL: the full pattern set, as at the native edge;
 // - every KEY is checked against the contract's deny list minus the closed allowlist (`event_id`).
 // A finding → `internal_error` and one `leak-blocked` line (path and pattern, never the value).
-import { findProtocolLeaks, ID_SHAPE_PATTERNS, type Leak } from '@tayet/shared/leak-scan'
+import { CONVERSATION_NAME_PATTERNS, findProtocolLeaks, ID_SHAPE_PATTERNS, PERSON_NAME_PATTERNS, type Leak, type ProtocolPattern } from '@tayet/shared/leak-scan'
 import { SLACK_VOCAB_DENY } from '../../../contract-vocabulary.mjs'
 
 const NO_OPAQUE: ReadonlySet<string> = new Set()
@@ -41,9 +50,33 @@ const VIEW_CONTENT = ['private_metadata', 'callback_id', 'external_id', 'blocks'
 
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
 
-function split(root: unknown): { structural: unknown; content: Array<{ path: string; value: unknown }>; keys: Leak[] } {
+const CONVERSATION = CONVERSATION_NAME_PATTERNS
+const PERSON = PERSON_NAME_PATTERNS
+const isChannel = (v: Record<string, unknown>): boolean => typeof v.is_channel === 'boolean' && typeof v.is_im === 'boolean'
+const isUser = (v: Record<string, unknown>): boolean => typeof v.is_bot === 'boolean' && typeof v.team_id === 'string' && isRecord(v.profile)
+const isAuthTest = (v: Record<string, unknown>): boolean => typeof v.url === 'string' && typeof v.user_id === 'string' && typeof v.bot_id === 'string'
+
+interface Name {
+  path: string
+  value: string
+  patterns: readonly ProtocolPattern[]
+}
+
+function split(root: unknown): { structural: unknown; content: Array<{ path: string; value: unknown }>; names: Name[]; keys: Leak[] } {
   const content: Array<{ path: string; value: unknown }> = []
+  const names: Name[] = []
   const keys: Leak[] = []
+  // The listed keys of `v` that hold a string are names: taken out for their own scan.
+  const named = (v: Record<string, unknown>, p: string, sets: Readonly<Record<string, readonly ProtocolPattern[]>>): Record<string, unknown> => {
+    const out = { ...v }
+    for (const [k, patterns] of Object.entries(sets)) {
+      const value = out[k]
+      if (typeof value !== 'string') continue
+      names.push({ path: `${p}.${k}`, value, patterns })
+      out[k] = STRIPPED
+    }
+    return out
+  }
   const view = (v: unknown, p: string): unknown => {
     if (!isRecord(v)) return walk(v, p)
     const out: Record<string, unknown> = { ...v }
@@ -76,7 +109,16 @@ function split(root: unknown): { structural: unknown; content: Array<{ path: str
   const walk = (v: unknown, path: string): unknown => {
     if (Array.isArray(v)) return v.map((x, i) => walk(x, `${path}[${i}]`))
     if (v === null || typeof v !== 'object') return v
-    const obj = v as Record<string, unknown>
+    let obj = v as Record<string, unknown>
+    if (isChannel(obj)) {
+      obj = named(obj, path, { name: CONVERSATION })
+      if (isRecord(obj.topic)) obj.topic = named(obj.topic, `${path}.topic`, { value: CONVERSATION })
+    } else if (isUser(obj)) {
+      obj = named(obj, path, { name: PERSON, real_name: PERSON })
+      obj.profile = named(obj.profile as Record<string, unknown>, `${path}.profile`, { display_name: PERSON, real_name: PERSON })
+    } else if (path === '$' && isAuthTest(obj)) {
+      obj = named(obj, path, { user: PERSON })
+    }
     const message = isSlackMessage(obj)
     const blockActions = obj.type === 'block_actions'
     const slashCommand = obj.type === 'slash_commands'
@@ -92,7 +134,7 @@ function split(root: unknown): { structural: unknown; content: Array<{ path: str
           content.push({ path: `${p}.${f}`, value: payload[f] })
           payload[f] = STRIPPED
         }
-        out[k] = walk(payload, p)
+        out[k] = walk(named(payload, p, { channel_name: CONVERSATION, user_name: PERSON }), p)
       } else if (blockActions && k === 'actions' && Array.isArray(val)) {
         out[k] = val.map((a, i) => {
           if (a === null || typeof a !== 'object' || Array.isArray(a)) return walk(a, `${p}[${i}]`)
@@ -108,6 +150,16 @@ function split(root: unknown): { structural: unknown; content: Array<{ path: str
             action.text = { ...(text as Record<string, unknown>), text: STRIPPED }
           }
           return walk(action, `${p}[${i}]`)
+        })
+      } else if ((blockActions || viewSubmission) && k === 'user' && isRecord(val)) {
+        out[k] = walk(named(val, p, { name: PERSON, username: PERSON }), p)
+      } else if (blockActions && k === 'channel' && isRecord(val)) {
+        out[k] = walk(named(val, p, { name: CONVERSATION }), p)
+      } else if (message && k === 'reactions' && Array.isArray(val)) {
+        out[k] = val.map((r, i) => {
+          if (!isRecord(r) || !('name' in r)) return walk(r, `${p}[${i}]`)
+          content.push({ path: `${p}[${i}].name`, value: r.name })
+          return walk({ ...r, name: STRIPPED }, `${p}[${i}]`)
         })
       } else if (k === 'view' && (viewSubmission || path === '$')) {
         out[k] = view(val, p)
@@ -131,12 +183,15 @@ function split(root: unknown): { structural: unknown; content: Array<{ path: str
     }
     return out
   }
-  return { structural: walk(root, '$'), content, keys }
+  return { structural: walk(root, '$'), content, names, keys }
 }
 
 export function scanSlack(root: unknown): Leak[] {
-  const { structural, content, keys } = split(root)
+  const { structural, content, names, keys } = split(root)
   const leaks = [...keys, ...findProtocolLeaks(structural, NO_OPAQUE)]
+  for (const { path, value, patterns } of names) {
+    for (const leak of findProtocolLeaks(value, NO_OPAQUE, patterns)) leaks.push({ ...leak, path })
+  }
   for (const { path, value } of content) {
     for (const leak of findProtocolLeaks(value, NO_OPAQUE, ID_SHAPE_PATTERNS)) leaks.push({ ...leak, path: path + leak.path.slice(1) })
   }

@@ -277,8 +277,23 @@ describe('slash_commands — the response (items 6–7)', () => {
     await start()
     const { url } = await command()
     const r = await post(url, { text: 'veja @alice:example.org' })
-    expect(r.status).toBe(500)
+    expect(r).toEqual({ status: 400, body: { ok: false, error: 'invalid_arguments' } })
     expect(posts()).toEqual([])
     expect(h!.logs.some((l) => l.evt === 'leak-blocked')).toBe(true)
+  })
+})
+
+// A `/` command in a channel whose name a person wrote with the vocabulary reaches the app: `channel_name` and
+// `user_name` take the id shapes only.
+describe('slash_commands — names written by people', () => {
+  it('a command in a channel named "Verificação de contas", by "Verônica (verificação)", reaches the app', async () => {
+    await start()
+    const s = await sock()
+    h!.world.read.conversation = (id) => ({ ...GENERAL, id, name: 'Verificação de contas' })
+    h!.world.read.person = (id) => ({ ...ALICE, id, name: 'Verônica (verificação)' })
+    live(commandMessage())
+    const p = payloadOf(await s.next((x) => x.type === 'slash_commands'))
+    expect(p).toMatchObject({ command: '/deploy', channel_id: GENERAL.id, channel_name: 'Verificação de contas', user_id: ALICE.id, user_name: 'Verônica (verificação)' })
+    expect(h!.logs.filter((l) => l.evt === 'leak-blocked')).toEqual([])
   })
 })

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
 import { ALICE, BOB, DM, GENERAL, GONE, ME, call, idLeaks, message, refusal, startSlack, type SlackHarness } from '../support/slack-world'
 
 // conversations.history / replies through the real @slack/web-api (PLANO-AGENTES §0.3.12 items 3, 7).
@@ -111,5 +111,79 @@ describe('conversations.replies', () => {
     expect(tsList(await ok('conversations.replies', { channel: GENERAL.id, ts: '1730000100.000100', limit: 1, cursor: next }))).toEqual(['1730000300.000300'])
     expect(await refusal(h.client(), 'conversations.replies', { channel: GENERAL.id, ts: '1730009999.000999' })).toBe('thread_not_found')
     expect(await refusal(h.client(), 'conversations.replies', { channel: GENERAL.id })).toBe('thread_not_found')
+  })
+})
+
+// A message whose content carries an id shape goes out withheld in a read (the shape of an unavailable message:
+// no text), and the rest of the page comes back. A fresh world per test: these mutate it.
+describe('a read withholds only the message whose content carries an id shape', () => {
+  let s: SlackHarness | undefined
+  afterEach(async () => {
+    await s?.close()
+    s = undefined
+  })
+  const leakLines = (logs: Array<Record<string, unknown>>) => logs.filter((l) => l.evt === 'leak-blocked')
+  const plain = async (method: string, args: Record<string, unknown>) => {
+    const res = await call((s as SlackHarness).client(), method, args)
+    expect(idLeaks(res)).toEqual([])
+    return res.messages as Array<Record<string, unknown>>
+  }
+
+  it('conversations.history: ok, the message withheld, its neighbours with their text', async () => {
+    s = await startSlack()
+    s.world.messages.get(GENERAL.id)?.splice(2, 0, message({ id: '1730000150.000150', author: BOB.id, text: 'fala com @alice:server.example', reactions: [{ emoji: '👍', count: 1, mine: false }] }))
+    const messages = await plain('conversations.history', { channel: GENERAL.id })
+    expect(messages.map((m) => m.ts)).toEqual(['1730000200.000200', '1730000150.000150', '1730000100.000100'])
+    expect(messages[1]).toEqual({ type: 'message', user: BOB.id, text: '', ts: '1730000150.000150' })
+    expect(messages[0]).toMatchObject({ text: 'mensagem de quem saiu' })
+    expect(messages[2]).toMatchObject({ text: 'pergunta do Bob' })
+    expect(leakLines(s.logs)).toEqual([{ evt: 'leak-blocked', where: 'slack conversations.history', path: '$.messages[1].text', pattern: 'mxid' }])
+    expect(JSON.stringify(s.logs)).not.toContain('@alice')
+  })
+
+  it('conversations.replies: a reply withheld in the page; the root keeps its text', async () => {
+    s = await startSlack()
+    s.world.messages.get(GENERAL.id)?.unshift(message({ id: '1730000400.000400', author: BOB.id, text: 'e @alice:server.example', thread: '1730000100.000100' }))
+    const messages = await plain('conversations.replies', { channel: GENERAL.id, ts: '1730000100.000100' })
+    expect(messages.map((m) => [m.ts, m.text])).toEqual([
+      ['1730000100.000100', 'pergunta do Bob'],
+      ['1730000300.000300', 'resposta da Alice'],
+      ['1730000400.000400', ''],
+    ])
+    expect(messages[2]).toEqual({ type: 'message', user: BOB.id, text: '', ts: '1730000400.000400', thread_ts: '1730000100.000100' })
+    expect(leakLines(s.logs)).toEqual([{ evt: 'leak-blocked', where: 'slack conversations.replies', path: '$.messages[0].text', pattern: 'mxid' }])
+  })
+
+  it('conversations.replies: the root withheld (read by its ts, and by a reply’s ts); the replies keep their text, the root its place in the thread', async () => {
+    s = await startSlack()
+    const root = s.world.messages.get(GENERAL.id)?.find((m) => m.id === '1730000100.000100')
+    if (root !== undefined) root.text = 'pergunta para @alice:server.example'
+    for (const ts of ['1730000100.000100', '1730000300.000300']) {
+      const messages = await plain('conversations.replies', { channel: GENERAL.id, ts })
+      expect(messages[0]).toEqual({ type: 'message', user: BOB.id, text: '', ts: '1730000100.000100', thread_ts: '1730000100.000100', reply_count: 1, latest_reply: '1730000300.000000' })
+      expect(messages.slice(1).map((m) => [m.ts, m.text, m.thread_ts])).toEqual([['1730000300.000300', 'resposta da Alice', '1730000100.000100']])
+    }
+    expect(leakLines(s.logs).map((l) => [l.where, l.path, l.pattern])).toEqual([
+      ['slack conversations.replies', '$.text', 'mxid'],
+      ['slack conversations.replies', '$.text', 'mxid'],
+    ])
+    expect(JSON.stringify(s.logs)).not.toContain('@alice')
+  })
+
+  it('a structural finding in a listed message (a raw id in user) stays internal_error', async () => {
+    s = await startSlack()
+    s.world.messages.get(GENERAL.id)?.splice(2, 0, message({ id: '1730000150.000150', author: '@alice:server.example' }))
+    expect(await refusal(s.client(), 'conversations.history', { channel: GENERAL.id })).toBe('internal_error')
+    expect(leakLines(s.logs)).toContainEqual({ evt: 'leak-blocked', where: 'slack conversations.history', path: '$.messages[1].author', pattern: 'mxid' })
+  })
+
+  it('what does not change: a write’s answer withheld after the write stays internal_error', async () => {
+    s = await startSlack()
+    const write = s.world.write
+    const post = write.post.bind(write)
+    write.post = async (conv, req) => ({ ...(await post(conv, req)), text: 'ver @alice:server.example' })
+    expect(await refusal(s.client(), 'chat.postMessage', { channel: GENERAL.id, text: 'oi' })).toBe('internal_error')
+    expect(s.world.calls).toHaveLength(1)
+    expect(leakLines(s.logs)).toContainEqual({ evt: 'leak-blocked', where: 'slack chat.postMessage', path: '$.text', pattern: 'mxid' })
   })
 })

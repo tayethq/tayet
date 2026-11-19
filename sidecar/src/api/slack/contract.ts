@@ -51,6 +51,7 @@ export type SlackErrorCode =
 export interface SlackMetadata {
   next_cursor?: string
   warnings?: string[]
+  messages?: string[]
 }
 
 export interface SlackFail {

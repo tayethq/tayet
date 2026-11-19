@@ -199,7 +199,9 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
       unreadReplies: copy.timeline.unreadReplies,
     })
     expect(APPROVAL.answered('Ana', '09:05')).toBe(fill(copy.approval.answered, { name: 'Ana', time: '09:05' }))
-    const { answered: _a, ...approval } = APPROVAL
+    expect(APPROVAL.needs(2)).toBe(fill(copy.approval.needs, { n: 2 }))
+    expect(APPROVAL.progress(1, 2)).toBe(fill(copy.approval.progress, { k: 1, n: 2 }))
+    const { answered: _a, needs: _nd, progress: _pg, ...approval } = APPROVAL
     expect(approval).toEqual({ title: copy.approval.title, closed: copy.approval.closed, you: copy.timeline.you })
     expect(PANEL.section('Ana')).toBe(fill(copy.panel.section, { agent: 'Ana' }))
     expect(PANEL.updatedAt('09:05')).toBe(fill(copy.panel.updatedAt, { time: '09:05' }))

@@ -186,4 +186,19 @@ describe('Socket Mode — envelopes on the wire', () => {
     expect(JSON.stringify(h.logs)).not.toContain('relatorio')
     s.ws.close()
   })
+
+  it('a person’s scp address reaches the agent with its text; a user id still arrives without it', async () => {
+    h = await startSlack()
+    const s = await open(h)
+    await s.next((f) => f.type === 'hello')
+    const text = 'scp dev@build-host:project/test/goldens/home.png .'
+    h.world.emit({ type: 'message.received', conversation: GENERAL.id, message: message({ id: '1731000002.000100', text }) })
+    h.world.emit({ type: 'message.received', conversation: GENERAL.id, message: message({ id: '1731000002.000200', text: 'ask @alice:tayet.local' }) })
+    await expect.poll(() => envelopes(s).length).toBe(2)
+    const [a, b] = envelopes(s).map(eventOf)
+    expect(a).toMatchObject({ type: 'message', ts: '1731000002.000100', text })
+    expect(b).toMatchObject({ type: 'message', ts: '1731000002.000200', text: '' })
+    expect(h.logs.filter((l) => l.evt === 'leak-blocked')).toEqual([{ evt: 'leak-blocked', where: 'event:message.received', path: '$.message.text', pattern: 'mxid' }])
+    s.ws.close()
+  })
 })

@@ -8,7 +8,8 @@
 //      `exchanged_trigger_id`; `interactivity_pointer` in its place → `invalid_arguments`;
 //   2. the modal → the form (slack/modal.ts): its own codes; a definition over the size limit → `view_too_large`;
 //      any other broken rule of a field → `invalid_blocks`;
-//   3. the probe of the definition (a finding → `internal_error` and `leak-blocked`);
+//   3. the probe of the definition (a finding → `leak-blocked`, then `invalid_arguments` with one
+//      `response_metadata.messages` line per finding when all are id shapes, else `internal_error`);
 //   4. the core writes the definition; only then is the `trigger_id` spent;
 //   5. `{ ok: true, view }`: the blocks rebuilt from the form, `id` and `hash` derived, `private_metadata` as sent.
 // A response_url of this sidecar inside `private_metadata` is written with its ticket replaced by a derived value
@@ -36,7 +37,7 @@ import { logLeaks, scanEdge, scanFormProbe, scanFormResultProbe } from '../edge'
 import { resolverOf } from './chat'
 import { scanSlack } from './edge'
 import type { AckOutcome, EnvelopeTiming } from './envelopes'
-import { SlackError } from './errors'
+import { refusalOf, SlackError } from './errors'
 import type { PostAnswer } from './http-actions'
 import { RESPONSE_PATH } from './interactive'
 import { blocksOf, compose, formOfModal, idsOf, split, stateValuesOf, viewOf } from './modal'
@@ -124,7 +125,7 @@ export function createViews(opts: ViewsOptions): Views {
       const leaks = scanFormProbe(o.conversation, { ...form, meta })
       if (leaks.length > 0) {
         logLeaks(log, 'slack views.open', leaks)
-        throw new SlackError('internal_error')
+        throw refusalOf(leaks)
       }
       let id: string
       try {

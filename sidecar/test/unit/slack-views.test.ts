@@ -10,7 +10,7 @@ import { SUBMISSION_TIMEOUT_MS } from '../../src/api/slack/views'
 import { RESPONSE_TTL_MS } from '../../src/api/slack/response'
 import { tsOfMs } from '../../src/api/slack/translate'
 import { manualClock, open, type Frame, type RawSocket } from '../support/slack-socket'
-import { ALICE, GENERAL, ME, TOKEN, call, createWorld, idLeaks, message, refusal, startSlack, type SlackHarness, type SlackStart } from '../support/slack-world'
+import { ALICE, GENERAL, ME, TOKEN, call, createWorld, idLeaks, message, refusal, refusalData, startSlack, type SlackHarness, type SlackStart } from '../support/slack-world'
 import { fakeApprovals, type FakeApprovals } from '../support/slack-approvals'
 import { fakeForms, type FakeForms } from '../support/slack-forms'
 
@@ -382,11 +382,14 @@ describe('the edge', () => {
     noContentInLogs('@bob:chat.example.com')
   })
 
-  it('an id shape in the modal is refused before any effect (internal_error), the trigger_id not spent', async () => {
+  it('an id shape in the modal is refused before any effect (invalid_arguments), the trigger_id not spent', async () => {
     await layer()
     const s = await sock()
     const trigger = (await click(s)).trigger_id
-    expect(await refused(trigger, { ...MODAL, title: t('!abc:chat.example.com') })).toBe('internal_error')
+    const data = await refusalData(h!.client(), 'views.open', { trigger_id: trigger, view: { ...MODAL, title: t('!abc:chat.example.com') } })
+    expect(data).toEqual({ ok: false, error: 'invalid_arguments', response_metadata: { messages: ['[ERROR] content looks like an internal id: conversation_id'] } })
+    expect(JSON.stringify(data)).not.toContain('!abc')
+    expect(h!.logs).toContainEqual({ evt: 'leak-blocked', where: 'slack views.open', path: '$.form.title', pattern: 'room-id' })
     expect(forms.opened).toEqual([])
     await viewsOpen(trigger)
   })

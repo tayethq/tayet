@@ -178,8 +178,20 @@ export interface Leak {
 
 // The id shapes of the protocol (ADR-089 dec. 1): what the sidecar's edge still scans in the user's
 // content (`text`, `rich`, file name), where the vocabulary patterns would fire on ordinary prose.
-const ID_SHAPE_NAMES = new Set(['mxid', 'room-id', 'event-id', 'mxc-uri'])
-export const ID_SHAPE_PATTERNS: readonly ProtocolPattern[] = PROTOCOL_PATTERNS.filter((p) => ID_SHAPE_NAMES.has(p.name))
+// In content, a user id counts only when its `@` does not follow a word character, `.` or `-`: the
+// address of an scp, a git remote, an rsync target or host:port is ordinary text there. The full set
+// above keeps the unanchored shape.
+const CONTENT_MXID: ProtocolPattern = { name: 'mxid', re: /(?<![\w.-])@[A-Za-z0-9._=/+-]+:[A-Za-z0-9.-]+/ }
+const ID_SHAPE_NAMES = new Set(['room-id', 'event-id', 'mxc-uri'])
+export const ID_SHAPE_PATTERNS: readonly ProtocolPattern[] = [CONTENT_MXID, ...PROTOCOL_PATTERNS.filter((p) => ID_SHAPE_NAMES.has(p.name))]
+
+// Names written by people (a conversation's name and topic; a person's name, the agent's own included): the id
+// shapes and the two internal account identifiers. The vocabulary of the full set is ordinary text there (a channel
+// named "Verificação de contas"); an id is still a leak of the construction. A person's name also gets the custody
+// account's identifier: that account is never a person the product shows.
+const by = (names: readonly string[]): ProtocolPattern[] => names.map((n) => PROTOCOL_PATTERNS.find((p) => p.name === n) as ProtocolPattern)
+export const CONVERSATION_NAME_PATTERNS: readonly ProtocolPattern[] = [...ID_SHAPE_PATTERNS, ...by(['opaque-localpart', 'agent-localpart'])]
+export const PERSON_NAME_PATTERNS: readonly ProtocolPattern[] = [...CONVERSATION_NAME_PATTERNS, ...by(['custody-identity'])]
 
 // `patterns` defaults to the full set; the envelope-key checks (structural) always run.
 export function findProtocolLeaks(

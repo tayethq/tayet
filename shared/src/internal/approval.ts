@@ -1,7 +1,7 @@
 // ADR-091: reading an approval card and deciding which answer resolves it. Pure — no SDK, no
 // network — so the client and the sidecar run the SAME rule over the SAME source (the card's relations
 // filtered by the answer's relation type, read forward: the server's order, PLANO-AGENTES §0.3.16 item 4).
-import type { ApprovalOption, ApprovalState, Timestamp } from '../domain'
+import type { ApprovalOption, ApprovalState, Timestamp, UserId } from '../domain'
 import { APPROVAL_BLOCK, APPROVAL_RESPONSE_BLOCK } from './product-events'
 import { brandUserId } from './protocol-ids'
 
@@ -9,6 +9,9 @@ export const APPROVAL_MAX_OPTIONS = 25
 export const APPROVAL_LABEL_MAX = 75
 // An option's id (§0.3.16 item 12): the sidecar validates the same on write.
 export const APPROVAL_OPTION_ID = /^[a-z0-9_-]{1,32}$/
+// How many answers a card may declare it asks for.
+export const APPROVAL_NEEDED_MIN = 2
+export const APPROVAL_NEEDED_MAX = 10
 
 // The reserved agent localpart (ADR-086 dec. 1) — `a-` + 12 of lowercase base32, created only by the
 // escrow. The same pattern the client's ACL and the sidecar check.
@@ -45,6 +48,17 @@ export function readApprovalOptions(content: Record<string, unknown>): ApprovalO
     out.push(option)
   }
   return out
+}
+
+// The number of answers a card declares it asks for, read from its ORIGINAL content like the options (an
+// edit never changes it): the `needed` field of the card's block. Absent → undefined (a card resolved by
+// its first answer). An integer from 2 to 10 → that number. Any other value → null: the card is malformed
+// and the translator degrades it like an unknown type.
+export function readApprovalNeeded(content: Record<string, unknown>): number | null | undefined {
+  const block = content[APPROVAL_BLOCK]
+  if (!isRecord(block) || !('needed' in block)) return undefined
+  const n = block.needed
+  return typeof n === 'number' && Number.isInteger(n) && n >= APPROVAL_NEEDED_MIN && n <= APPROVAL_NEEDED_MAX ? n : null
 }
 
 // Whether this content carries the closing mark. Read on the content the card DISPLAYS — the author's
@@ -116,4 +130,44 @@ export function resolveApproval(
     if (a.option !== undefined && options.some((o) => o.id === a.option)) return { kind: 'answered', by, at, option: a.option }
   }
   return closedAt !== undefined ? { kind: 'closed' } : { kind: 'open' }
+}
+
+// Whether one answer counts, by the same conditions as resolveApproval: its author may answer, it is not
+// deleted, it is no later than the close, and it either cannot be read yet or names an option of the card.
+function counts(a: ApprovalAnswer, options: readonly ApprovalOption[], closedAt: number | undefined, accounts: ApprovalAccounts): boolean {
+  if (a.redacted === true || !mayAnswer(a.sender, accounts)) return false
+  if (closedAt !== undefined && a.ts > closedAt) return false
+  if (!a.decrypted) return true
+  return a.option !== undefined && options.some((o) => o.id === a.option)
+}
+
+// The state of a card that declares it asks for `needed` answers, from its ORIGINAL options, its answers
+// in the server's order, the instant it was closed (undefined while open) and the accounts that never
+// answer. An answer counts under the same conditions as in resolveApproval. One per person: each author's
+// first answer that counts, in the server's order; when it stops counting (deleted, or decrypted without
+// naming an option) the same author's next one that counts takes its place, which falls out of reading in
+// order. Cut at `needed`: what comes after the last one that fits is left out. Never folds in the viewer's
+// own pending answer (`own`); the caller does.
+export function resolveMultiApproval(
+  options: readonly ApprovalOption[],
+  answers: readonly ApprovalAnswer[],
+  closedAt: number | undefined,
+  accounts: ApprovalAccounts,
+  needed: number,
+): Extract<ApprovalState, { kind: 'multi' }> {
+  const out: Array<{ by: UserId; at: Timestamp; option?: string }> = []
+  const seen = new Set<string>()
+  for (const a of answers) {
+    if (out.length >= needed) break
+    if (seen.has(a.sender) || !counts(a, options, closedAt, accounts)) continue
+    seen.add(a.sender)
+    out.push({ by: brandUserId(a.sender), at: a.ts as Timestamp, ...(a.decrypted && a.option !== undefined && { option: a.option }) })
+  }
+  return { kind: 'multi', needed, answers: out, closed: closedAt !== undefined }
+}
+
+// Whether a card no longer needs any answer read past what is known: answered, or holding all the answers
+// it asks for.
+export function approvalSettled(state: ApprovalState): boolean {
+  return state.kind === 'answered' || (state.kind === 'multi' && state.answers.length >= state.needed)
 }

@@ -195,6 +195,9 @@ export const ptBR = {
     answered: '{name} às {time}',
     answeredNoOption: '{name} respondeu às {time}',
     closed: 'Pedido encerrado',
+    // The counter of a card that asks for several answers, while it still takes answers.
+    needs: 'Pede {n} respostas',
+    progress: '{k} de {n} respostas',
   },
   // ADR-103 (Proposto): o formulário do agente (workspace.md §25.5, §25.8, §26, §27). "Enviando…", "Não
   // enviado", "Tentar de novo" e "Você" são as chaves de `timeline`; "Fechar" é a de `dialog`. Título,

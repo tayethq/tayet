@@ -128,6 +128,9 @@ export const APPROVAL = {
   answered: (name: string, time: string) => `${name} às ${time}`,
   closed: 'Pedido encerrado',
   you: 'Você',
+  // A card that asks for several answers: the counter while it still takes answers.
+  needs: (n: number) => `Pede ${n} respostas`,
+  progress: (k: number, n: number) => `${k} de ${n} respostas`,
 } as const
 
 // The pinned panel (ADR-091, Proposto, dec. 12). Fonte: PinnedPanel.tsx:103 (section name), Timeline.tsx

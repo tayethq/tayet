@@ -32,6 +32,9 @@
 //   `rate_limited`), which @slack/web-api retries after the delay without duplicating the call.
 // - The native edge scans every native value before it is translated; the Slack edge (slack/edge.ts)
 //   scans the answer. A finding → `internal_error`.
+// - A write's probe (the answer it would give, before any effect): only id shapes in the content the app sent →
+//   `invalid_arguments` with one `[ERROR] …` line per finding in `response_metadata.messages`; any other
+//   finding → `internal_error`.
 //
 // Only @tayet/shared's root (and its leak-scan) is imported here; never /internal (lint of src/api/**).
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -43,11 +46,11 @@ import { WriteError, type WriteFacade } from '../../core/write'
 import type { BusEntry, EventBus, Opened } from '../bus'
 import type { ApiMe } from '../contract'
 import { sendDownload } from '../download'
-import { logLeaks, scanEdge, scanWriteProbe } from '../edge'
+import { logLeaks, scanEdge, scanWriteProbe, withholdMessages } from '../edge'
 import { SlackCards } from './cards'
 import type { SlackErrorCode, SlackMetadata } from './contract'
 import { scanSlack } from './edge'
-import { SlackError } from './errors'
+import { refusalOf, SlackError } from './errors'
 import { SOCKET_PATH, SocketTickets } from './connections'
 import { boundaryOf } from './multipart'
 import { createSlackEvents } from './events'
@@ -110,6 +113,9 @@ export interface SlackCtx {
   me(): Promise<ApiMe>
   // Every native value passes the native edge before it is translated (§0.3.12 item 2).
   native<T>(value: T, where: string): T
+  // A read of messages (a page or one message): each message whose content alone is at fault goes out withheld,
+  // then the native edge as above.
+  listing<T>(value: T, where: string): T
   // A write whose answer the edge would withhold is refused before any effect (server.ts preflight).
   preflight(where: string, conversation: string, text: string, fileName?: string): void
   // The request itself, for the routes that read their own body (the upload); absent for a write the layer makes
@@ -296,7 +302,11 @@ export function failSlack(res: ServerResponse, err: SlackError): void {
     const seconds = Math.max(Math.ceil(Math.max(err.retryAfterMs ?? 0, 0) / 1000), 1)
     return send(res, 429, { ok: false, error: 'ratelimited' }, { 'retry-after': String(seconds) })
   }
-  send(res, 200, { ok: false, error: err.code, ...(err.warnings !== undefined && { response_metadata: { warnings: [...err.warnings] } }) })
+  const metadata: SlackMetadata = {
+    ...(err.warnings !== undefined && { warnings: [...err.warnings] }),
+    ...(err.messages !== undefined && { messages: [...err.messages] }),
+  }
+  send(res, 200, { ok: false, error: err.code, ...(Object.keys(metadata).length > 0 && { response_metadata: metadata }) })
 }
 
 export interface SlackLayer {
@@ -398,6 +408,11 @@ export function createSlackLayer(opts: SlackLayerOptions, families: readonly Sla
       throw new SlackError('internal_error')
     }
     return value
+  }
+  const listing = <T>(value: T, where: string): T => {
+    const listed = withholdMessages(value)
+    logLeaks(log, `slack ${where}`, listed.leaks)
+    return native(listed.body, where)
   }
   const approvals = opts.approvals
   const actionsTarget = opts.actions
@@ -507,12 +522,13 @@ export function createSlackLayer(opts: SlackLayerOptions, families: readonly Sla
     cards,
     me,
     native,
+    listing,
     // The probe of the native writes (api/edge.ts scanWriteProbe): one rule for every surface.
     preflight(where, conversation, text, fileName) {
       const leaks = scanWriteProbe(conversation, text, fileName)
       if (leaks.length > 0) {
         logLeaks(log, `slack ${where}`, leaks)
-        throw new SlackError('internal_error')
+        throw refusalOf(leaks)
       }
     },
   })

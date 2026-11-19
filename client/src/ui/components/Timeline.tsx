@@ -320,6 +320,9 @@ function ApprovalCard({
         </div>
       )
       break
+    case 'multi':
+      footer = <MultiApprovalFooter state={state} options={body.options} usersById={usersById} selfId={selfId} onAnswer={onAnswer ? answer : undefined} />
+      break
   }
   return (
     <div className="approval" role="group" aria-labelledby={labelId} ref={groupRef} tabIndex={-1}>
@@ -331,6 +334,105 @@ function ApprovalCard({
         {footer}
         {formReply && <span className="approval__form-reply">{formReplyLine(formReply, usersById, selfId)}</span>}
       </div>
+    </div>
+  )
+}
+
+type MultiState = Extract<ApprovalBody['state'], { kind: 'multi' }>
+
+// A card that asks for several answers: the buttons only for a viewer who can still answer (the card not
+// closed, not complete, no answer of the viewer counted, none in flight); one line per answer in the
+// server's order, with "Você" for the viewer's own and no pill for an answer not readable yet; the viewer's
+// own answer in flight or not sent as the last line, in the idiom of the single-answer card; the counter
+// while the card still takes answers; "Pedido encerrado" when it was closed short of the answers it asks
+// for. A complete card shows only its lines. The answer line names the answer's real author, never text
+// the agent wrote.
+function MultiApprovalFooter({
+  state,
+  options,
+  usersById,
+  selfId,
+  onAnswer,
+}: {
+  state: MultiState
+  options: ApprovalBody['options']
+  usersById: Record<string, User>
+  selfId?: UserId
+  onAnswer?: (option: string) => void
+}) {
+  const complete = state.answers.length >= state.needed
+  const answeredBySelf = selfId !== undefined && state.answers.some((a) => a.by === selfId)
+  const buttons = !state.closed && !complete && !answeredBySelf && state.own === undefined
+  const own = state.own
+  const ownLabel = own ? (options.find((o) => o.id === own.option)?.label ?? '') : ''
+  const lines = state.answers.length > 0 || own !== undefined
+  return (
+    <div className="approval__multi">
+      {buttons && (
+        <div className="approval__options">
+          {options.map((o) => (
+            <Button
+              key={o.id}
+              size="gestao"
+              variant={o.style ? APPROVAL_VARIANT[o.style] : 'secondary'}
+              disabled={!onAnswer}
+              onClick={onAnswer ? () => onAnswer(o.id) : undefined}
+            >
+              {o.label}
+            </Button>
+          ))}
+        </div>
+      )}
+      {lines && (
+        <div className="approval__answers">
+          {state.answers.map((a) => {
+            const name = selfId !== undefined && a.by === selfId ? t('timeline.you') : resolveAuthor({ author: a.by }, usersById, t('timeline.someone')).name
+            const time = timeOf(a.at)
+            const option = a.option !== undefined ? options.find((o) => o.id === a.option) : undefined
+            return (
+              <div className="approval__footer" key={a.by}>
+                {option ? (
+                  <>
+                    <span className="approval__pill">{option.label}</span>
+                    <span className="approval__by">{t('approval.answered', { name, time })}</span>
+                  </>
+                ) : (
+                  <span className="approval__by">{t('approval.answeredNoOption', { name, time })}</span>
+                )}
+              </div>
+            )
+          })}
+          {own?.status === 'sending' && (
+            <div className="approval__footer">
+              <span className="approval__pill approval__pill--sending">{ownLabel}</span>
+              <span className="approval__by">{t('timeline.sending')}</span>
+            </div>
+          )}
+          {own?.status === 'failed' && (
+            <div className="approval__footer">
+              <span className="approval__pill approval__pill--failed">{ownLabel}</span>
+              <span className="message__status--failed">{t('timeline.failed')}</span>
+              {onAnswer && (
+                <>
+                  <span aria-hidden="true">{GLYPH.dot}</span>
+                  <button type="button" className="message__retry-inline" onClick={() => onAnswer(own.option)}>
+                    {t('timeline.retry')}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {!complete && (
+        <span className="approval__count">
+          {state.closed
+            ? t('approval.closed')
+            : state.answers.length === 0
+              ? t('approval.needs', { n: state.needed })
+              : t('approval.progress', { k: state.answers.length, n: state.needed })}
+        </span>
+      )}
     </div>
   )
 }

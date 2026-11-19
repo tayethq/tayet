@@ -14,6 +14,8 @@
 // agent-sidecar.spec.ts (a regra vale por PAR: o cenário é entre dois), val, wes e xin do
 // group-conversation.spec.ts (por TRIO: a conversa em grupo é entre três) e
 // fal, ada e bea do mas-login.spec.ts (sondas, uma por página: fal nunca entra — email não verificado).
+// Os specs de agente (agent-*.spec.ts) dividem o par tai/ugo, em série (workers: 1) e com as salas do par
+// apagadas no início e no fim; yuri é só do agent-approvers.spec.ts, a terceira pessoa do cartão.
 export interface E2eUser {
   /** Login no form do Dex (password DB: o campo é o email). */
   email: string
@@ -75,3 +77,5 @@ export const UGO: E2eUser = { email: 'ugo@tayet.local', password: 'ugopass123' }
 export const VAL: E2eUser = { email: 'val@tayet.local', password: 'valpass123' }
 export const WES: E2eUser = { email: 'wes@tayet.local', password: 'wespass123' }
 export const XIN: E2eUser = { email: 'xin@tayet.local', password: 'xinpass123' }
+// Terceira pessoa do agent-approvers.spec.ts (vários aprovadores), ao lado do par tai/ugo.
+export const YURI: E2eUser = { email: 'yuri@tayet.local', password: 'yuripass123' }

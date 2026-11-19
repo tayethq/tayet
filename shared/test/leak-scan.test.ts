@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { findProtocolLeaks, findProtocolLeaksInText, ID_SHAPE_PATTERNS } from '../src/leak-scan'
+import { CONVERSATION_NAME_PATTERNS, findProtocolLeaks, findProtocolLeaksInText, ID_SHAPE_PATTERNS, PERSON_NAME_PATTERNS, PROTOCOL_PATTERNS } from '../src/leak-scan'
 
 // Teste de mesa do padrão do localpart opaco (ADR-083): acusa o formato exato de randomLocalpart e
 // nenhuma palavra vizinha.
@@ -96,6 +96,41 @@ describe('ID_SHAPE_PATTERNS', () => {
   })
 })
 
+// In user content, a user id only counts when its `@` does not follow a word character, `.` or `-`: the
+// address of an scp, a git remote, an rsync target and host:port are ordinary text. The gates' full set
+// (PROTOCOL_PATTERNS) keeps the unanchored shape.
+describe('ID_SHAPE_PATTERNS — a user id needs a boundary before the `@`', () => {
+  const scan = (v: unknown): string[] => findProtocolLeaks(v, new Set(), ID_SHAPE_PATTERNS).map((l) => l.pattern)
+  const ADDRESSES = [
+    'scp dev@build-host:project/test/goldens/home.png .',
+    'git clone git@github.com:org/repo.git',
+    'rsync -av user@host:dir/ .',
+    'ssh root@10.0.0.1:22',
+    'ana@vereda.com:8080',
+  ]
+  const IDS = [
+    '@alice:tayet.local',
+    '@alice:tayet.local can you look?',
+    'ask @alice:tayet.local',
+    'first line\n@alice:tayet.local',
+    'ask her (@alice:tayet.local)',
+    'user=@alice:tayet.local',
+  ]
+
+  it.each(ADDRESSES)('an address in content passes: %s', (text) => {
+    expect(scan(text)).toEqual([])
+  })
+
+  it.each(IDS)('a user id in content still flags: %j', (text) => {
+    expect(scan(text)).toEqual(['mxid'])
+  })
+
+  it('the full set is unchanged: the same address still flags as mxid', () => {
+    expect(findProtocolLeaks('dev@build-host:project').map((l) => l.pattern)).toEqual(['mxid'])
+    expect(findProtocolLeaksInText('dev@build-host:project').map((l) => l.pattern)).toEqual(['mxid'])
+  })
+})
+
 // PLANO-AGENTES §0.3.23 item 10: `agent` is an opaque id key (AgentPanel, AgentCommand, Message.command).
 describe('agent as an opaque id key', () => {
   const AGENT = '@a-bbbbbbbbbbbb:tayet.local'
@@ -138,5 +173,39 @@ describe('participants as an opaque id key', () => {
 
   it('an object inside `participants` is walked with no key: nothing inside it is exempt', () => {
     expect(findProtocolLeaks({ participants: [{ name: '@bruno:tayet.local' }] }).length).toBeGreaterThan(0)
+  })
+})
+
+// Names written by people (a conversation's name and topic, a person's name, the agent's own name): the id shapes
+// and the two internal account identifiers; a person's name also the custody account's. The vocabulary of the
+// full set does not apply there; the gates' set (PROTOCOL_PATTERNS) is unchanged.
+describe('the sets for names written by people', () => {
+  const scan = (v: string, set: readonly { name: string; re: RegExp }[]): string[] => findProtocolLeaks(v, new Set(), set).map((l) => l.pattern)
+
+  it.each(['Verificação de contas', 'escrow-team', 'decrypt', 'cofre'])('the conversation set does not flag: %s', (name) => {
+    expect(scan(name, CONVERSATION_NAME_PATTERNS)).toEqual([])
+  })
+
+  it('the person set flags `cofre`; the rest of the vocabulary passes there too', () => {
+    expect(scan('cofre', PERSON_NAME_PATTERNS)).toEqual(['custody-identity'])
+    for (const name of ['Verificação de contas', 'escrow-team', 'decrypt']) expect(scan(name, PERSON_NAME_PATTERNS)).toEqual([])
+  })
+
+  it.each([
+    ['@alice:tayet.local', 'mxid'],
+    ['u-abcdefghij23', 'opaque-localpart'],
+    ['a-abcdefghij23', 'agent-localpart'],
+  ])('both sets flag %s', (name, pattern) => {
+    expect(scan(name, CONVERSATION_NAME_PATTERNS)).toEqual([pattern])
+    expect(scan(name, PERSON_NAME_PATTERNS)).toEqual([pattern])
+  })
+
+  it('the person set is the conversation set plus custody-identity; both are derived from the existing patterns', () => {
+    expect(PERSON_NAME_PATTERNS.map((p) => p.name)).toEqual([...CONVERSATION_NAME_PATTERNS.map((p) => p.name), 'custody-identity'])
+    for (const p of CONVERSATION_NAME_PATTERNS) expect([...ID_SHAPE_PATTERNS, ...PROTOCOL_PATTERNS]).toContain(p)
+  })
+
+  it('the gates are unchanged: PROTOCOL_PATTERNS still flags `verify`', () => {
+    expect(scan('Verificação de contas', PROTOCOL_PATTERNS)).toContain('verify')
   })
 })

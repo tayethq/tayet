@@ -275,3 +275,9 @@ staticPasswords:
     username: "xin"
     userID: "tayet-xin-0051"
     hash: "$2y$12$1G3Rel7tSU2Z994xUWI11uENRvBg18B7bMMmZtO/EVuDewKu2gAnS"
+  # yuri: só do agent-approvers.spec.ts (vários aprovadores), senha yuripass123, hash pela receita da l.42. É a
+  # terceira pessoa do cartão, ao lado do par tai/ugo dos specs de agente.
+  - email: "yuri@tayet.local"
+    username: "yuri"
+    userID: "tayet-yuri-0052"
+    hash: "$2y$12$.ctHpJqcLgPwn1GOSrshdexFIxHuwqr5SkW9rbeKIb0YOIL9/cq4."

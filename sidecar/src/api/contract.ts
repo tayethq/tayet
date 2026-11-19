@@ -200,7 +200,17 @@ export interface ApiHealth {
 
 export interface ApiError {
   // `retryAfterMs` comes with `rate_limited` (429), next to the `Retry-After` header in seconds.
-  error: { code: ApiErrorCode; message: string; retryAfterMs?: number }
+  // `refused` comes with `content_refused` (422): what to rephrase.
+  error: { code: ApiErrorCode; message: string; retryAfterMs?: number; refused?: ApiRefused[] }
+}
+
+// A write refused before any effect because what the caller sent looks like an internal id: `field` is where
+// (`text`, `title`, `approval.options[0].label`, …) and `pattern` which kind of id it looks like. The matched
+// text never comes back.
+export type ApiRefusedPattern = 'user_id' | 'conversation_id' | 'message_id' | 'media_address'
+export interface ApiRefused {
+  field: string
+  pattern: ApiRefusedPattern
 }
 
 // ── Request bodies (S-c2, §0.3.7 item 1). Any other field is refused (400 `invalid_argument`). ─────
@@ -277,6 +287,7 @@ export type ApiErrorCode =
   | 'upstream_failed'
   | 'revoked'
   | 'unavailable'
+  | 'content_refused'
   | 'internal'
 
 // ── Events (SSE `GET /v1/events`; the same bus feeds the Slack layer's WebSocket, S-f) ─────────────

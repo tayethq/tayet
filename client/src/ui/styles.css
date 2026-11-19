@@ -1780,6 +1780,26 @@ body {
 .approval__pill--failed {
   color: var(--color-muted);
 }
+/* A card that asks for several answers: the buttons, the answer lines and the counter keep the card's own
+   --space-8 between them inside the footer slot; one footer line per answer, --space-4 between lines (the
+   export's 6 does not land); the counter and "Pedido encerrado" in meta, muted (the export's 2px top margin
+   does not land). */
+.approval__multi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.approval__answers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.approval__count {
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+}
+
 /* The click moves focus to the card's group (its button goes away with the state): programmatic focus
    for the announcement, no ring — the account-settings subtitle's precedent. */
 .approval:focus {

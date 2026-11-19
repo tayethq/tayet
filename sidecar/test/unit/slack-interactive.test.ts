@@ -261,6 +261,14 @@ describe('response_url', () => {
     expect(h!.world.calls.filter((c) => c.op === 'edit')).toEqual([])
   })
 
+  it('an id shape in the new text → 400 invalid_arguments by the chat.update preflight, nothing edited', async () => {
+    await startClocked()
+    const { url } = await urlOfClick()
+    expect(await post(url, { replace_original: true, text: 'veja @alice:example.org' })).toEqual({ status: 400, body: { ok: false, error: 'invalid_arguments' } })
+    expect(h!.logs).toContainEqual({ evt: 'leak-blocked', where: 'slack chat.update', path: '$.text', pattern: 'mxid' })
+    expect(h!.world.calls.filter((c) => c.op === 'edit')).toEqual([])
+  })
+
   it('replace_original with an actions block → the chat.update path: an answered card gets a new card in its place', async () => {
     await startClocked()
     const { url, ts } = await urlOfClick()
@@ -350,5 +358,25 @@ describe('the Slack socket as a consumer of the bus', () => {
     const a = await sock()
     await tick(100)
     expect(interactive(a)).toEqual([])
+  })
+})
+
+// A click in a channel whose name a person wrote with the vocabulary reaches the app: the channel's and the person's
+// names in the payload take the id shapes only.
+describe('block_actions — names written by people', () => {
+  it('a click in a channel named "Verificação de contas", by "Verônica (verificação)", reaches the app', async () => {
+    await start()
+    const s = await sock()
+    const ts = await card()
+    h!.world.read.conversation = (id) => ({ ...GENERAL, id, name: 'Verificação de contas' })
+    h!.world.read.person = (id) => ({ ...ALICE, id, name: 'Verônica (verificação)' })
+    answer(ts, 'b1')
+    const p = payloadOf(await s.next((x) => x.type === 'interactive'))
+    expect(p).toMatchObject({
+      type: 'block_actions',
+      channel: { id: GENERAL.id, name: 'Verificação de contas' },
+      user: { id: ALICE.id, username: 'Verônica (verificação)', name: 'Verônica (verificação)' },
+    })
+    expect(h!.logs.filter((l) => l.evt === 'leak-blocked')).toEqual([])
   })
 })

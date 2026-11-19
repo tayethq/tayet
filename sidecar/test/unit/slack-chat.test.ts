@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ALICE, DM, GENERAL, ME, TOKEN, call, createWorld, idLeaks, refusal, startSlack, type SlackHarness } from '../support/slack-world'
+import { ALICE, DM, GENERAL, ME, TOKEN, call, createWorld, idLeaks, refusal, refusalData, startSlack, type SlackHarness } from '../support/slack-world'
 import { fakeApprovals } from '../support/slack-approvals'
 
 // chat.postMessage / update / delete through the real @slack/web-api (PLANO-AGENTES §0.3.12 items 4, 7, 11).
@@ -75,14 +75,54 @@ describe('chat.postMessage', () => {
     expect(posts()[0]).toMatchObject({ text: 'o texto' })
   })
 
-  it('refusals: no text → no_text; unknown channel → channel_not_found; too long → msg_too_long; an id in the text → internal_error before any effect', async () => {
+  it('refusals: no text → no_text; unknown channel → channel_not_found; too long → msg_too_long; an id in the text → invalid_arguments before any effect', async () => {
     expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id })).toBe('no_text')
     expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, text: '   ' })).toBe('no_text')
     expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, blocks: [{ type: 'divider' }] })).toBe('no_text')
     expect(await refusal(h.client(), 'chat.postMessage', { channel: 'CNOTHEREAAA', text: 'x' })).toBe('channel_not_found')
     expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, text: 'x'.repeat(33 * 1024) })).toBe('msg_too_long')
-    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, text: 'fale com @bob:server.example' })).toBe('internal_error')
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, text: 'fale com @bob:server.example' })).toBe('invalid_arguments')
     expect(posts()).toEqual([])
+  })
+
+  it('an id shape in the text: the platform error carries one line per finding in response_metadata.messages, never the text', async () => {
+    const data = await refusalData(h.client(), 'chat.postMessage', { channel: GENERAL.id, text: 'fale com @bob:server.example em !sala:server.example' })
+    expect(data).toEqual({
+      ok: false,
+      error: 'invalid_arguments',
+      response_metadata: { messages: ['[ERROR] content looks like an internal id: user_id', '[ERROR] content looks like an internal id: conversation_id'] },
+    })
+    expect(JSON.stringify(data)).not.toContain('@bob')
+    expect(h.logs).toContainEqual({ evt: 'leak-blocked', where: 'slack chat.postMessage', path: '$.text', pattern: 'mxid' })
+    expect(posts()).toEqual([])
+  })
+
+  it('a probe finding that is not an id shape (a word of the deny list in the channel) stays internal_error, with no messages', async () => {
+    const data = await refusalData(h.client(), 'chat.postMessage', { channel: 'verify-room', text: 'ask @alice:tayet.local' })
+    expect(data).toMatchObject({ ok: false, error: 'internal_error' })
+    expect(data).not.toHaveProperty('response_metadata.messages')
+    expect(h.logs).toContainEqual({ evt: 'leak-blocked', where: 'slack chat.postMessage', path: '$.conversation', pattern: 'verify' })
+    expect(posts()).toEqual([])
+  })
+
+  it('an id shape in the channel (the structural scan) stays internal_error with no messages, alone or with an id shape in the text', async () => {
+    for (const text of ['ok', 'ask @alice:tayet.local']) {
+      const data = await refusalData(h.client(), 'chat.postMessage', { channel: '!abc:tayet.local', text })
+      expect(data).toMatchObject({ ok: false, error: 'internal_error' })
+      expect(data).not.toHaveProperty('response_metadata.messages')
+    }
+    expect(h.logs).toContainEqual({ evt: 'leak-blocked', where: 'slack chat.postMessage', path: '$.conversation', pattern: 'room-id' })
+    expect(posts()).toEqual([])
+  })
+
+  it('an scp address in the text is not a user id: the post happens; a user id is still refused before any effect', async () => {
+    const text = 'scp dev@build-host:project/test/goldens/home.png .'
+    // Not through ok(): its net is the full pattern set, where this address still flags by design.
+    const res = await call(h.client(), 'chat.postMessage', { channel: GENERAL.id, text })
+    expect(res).toMatchObject({ ok: true, message: { text } })
+    expect(posts()).toMatchObject([{ op: 'post', conversation: GENERAL.id, text }])
+    expect(await refusal(h.client(), 'chat.postMessage', { channel: GENERAL.id, text: 'ask @alice:tayet.local' })).toBe('invalid_arguments')
+    expect(posts()).toHaveLength(1)
   })
 })
 
@@ -94,6 +134,14 @@ describe('chat.update / chat.delete', () => {
     expect(h.world.calls.find((c) => c.op === 'edit')).toMatchObject({ text: 'final', rich: [{ t: 'p', children: [{ t: 'em', children: [{ t: 'text', text: 'final' }] }] }] })
     expect(await refusal(h.client(), 'chat.update', { channel: GENERAL.id, ts: '1730000100.000100', text: 'x' })).toBe('cant_update_message')
     expect(await refusal(h.client(), 'chat.update', { channel: GENERAL.id, ts: '1730009999.000999', text: 'x' })).toBe('message_not_found')
+  })
+
+  it('update with an id shape in the text → invalid_arguments with its line, nothing edited', async () => {
+    const posted = await ok('chat.postMessage', { channel: GENERAL.id, text: 'rascunho' })
+    const data = await refusalData(h.client(), 'chat.update', { channel: GENERAL.id, ts: posted.ts, text: 'ver mxc://server.example/m' })
+    expect(data).toEqual({ ok: false, error: 'invalid_arguments', response_metadata: { messages: ['[ERROR] content looks like an internal id: media_address'] } })
+    expect(h.logs).toContainEqual({ evt: 'leak-blocked', where: 'slack chat.update', path: '$.text', pattern: 'mxc-uri' })
+    expect(h.world.calls.filter((c) => c.op === 'edit')).toEqual([])
   })
 
   it('delete: own message; someone else’s → cant_delete_message; unknown → message_not_found', async () => {

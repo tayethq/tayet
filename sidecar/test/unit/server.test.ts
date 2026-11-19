@@ -200,11 +200,46 @@ describe('edge scan on responses (ADR-089 dec. 1)', () => {
     expect((r.body.messages as ApiMessage[])[0]?.text).toContain('cofre')
   })
 
-  it('an mxid in a text → 500 internal and leak-blocked with path and pattern, never the value', async () => {
+  it('an mxid in a text → 200 with that message withheld and leak-blocked with path and pattern, never the value', async () => {
     const { port } = await start(fakeRead({ messages: () => Promise.resolve({ messages: [msg({ text: 'fale com @alice:tayet.local' })] }) }).read)
     const r = await call(port, '/v1/conversations/CAAAAAAAAAA/messages')
-    expect([r.status, code(r)]).toEqual([500, 'internal'])
+    expect(r.status).toBe(200)
+    expect((r.body.messages as ApiMessage[])[0]).toEqual({ id: '1730900000.100123', conversation: 'CAAAAAAAAAA', author: 'UAAAAAAAAAA', text: '', mentionsMe: false, reactions: [], unavailable: true })
     expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'GET messages', path: '$.messages[0].text', pattern: 'mxid' })
+    expect(JSON.stringify(logs)).not.toContain('alice')
+  })
+
+  it('a listing withholds only the message whose content carries an id shape; its neighbours keep their text', async () => {
+    const messages = [
+      msg({ id: '1730900000.300000', text: 'primeira' }),
+      msg({ id: '1730900000.200000', text: 'fale com @alice:tayet.local', files: [{ id: 'FAAAAAAAAAA', name: 'mxc://x/y', mimetype: 'text/plain', size: 1 }] }),
+      msg({ id: '1730900000.100000', text: 'terceira' }),
+    ]
+    const { port } = await start(fakeRead({ messages: () => Promise.resolve({ messages, next: 'cur_1' }) }).read)
+    const r = await call(port, '/v1/conversations/CAAAAAAAAAA/messages?thread=1730900000.050000')
+    expect(r.status).toBe(200)
+    const out = r.body.messages as ApiMessage[]
+    expect(out.map((m) => [m.id, m.text, m.unavailable ?? false])).toEqual([
+      ['1730900000.300000', 'primeira', false],
+      ['1730900000.200000', '', true],
+      ['1730900000.100000', 'terceira', false],
+    ])
+    expect(out[1]).not.toHaveProperty('files')
+    expect(r.body.next).toBe('cur_1')
+    expect(logs.filter((l) => l.evt === 'leak-blocked')).toEqual([
+      { evt: 'leak-blocked', where: 'GET messages', path: '$.messages[1].text', pattern: 'mxid' },
+      { evt: 'leak-blocked', where: 'GET messages', path: '$.messages[1].files[0].name', pattern: 'mxc-uri' },
+    ])
+    expect(JSON.stringify(logs)).not.toContain('alice')
+    expect(JSON.stringify(logs)).not.toContain('mxc://')
+  })
+
+  it('a structural finding in a listed message (a raw id in author) still withholds the whole answer: 500 internal', async () => {
+    const messages = [msg({ id: '1730900000.200000', text: 'fale com @bob:tayet.local' }), msg({ id: '1730900000.100000', author: '@alice:tayet.local' })]
+    const { port } = await start(fakeRead({ messages: () => Promise.resolve({ messages }) }).read)
+    const r = await call(port, '/v1/conversations/CAAAAAAAAAA/messages')
+    expect([r.status, code(r)]).toEqual([500, 'internal'])
+    expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'GET messages', path: '$.messages[1].author', pattern: 'mxid' })
     expect(JSON.stringify(logs)).not.toContain('alice')
   })
 
@@ -326,6 +361,22 @@ describe('SSE (adj. 11)', () => {
     s.close()
   })
 
+  it('a person’s scp address reaches the agent with its text; a user id still goes out unavailable', async () => {
+    const f = fakeRead()
+    const { port } = await start(f.read)
+    const s = await sse(port)
+    const text = 'scp dev@build-host:project/test/goldens/home.png .'
+    f.emit({ type: 'message.received', conversation: 'CAAAAAAAAAA', message: msg({ id: '1730900000.100124', text }) })
+    f.emit({ type: 'message.received', conversation: 'CAAAAAAAAAA', message: msg({ id: '1730900000.100125', text: 'ask @alice:tayet.local' }) })
+    await until(() => s.frames.filter((x) => x.event === 'message.received').length === 2)
+    const [a, b] = s.frames.filter((x) => x.event === 'message.received').map((x) => (JSON.parse(x.data!) as { message: ApiMessage }).message)
+    expect(a).toMatchObject({ id: '1730900000.100124', text })
+    expect(a).not.toHaveProperty('unavailable')
+    expect(b).toMatchObject({ id: '1730900000.100125', text: '', unavailable: true })
+    expect(logs.filter((l) => l.evt === 'leak-blocked')).toEqual([{ evt: 'leak-blocked', where: 'event:message.received', path: '$.message.text', pattern: 'mxid' }])
+    s.close()
+  })
+
   it('ping every pingMs', async () => {
     const { port } = await start(fakeRead().read, { pingMs: 30 })
     const s = await sse(port)
@@ -427,6 +478,7 @@ function send(port: number, path: string, opts: { method: string; body?: Buffer 
 }
 
 const errCode = (r: RawRes): unknown => (r.body.error as { code?: string } | undefined)?.code
+const errRefused = (r: RawRes): unknown => (r.body.error as { refused?: unknown } | undefined)?.refused
 const json = (v: unknown): { body: string; headers: Record<string, string> } => ({ body: JSON.stringify(v), headers: { 'content-type': 'application/json' } })
 
 describe('write routes: messages (§0.3.7 items 1, 2)', () => {
@@ -525,7 +577,7 @@ describe('write routes: messages (§0.3.7 items 1, 2)', () => {
     expect(rich).toEqual([{ t: 'p', children: [{ t: 'text', text: 'oi ' }, { t: 'text', text: 'Alice' }, { t: 'text', text: ' ' }, { t: 'strong', children: [{ t: 'text', text: 'já' }] }] }])
     expect(JSON.stringify(rich)).not.toContain('matrix.to')
     const raw = await send(port, path, { method: 'POST', ...json({ text: 'oi [Alice](https://matrix.to/#/@alice:tayet.local)', markdown: true }) })
-    expect([raw.status, errCode(raw)]).toEqual([500, 'internal'])
+    expect([raw.status, errCode(raw)]).toEqual([422, 'content_refused'])
     expect(w.calls).toHaveLength(1)
   })
 
@@ -546,16 +598,89 @@ describe('write routes: messages (§0.3.7 items 1, 2)', () => {
     ])
   })
 
-  it('an id shape in the text is refused BEFORE the write (500 internal, leak-blocked, facade untouched); prose passes', async () => {
+  it('an id shape in the text is refused BEFORE the write (422 content_refused, leak-blocked, facade untouched); prose passes', async () => {
     const w = fakeWrite()
     const { port } = await start(fakeRead().read, { write: w.write })
     const path = '/v1/conversations/CAAAAAAAAAA/messages'
     const r = await send(port, path, { method: 'POST', ...json({ text: 'fale com @alice:tayet.local' }) })
-    expect([r.status, errCode(r)]).toEqual([500, 'internal'])
+    expect([r.status, errCode(r)]).toEqual([422, 'content_refused'])
+    expect(errRefused(r)).toEqual([{ field: 'text', pattern: 'user_id' }])
+    expect(r.raw.toString()).not.toContain('@alice')
     expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'POST messages', path: '$.text', pattern: 'mxid' })
     expect(JSON.stringify(logs)).not.toContain('@alice')
     expect(w.calls).toEqual([])
     expect((await send(port, path, { method: 'POST', ...json({ text: 'please verify the backup; está no cofre' }) })).status).toBe(200)
+  })
+
+  it('an scp address in the text is not a user id: the write happens; a user id is still refused before it', async () => {
+    const w = fakeWrite()
+    const { port } = await start(fakeRead().read, { write: w.write })
+    const path = '/v1/conversations/CAAAAAAAAAA/messages'
+    const text = 'scp dev@build-host:project/test/goldens/home.png .'
+    expect((await send(port, path, { method: 'POST', ...json({ text }) })).status).toBe(200)
+    expect(w.calls).toMatchObject([['post', 'CAAAAAAAAAA', { text }]])
+    expect(logs.filter((l) => l.evt === 'leak-blocked')).toEqual([])
+    const r = await send(port, path, { method: 'POST', ...json({ text: 'ask @alice:tayet.local' }) })
+    expect([r.status, errCode(r)]).toEqual([422, 'content_refused'])
+    expect(w.calls).toHaveLength(1)
+  })
+
+  it('content_refused: PATCH is refused the same way; the four id shapes come out by their product names, one entry each', async () => {
+    const w = fakeWrite()
+    const { port } = await start(fakeRead().read, { write: w.write })
+    const edit = await send(port, '/v1/conversations/CAAAAAAAAAA/messages/1730900000.100123', { method: 'PATCH', ...json({ text: 'novo @alice:tayet.local' }) })
+    expect([edit.status, errCode(edit), errRefused(edit)]).toEqual([422, 'content_refused', [{ field: 'text', pattern: 'user_id' }]])
+    expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'PATCH message', path: '$.text', pattern: 'mxid' })
+    const eventShape = '$' + 'E'.repeat(43)
+    const text = `a @alice:tayet.local b !room:tayet.local c ${eventShape} d mxc://tayet.local/media`
+    const four = await send(port, '/v1/conversations/CAAAAAAAAAA/messages', { method: 'POST', ...json({ text }) })
+    expect([four.status, errCode(four)]).toEqual([422, 'content_refused'])
+    expect(errRefused(four)).toEqual([
+      { field: 'text', pattern: 'user_id' },
+      { field: 'text', pattern: 'conversation_id' },
+      { field: 'text', pattern: 'media_address' },
+      { field: 'text', pattern: 'message_id' },
+    ])
+    expect((four.body.error as { message?: unknown }).message).toEqual(expect.any(String))
+    for (const matched of ['@alice', '!room', eventShape, 'mxc://']) expect(four.raw.toString()).not.toContain(matched)
+    expect(logs.filter((l) => l.evt === 'leak-blocked' && l.where === 'POST messages').map((l) => l.pattern)).toEqual(['mxid', 'room-id', 'mxc-uri', 'event-id'])
+    expect(w.calls).toEqual([])
+  })
+
+  it('a probe finding that is not an id shape keeps 500 internal, even next to an id shape in the text', async () => {
+    const w = fakeWrite()
+    const { port } = await start(fakeRead().read, { write: w.write })
+    // The conversation is a structural field of the probe: the whole deny list applies there.
+    const word = await send(port, '/v1/conversations/verify-room/messages', { method: 'POST', ...json({ text: 'ok' }) })
+    expect([word.status, errCode(word), errRefused(word)]).toEqual([500, 'internal', undefined])
+    expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'POST messages', path: '$.conversation', pattern: 'verify' })
+    const mixed = await send(port, '/v1/conversations/verify-room/messages', { method: 'POST', ...json({ text: 'ask @alice:tayet.local' }) })
+    expect([mixed.status, errCode(mixed), errRefused(mixed)]).toEqual([500, 'internal', undefined])
+    expect(w.calls).toEqual([])
+  })
+
+  it('an id shape in the conversation (the structural scan) keeps 500 internal, alone or with an id shape in the text', async () => {
+    const w = fakeWrite()
+    const { port } = await start(fakeRead().read, { write: w.write })
+    const path = `/v1/conversations/${encodeURIComponent('!abc:tayet.local')}/messages`
+    const alone = await send(port, path, { method: 'POST', ...json({ text: 'ok' }) })
+    expect([alone.status, errCode(alone), errRefused(alone)]).toEqual([500, 'internal', undefined])
+    expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'POST messages', path: '$.conversation', pattern: 'room-id' })
+    const mixed = await send(port, path, { method: 'POST', ...json({ text: 'ask @alice:tayet.local' }) })
+    expect([mixed.status, errCode(mixed), errRefused(mixed)]).toEqual([500, 'internal', undefined])
+    expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'POST messages', path: '$.text', pattern: 'mxid' })
+    expect(w.calls).toEqual([])
+  })
+
+  it('an answer withheld after the write stays 500 internal (content or a structural field)', async () => {
+    const inText = fakeWrite({ post: () => Promise.resolve(msg({ text: 'ver @bob:tayet.local' })) })
+    const a = await start(fakeRead().read, { write: inText.write })
+    const r = await send(a.port, '/v1/conversations/CAAAAAAAAAA/messages', { method: 'POST', ...json({ text: 'ok' }) })
+    expect([r.status, errCode(r), errRefused(r)]).toEqual([500, 'internal', undefined])
+    const inThread = fakeWrite({ post: () => Promise.resolve(msg({ text: 'ok', thread: '!abc:tayet.local' })) })
+    const b = await start(fakeRead().read, { write: inThread.write })
+    const t = await send(b.port, '/v1/conversations/CAAAAAAAAAA/messages', { method: 'POST', ...json({ text: 'ok' }) })
+    expect([t.status, errCode(t), errRefused(t)]).toEqual([500, 'internal', undefined])
   })
 
   it('405 with the Allow of each route', async () => {
@@ -662,7 +787,7 @@ describe('write routes: files (§0.3.7 items 1, 7, 8)', () => {
     expect((await send(port, `${path}?name=ok.bin`, { method: 'POST', body: Buffer.alloc(500), chunked: true })).status).toBe(200)
   })
 
-  it('a missing or bad name, or a bad Content-Type → 400; an id shape in the name → 500 before any upload', async () => {
+  it('a missing or bad name, or a bad Content-Type → 400; an id shape in the name → 422 content_refused before any upload', async () => {
     const w = fakeWrite()
     const { port } = await start(fakeRead().read, { write: w.write })
     for (const q of ['', '?name=', '?name=a%2Fb', `?name=${'x'.repeat(256)}`]) {
@@ -670,7 +795,10 @@ describe('write routes: files (§0.3.7 items 1, 7, 8)', () => {
     }
     expect((await send(port, `${path}?name=a`, { method: 'POST', body: Buffer.alloc(1), headers: { 'content-type': 'not a type' } })).status).toBe(400)
     const leak = await send(port, `${path}?name=${encodeURIComponent('@bob:tayet.local.txt')}`, { method: 'POST', body: Buffer.alloc(1) })
-    expect([leak.status, errCode(leak)]).toEqual([500, 'internal'])
+    expect([leak.status, errCode(leak)]).toEqual([422, 'content_refused'])
+    expect(errRefused(leak)).toEqual([{ field: 'files[0].name', pattern: 'user_id' }])
+    expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'POST files', path: '$.files[0].name', pattern: 'mxid' })
+    expect(leak.raw.toString()).not.toContain('@bob')
     expect(w.calls).toEqual([])
   })
 
@@ -821,13 +949,30 @@ describe('write routes: approval cards (A3-3)', () => {
     expect(a.calls).toHaveLength(2)
   })
 
-  it('an id shape in a label is refused BEFORE the send (500 internal, leak-blocked, facade untouched)', async () => {
+  it('an id shape in a label is refused BEFORE the send (422 content_refused, leak-blocked, facade untouched)', async () => {
     const a = fakeApprovals()
     const { port } = await start(fakeRead().read, { approvals: a.approvals })
     const r = await send(port, path, { method: 'POST', ...json({ text: 'x', options: [{ id: 'a', label: 'com @alice:tayet.local' }] }) })
-    expect([r.status, errCode(r)]).toEqual([500, 'internal'])
+    expect([r.status, errCode(r)]).toEqual([422, 'content_refused'])
+    expect(errRefused(r)).toEqual([{ field: 'approval.options[0].label', pattern: 'user_id' }])
+    expect(r.raw.toString()).not.toContain('@alice')
     expect(a.calls).toEqual([])
     expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'POST approvals', path: '$.approval.options[0].label', pattern: 'mxid' })
+  })
+
+  it('close with an id shape in the new text → 422 content_refused before the close; two findings → two entries', async () => {
+    const a = fakeApprovals()
+    const { port } = await start(fakeRead().read, { approvals: a.approvals })
+    const closed = await send(port, `${path}/1.000001/close`, { method: 'POST', ...json({ text: 'feito com @alice:tayet.local' }) })
+    expect([closed.status, errCode(closed), errRefused(closed)]).toEqual([422, 'content_refused', [{ field: 'text', pattern: 'user_id' }]])
+    expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'POST approval close', path: '$.text', pattern: 'mxid' })
+    const two = await send(port, path, { method: 'POST', ...json({ text: 'ver !abc:tayet.local', options: [{ id: 'a', label: 'com @alice:tayet.local' }] }) })
+    expect([two.status, errCode(two)]).toEqual([422, 'content_refused'])
+    expect(errRefused(two)).toEqual([
+      { field: 'text', pattern: 'conversation_id' },
+      { field: 'approval.options[0].label', pattern: 'user_id' },
+    ])
+    expect(a.calls).toEqual([])
   })
 
   it('close: no body keeps the request; text (+markdown) replaces it; GET state; no route answers a card', async () => {
@@ -931,12 +1076,13 @@ describe('write routes: pinned panel (A3-6)', () => {
     expect(await send(port, path, { method: 'DELETE' }).then((r) => [r.status, errCode(r)])).toEqual([403, 'not_member'])
   })
 
-  it('an id shape in the text or the title is refused BEFORE anything is queued (500 internal, leak-blocked)', async () => {
+  it('an id shape in the text or the title is refused BEFORE anything is queued (422 content_refused, leak-blocked)', async () => {
     const p = fakePanels()
     const { port } = await start(fakeRead().read, { panels: p.panels })
     const inText = await send(port, path, { method: 'PUT', ...json({ text: 'falar com @alice:tayet.local' }) })
     const inTitle = await send(port, path, { method: 'PUT', ...json({ text: 'ok', title: 'sala !abc:tayet.local' }) })
-    expect([inText.status, errCode(inText), inTitle.status, errCode(inTitle)]).toEqual([500, 'internal', 500, 'internal'])
+    expect([inText.status, errCode(inText), inTitle.status, errCode(inTitle)]).toEqual([422, 'content_refused', 422, 'content_refused'])
+    expect([errRefused(inText), errRefused(inTitle)]).toEqual([[{ field: 'panel.text', pattern: 'user_id' }], [{ field: 'panel.title', pattern: 'conversation_id' }]])
     expect(p.calls).toEqual([])
     expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'PUT panel', path: '$.panel.text', pattern: 'mxid' })
     expect(logs.filter((l) => l.where === 'PUT panel').map((l) => l.path)).toContain('$.panel.title')
@@ -1032,12 +1178,13 @@ describe('write routes: commands (A4-2a)', () => {
     expect(f.calls).toEqual([])
   })
 
-  it('an id shape in a name, a description or a hint is refused BEFORE the facade (500 internal, leak-blocked); a GET carrying one is withheld', async () => {
+  it('an id shape in a name, a description or a hint is refused BEFORE the facade (422 content_refused, leak-blocked); a GET carrying one is withheld', async () => {
     const f = fakeCommands()
     const { port } = await start(fakeRead().read, { commands: f.commands })
     const inDescription = await send(port, path, { method: 'PUT', ...json({ commands: [{ name: 'ping', description: 'falar com @alice:tayet.local' }] }) })
     const inHint = await send(port, path, { method: 'PUT', ...json({ commands: [{ name: 'ping', description: 'ok', hint: '!abc:tayet.local' }] }) })
-    expect([inDescription.status, errCode(inDescription), inHint.status, errCode(inHint)]).toEqual([500, 'internal', 500, 'internal'])
+    expect([inDescription.status, errCode(inDescription), inHint.status, errCode(inHint)]).toEqual([422, 'content_refused', 422, 'content_refused'])
+    expect([errRefused(inDescription), errRefused(inHint)]).toEqual([[{ field: 'commands[0].description', pattern: 'user_id' }], [{ field: 'commands[0].hint', pattern: 'conversation_id' }]])
     expect(f.calls).toEqual([])
     expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'PUT commands', path: '$.commands[0].description', pattern: 'mxid' })
     expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'PUT commands', path: '$.commands[0].hint', pattern: 'room-id' })
@@ -1055,5 +1202,98 @@ describe('write routes: commands (A4-2a)', () => {
     expect(errCode(await send(bare.port, path, { method: 'PUT', ...json({ commands: [] }) }))).toBe('not_found')
     expect(errCode(await send(bare.port, path, { method: 'DELETE' }))).toBe('not_found')
     expect(code(await call(bare.port, path))).toBe('not_found')
+  })
+})
+
+// Names written by people at the edge of the local API: the vocabulary in a conversation's name or topic, a person's
+// name or the agent's own name no longer withholds the answer; an id shape there still does.
+describe('names written by people (edge)', () => {
+  const VERIFICACAO = { id: 'CAAAAAAAAAA', name: 'Verificação de contas', kind: 'public' as const, topic: 'decrypt e escrow', memberCount: 2 }
+  const VERONICA = { id: 'UBBBBBBBBBB', name: 'Verônica (verificação)', kind: 'member' as const }
+
+  it('the conversations listing and the conversation answer 200 with a channel named "Verificação de contas"', async () => {
+    const { port } = await start(fakeRead({ conversations: () => ({ conversations: [VERIFICACAO] }), conversation: () => VERIFICACAO }).read)
+    const list = await call(port, '/v1/conversations')
+    expect(list.status).toBe(200)
+    expect(list.body).toEqual({ conversations: [VERIFICACAO] })
+    expect(await call(port, '/v1/conversations/CAAAAAAAAAA')).toMatchObject({ status: 200, body: VERIFICACAO })
+    expect(logs.filter((l) => l.evt === 'leak-blocked')).toEqual([])
+  })
+
+  it('members, a person and the agent’s own answer 200 with the vocabulary in the names', async () => {
+    const { port } = await start(
+      fakeRead({
+        members: () => ({ people: [VERONICA] }),
+        person: () => VERONICA,
+        me: () => Promise.resolve({ id: 'UAGENTAAAAA', workspace: 'TAAAAAAAAAA', name: 'Verificador de contas', kind: 'agent' }),
+      }).read,
+    )
+    expect(await call(port, '/v1/conversations/CAAAAAAAAAA/members')).toMatchObject({ status: 200, body: { people: [VERONICA] } })
+    expect(await call(port, '/v1/people/UBBBBBBBBBB')).toMatchObject({ status: 200, body: VERONICA })
+    expect(await call(port, '/v1/me')).toMatchObject({ status: 200, body: { name: 'Verificador de contas' } })
+  })
+
+  it('conversation.added and member.changed with the vocabulary in the names reach the stream', async () => {
+    const f = fakeRead()
+    const { port } = await start(f.read)
+    const s = await sse(port)
+    f.emit({ type: 'conversation.added', conversation: VERIFICACAO })
+    f.emit({ type: 'member.changed', conversation: 'CAAAAAAAAAA', person: VERONICA, state: 'joined' })
+    await until(() => s.frames.some((x) => x.event === 'member.changed'))
+    expect(JSON.parse(s.frames.find((x) => x.event === 'conversation.added')!.data!)).toEqual({ type: 'conversation.added', conversation: VERIFICACAO })
+    expect(JSON.parse(s.frames.find((x) => x.event === 'member.changed')!.data!)).toEqual({ type: 'member.changed', conversation: 'CAAAAAAAAAA', person: VERONICA, state: 'joined' })
+    s.close()
+  })
+
+  it('an id shape in a name still withholds the whole answer: 500 internal', async () => {
+    const { port } = await start(fakeRead({ conversations: () => ({ conversations: [{ ...VERIFICACAO, name: 'u-abcdefghij23' }] }) }).read)
+    const r = await call(port, '/v1/conversations')
+    expect([r.status, code(r)]).toEqual([500, 'internal'])
+    expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'GET conversations', path: '$.conversations[0].name', pattern: 'opaque-localpart' })
+    expect(JSON.stringify(logs)).not.toContain('u-abcdefghij23')
+  })
+})
+
+// A reaction's emoji is user content; the withheld form of a message keeps its thread.
+describe('reactions and threads in the withheld form (edge)', () => {
+  it('a reaction with the vocabulary passes; one with an id shape withholds only its message in a listing', async () => {
+    const messages = [
+      msg({ id: '1730900000.300000', reactions: [{ emoji: 'verificado', count: 1, mine: false }] }),
+      msg({ id: '1730900000.200000', reactions: [{ emoji: '@alice:tayet.local', count: 1, mine: false }] }),
+    ]
+    const { port } = await start(fakeRead({ messages: () => Promise.resolve({ messages }) }).read)
+    const r = await call(port, '/v1/conversations/CAAAAAAAAAA/messages')
+    expect(r.status).toBe(200)
+    const out = r.body.messages as ApiMessage[]
+    expect(out[0]).toEqual(messages[0])
+    expect(out[1]).toMatchObject({ id: '1730900000.200000', text: '', reactions: [], unavailable: true })
+    expect(logs.filter((l) => l.evt === 'leak-blocked')).toEqual([{ evt: 'leak-blocked', where: 'GET messages', path: '$.messages[1].reactions[0].emoji', pattern: 'mxid' }])
+    expect(JSON.stringify(logs)).not.toContain('alice')
+  })
+
+  it('a reaction.changed with an id shape in the emoji is not delivered (one leak-blocked line); one with the vocabulary is', async () => {
+    const f = fakeRead()
+    const { port } = await start(f.read)
+    const s = await sse(port)
+    f.emit({ type: 'reaction.changed', conversation: 'CAAAAAAAAAA', id: '1730900000.100123', reactions: [{ emoji: '@alice:tayet.local', count: 1, mine: false }] })
+    f.emit({ type: 'reaction.changed', conversation: 'CAAAAAAAAAA', id: '1730900000.100124', reactions: [{ emoji: 'verificado', count: 1, mine: false }] })
+    await until(() => s.frames.some((x) => x.event === 'reaction.changed'))
+    expect(s.frames.filter((x) => x.event === 'reaction.changed').map((x) => (JSON.parse(x.data!) as { id: string }).id)).toEqual(['1730900000.100124'])
+    expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'event:reaction.changed', path: '$.reactions[0].emoji', pattern: 'mxid' })
+    s.close()
+  })
+
+  it('a withheld reply keeps its thread, in the listing and in the event', async () => {
+    const reply = msg({ id: '1730900000.200000', text: 'fale com @alice:tayet.local', thread: '1730900000.100000' })
+    const f = fakeRead({ messages: () => Promise.resolve({ messages: [reply] }) })
+    const { port } = await start(f.read)
+    const r = await call(port, '/v1/conversations/CAAAAAAAAAA/messages')
+    expect((r.body.messages as ApiMessage[])[0]).toEqual({ id: reply.id, conversation: reply.conversation, author: reply.author, text: '', mentionsMe: false, reactions: [], unavailable: true, thread: '1730900000.100000' })
+    const s = await sse(port)
+    f.emit({ type: 'message.received', conversation: 'CAAAAAAAAAA', message: reply })
+    await until(() => s.frames.some((x) => x.event === 'message.received'))
+    const data = JSON.parse(s.frames.find((x) => x.event === 'message.received')!.data!) as { message: ApiMessage }
+    expect(data.message).toEqual({ id: reply.id, conversation: reply.conversation, author: reply.author, text: '', mentionsMe: false, reactions: [], unavailable: true, thread: '1730900000.100000' })
+    s.close()
   })
 })

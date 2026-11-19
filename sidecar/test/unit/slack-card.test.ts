@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readActions } from '../../src/api/slack/actions'
-import { ALICE, GENERAL, ME, call, idLeaks, refusal, startSlack, type SlackHarness } from '../support/slack-world'
+import { ALICE, GENERAL, ME, call, idLeaks, refusal, refusalData, startSlack, type SlackHarness } from '../support/slack-world'
 import { fakeApprovals, type FakeApprovals } from '../support/slack-approvals'
 
 // The approval card on the Slack layer (A3-4; PLANO-AGENTES §0.3.16 item 14, §0.3.17): an `actions` block of
@@ -198,7 +198,7 @@ describe('chat.postMessage with actions → the card', () => {
     expect(requests()).toEqual([])
   })
 
-  it('preflight: an id shape in the request, a label, an action_id, a value or a block_id → internal_error, nothing sent', async () => {
+  it('preflight: an id shape in the request, a label, an action_id, a value or a block_id → invalid_arguments, nothing sent', async () => {
     const c = h.client()
     const id = '@u-abcdefghijkl:chat.example.com'
     for (const blocks of [
@@ -207,9 +207,12 @@ describe('chat.postMessage with actions → the card', () => {
       [actions([button('ok', { value: `x ${id}` })])],
       [actions([button('ok')], { block_id: id })],
     ]) {
-      expect(await refusal(c, 'chat.postMessage', { channel: GENERAL.id, text: 'pode?', blocks })).toBe('internal_error')
+      expect(await refusal(c, 'chat.postMessage', { channel: GENERAL.id, text: 'pode?', blocks })).toBe('invalid_arguments')
     }
-    expect(await refusal(c, 'chat.postMessage', { channel: GENERAL.id, text: `pode ${id}?`, blocks: [actions([button('ok')])] })).toBe('internal_error')
+    expect(await refusal(c, 'chat.postMessage', { channel: GENERAL.id, text: `pode ${id}?`, blocks: [actions([button('ok')])] })).toBe('invalid_arguments')
+    const data = await refusalData(c, 'chat.postMessage', { channel: GENERAL.id, text: 'pode?', blocks: [actions([button(`ok ${id}`)])] })
+    expect(data).toEqual({ ok: false, error: 'invalid_arguments', response_metadata: { messages: ['[ERROR] content looks like an internal id: user_id'] } })
+    expect(JSON.stringify(data)).not.toContain('chat.example.com')
     expect(requests()).toEqual([])
     expect(h.logs.filter((l) => l.evt === 'leak-blocked').length).toBeGreaterThanOrEqual(5)
     // A deny word in the agent's own fields is content, not the product talking.
@@ -381,10 +384,11 @@ describe('chat.update with buttons on a card (chains)', () => {
     expect(h.world.calls.filter((c) => c.op === 'edit')).toEqual([expect.objectContaining({ ts: live })])
   })
 
-  it('preflight before any effect: an id shape in a new value → internal_error, nothing closed or sent', async () => {
+  it('preflight before any effect: an id shape in a new value → invalid_arguments, nothing closed or sent', async () => {
     const ts = await origin()
     const id = '@u-abcdefghijkl:chat.example.com'
-    expect(await refusal(h.client(), 'chat.update', { channel: GENERAL.id, ts, text: 'x', blocks: [actions([button('Ok', { value: id })])] })).toBe('internal_error')
+    const data = await refusalData(h.client(), 'chat.update', { channel: GENERAL.id, ts, text: 'x', blocks: [actions([button('Ok', { value: id })])] })
+    expect(data).toEqual({ ok: false, error: 'invalid_arguments', response_metadata: { messages: ['[ERROR] content looks like an internal id: user_id'] } })
     expect(approvals.calls.filter((c) => c.op === 'close')).toEqual([])
     expect(requests()).toHaveLength(1)
     expect(h.world.calls.filter((c) => c.op === 'edit')).toEqual([])

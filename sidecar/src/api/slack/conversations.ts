@@ -13,6 +13,8 @@
 //
 // conversations.history / replies: the native listing (newest first, no thread replies) and the thread's
 // root by its ts (`ReadFacade.message`, §0.3.12 item 3) + its replies, oldest first as Slack orders them.
+// A message whose content alone is at fault comes back withheld (no text, no files, no reactions), the rest of the
+// page with it (`ctx.listing`); any other finding is `internal_error`, as for every native value.
 import type { ApiConversation, ApiMessage } from '../contract'
 import { PAGE_MAX, ReadError } from '../../core/read'
 import { parseTs } from '../ids'
@@ -83,7 +85,7 @@ async function allReplies(ctx: SlackCtx, id: string, root: string, bounds: Retur
   const out: ApiMessage[] = []
   let cursor: string | undefined
   do {
-    const page = ctx.native(await ctx.read.messages(id, { thread: root, limit: PAGE_MAX, cursor, ...(cursor === undefined && bounds) }), 'conversations.replies')
+    const page = ctx.listing(await ctx.read.messages(id, { thread: root, limit: PAGE_MAX, cursor, ...(cursor === undefined && bounds) }), 'conversations.replies')
     out.push(...page.messages)
     cursor = page.next
   } while (cursor !== undefined)
@@ -149,7 +151,7 @@ export const CONVERSATION_METHODS: SlackMethods = {
     const id = required(args, 'channel', 'channel_not_found')
     const limit = Math.min(limitOf(int(args, 'limit')), PAGE_MAX)
     const cursor = str(args, 'cursor')
-    const page = ctx.native(await ctx.read.messages(id, { limit, ...(cursor !== undefined ? { cursor } : boundsOf(args)) }), 'conversations.history')
+    const page = ctx.listing(await ctx.read.messages(id, { limit, ...(cursor !== undefined ? { cursor } : boundsOf(args)) }), 'conversations.history')
     const view = await viewOf(ctx)
     return {
       messages: page.messages.map((m) => slackMessage(m, view)),
@@ -168,8 +170,11 @@ export const CONVERSATION_METHODS: SlackMethods = {
     if (offset === null) throw new SlackError('invalid_cursor')
     let root: ApiMessage
     try {
-      root = ctx.native(await ctx.read.message(id, ts), 'conversations.replies')
-      if (root.thread !== undefined) root = ctx.native(await ctx.read.message(id, root.thread), 'conversations.replies')
+      // The thread is taken from what was read, once the edge passed it (a structural finding fails there, so the
+      // thread was scanned clean); a withheld message keeps it too.
+      const read = await ctx.read.message(id, ts)
+      root = ctx.listing(read, 'conversations.replies')
+      if (read.thread !== undefined) root = ctx.listing(await ctx.read.message(id, read.thread), 'conversations.replies')
     } catch (err) {
       if (err instanceof ReadError && err.code === 'message_not_found') throw new SlackError('thread_not_found')
       throw err

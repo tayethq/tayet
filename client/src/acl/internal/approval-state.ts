@@ -3,7 +3,9 @@ import type { ApprovalState } from '@tayet/shared'
 import {
   RESPONSE_REL_TYPE,
   approvalClosed,
+  approvalSettled,
   resolveApproval,
+  resolveMultiApproval,
   responseOption,
   type ApprovalAccounts,
   type ApprovalAnswer,
@@ -84,7 +86,13 @@ interface Entry {
 export const APPROVAL_CACHE_CAP = 500
 
 const keyOf = (roomId: string, cardId: string): string => `${roomId}\u0000${cardId}`
-const fallback = (facts: ApprovalCardFacts): ApprovalState => (facts.closedAt !== undefined ? { kind: 'closed' } : { kind: 'open' })
+// Before the read lands: open or closed, or, on a card that asks for several answers, no answers yet.
+const fallback = (facts: ApprovalCardFacts): ApprovalState =>
+  facts.needed !== undefined
+    ? { kind: 'multi', needed: facts.needed, answers: [], closed: facts.closedAt !== undefined }
+    : facts.closedAt !== undefined
+      ? { kind: 'closed' }
+      : { kind: 'open' }
 const minOf = (...xs: Array<number | null | undefined>): number | undefined => {
   const ns = xs.filter((x): x is number => typeof x === 'number')
   return ns.length > 0 ? Math.min(...ns) : undefined
@@ -134,7 +142,7 @@ export class ApprovalAggregator {
     const state = this.ready(entry) ? this.resolve(entry) : fallback(facts)
     entry.shown = JSON.stringify(state)
     // A close (or an edit) can make the rule want answers past where the read stopped.
-    if (this.ready(entry) && state.kind !== 'answered' && !entry.complete && entry.loading === undefined) this.read(entry)
+    if (this.ready(entry) && !approvalSettled(state) && !entry.complete && entry.loading === undefined) this.read(entry)
     return state
   }
 
@@ -220,15 +228,19 @@ export class ApprovalAggregator {
     return minOf(f.bornClosedAt, entry.firstClose, entry.liveClose)
   }
 
+  // A card that declares how many answers it asks for has its own rule; the others resolve on one answer.
   private resolve(entry: Entry): ApprovalState {
-    return resolveApproval(entry.facts.options, [...entry.paged, ...entry.live], this.closeOf(entry), this.ports.accounts())
+    const { options, needed } = entry.facts
+    const answers = [...entry.paged, ...entry.live]
+    if (needed !== undefined) return resolveMultiApproval(options, answers, this.closeOf(entry), this.ports.accounts(), needed)
+    return resolveApproval(options, answers, this.closeOf(entry), this.ports.accounts())
   }
 
   // After a change: read on when the rule needs more, and re-emit the card when what it shows moved.
   private settle(entry: Entry): void {
     if (!this.ready(entry)) return
     const state = this.resolve(entry)
-    if (state.kind !== 'answered' && !entry.complete && entry.loading === undefined) {
+    if (!approvalSettled(state) && !entry.complete && entry.loading === undefined) {
       this.read(entry)
       return
     }
@@ -238,7 +250,7 @@ export class ApprovalAggregator {
     this.ports.changed(entry.roomId, entry.cardId)
   }
 
-  // Page forward until the end or the first answer that resolves the card.
+  // Page forward until the end or until the card is settled (its first answer, or all it asks for).
   private read(entry: Entry): void {
     const gen = ++this.generation
     entry.loading = gen
@@ -260,7 +272,7 @@ export class ApprovalAggregator {
           break
         }
         from = page.next
-        if (this.closeKnown(entry) && this.resolve(entry).kind === 'answered') break
+        if (this.closeKnown(entry) && approvalSettled(this.resolve(entry))) break
       }
       entry.loading = undefined
       entry.loaded = true
@@ -413,6 +425,28 @@ export interface PendingAnswer {
   work?: Promise<void>
 }
 
+// Whether a card, as this session shows it, takes an answer from `selfId` now: open, or its own answer not
+// sent; on a card that asks for several answers, not closed, not complete, no answer of `selfId` counted,
+// and no answer of its own in flight.
+export function takesAnswer(state: ApprovalState, selfId: string | undefined): boolean {
+  switch (state.kind) {
+    case 'open':
+    case 'failed':
+      return true
+    case 'multi':
+      return (
+        !state.closed &&
+        !approvalSettled(state) &&
+        !state.answers.some((a) => (a.by as string) === selfId) &&
+        (state.own === undefined || state.own.status === 'failed')
+      )
+    case 'sending':
+    case 'answered':
+    case 'closed':
+      return false
+  }
+}
+
 export class PendingAnswers {
   private readonly byCard = new Map<string, PendingAnswer>()
 
@@ -431,14 +465,23 @@ export class PendingAnswers {
     return true
   }
 
-  // The state the card shows: the aggregated one, with the pending folded in only while it is 'open'.
-  overlay(roomId: string, cardId: string, state: ApprovalState): ApprovalState {
+  // The state the card shows: the aggregated one, with the pending folded in only while the card still
+  // takes the viewer's answer. On a card that asks for several answers that is: not closed, not complete,
+  // and no answer of `selfId` counted yet; a sent answer not yet aggregated stays 'sending', so the
+  // buttons never come back in between.
+  overlay(roomId: string, cardId: string, state: ApprovalState, selfId?: string): ApprovalState {
     const key = keyOf(roomId, cardId)
     const pending = this.byCard.get(key)
     if (!pending) return state
     switch (state.kind) {
       case 'open':
         return pending.status === 'failed' ? { kind: 'failed', option: pending.option } : { kind: 'sending', option: pending.option }
+      case 'multi':
+        if (state.closed || approvalSettled(state) || state.answers.some((a) => (a.by as string) === selfId)) {
+          this.byCard.delete(key)
+          return state
+        }
+        return { ...state, own: { status: pending.status === 'failed' ? 'failed' : 'sending', option: pending.option } }
       case 'answered':
       case 'closed':
         this.byCard.delete(key)

@@ -5,7 +5,8 @@
 //   with `internal` and a `leak-blocked` line (`where: 'mcp:<tool>'`). The serialized JSON is never what
 //   is scanned.
 // - A write goes through the native preflight first (edge.ts `scanWriteProbe`): what the edge would
-//   withhold after the send is refused before any effect.
+//   withhold after the send is refused before any effect — `content_refused` with `refused` when every
+//   finding is an id shape in the content the tool was given, else `internal`.
 // - The facades' errors (ReadError/WriteError) → `isError` with the native code as text; anything else →
 //   `internal` and one `mcp-error` line with the error's name only (an SDK message may carry a protocol
 //   URL).
@@ -18,8 +19,8 @@ import { APPROVAL_MAX_OPTIONS } from '../../core/approval-limits'
 import { approvalOptionsOf, type ApprovalFacade } from '../../core/approvals'
 import { PANEL_TEXT_MAX, type PanelFacade } from '../../core/panels'
 import { validateCommands, type CommandsFacade } from '../../core/commands'
-import type { ApiApprovalStatus, ApiMessage } from '../contract'
-import { logLeaks, scanApprovalProbe, scanCommandsProbe, scanEdge, scanPanelProbe, scanWriteProbe } from '../edge'
+import type { ApiApprovalStatus, ApiMessage, ApiRefused } from '../contract'
+import { logLeaks, refusedOf, type EdgeLeak, scanApprovalProbe, scanCommandsProbe, scanEdge, scanPanelProbe, scanWriteProbe, withholdMessages } from '../edge'
 import { isEmojiArgument } from '../emoji'
 import {
   WAIT_DEFAULT_S,
@@ -62,16 +63,23 @@ interface ToolResult {
   isError?: boolean
 }
 
-// A refusal of this layer (an argument), with its native code.
+// A refusal of this layer (an argument), with its native code; `refused` with `content_refused`.
 class ToolFail extends Error {
-  constructor(readonly code: McpErrorCode) {
+  constructor(
+    readonly code: McpErrorCode,
+    readonly refused?: readonly ApiRefused[],
+  ) {
     super(code)
     this.name = 'ToolFail'
   }
 }
 
-const failed = (code: McpErrorCode, retryAfterMs?: number): ToolResult => {
-  const error: McpToolError = { code, ...(retryAfterMs !== undefined && { retryAfterMs: Math.max(retryAfterMs, 0) }) }
+const failed = (code: McpErrorCode, retryAfterMs?: number, refused?: readonly ApiRefused[]): ToolResult => {
+  const error: McpToolError = {
+    code,
+    ...(retryAfterMs !== undefined && { retryAfterMs: Math.max(retryAfterMs, 0) }),
+    ...(refused !== undefined && { refused: [...refused] }),
+  }
   return { isError: true, content: [{ type: 'text', text: code }], structuredContent: { ...error } }
 }
 
@@ -236,8 +244,14 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     if (Buffer.byteLength(text, 'utf8') > TEXT_MAX) throw new ToolFail('payload_too_large')
   }
 
-  // A native value → the tool's answer, through the edge first.
-  const answer = (tool: ToolName, value: object): ToolResult => {
+  // A native value → the tool's answer, through the edge first. A read of messages (`listing`) first withholds each
+  // message whose content alone is at fault, as the native messages GET does; the rest of the page comes back.
+  const answer = (tool: ToolName, value: object, listing = false): ToolResult => {
+    if (listing) {
+      const listed = withholdMessages(value)
+      logLeaks(log, `mcp:${tool}`, listed.leaks)
+      value = listed.body
+    }
     const leaks = scanEdge(value)
     if (leaks.length > 0) {
       logLeaks(log, `mcp:${tool}`, leaks)
@@ -246,25 +260,30 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     return { structuredContent: value as Record<string, unknown>, content: [{ type: 'text', text: JSON.stringify(value) }] }
   }
 
-  const run = async (tool: ToolName, fn: () => Promise<object> | object): Promise<ToolResult> => {
+  const run = async (tool: ToolName, fn: () => Promise<object> | object, listing = false): Promise<ToolResult> => {
     let value: object
     try {
       value = await fn()
     } catch (err) {
-      if (err instanceof ToolFail || err instanceof ReadError) return failed(err.code)
+      if (err instanceof ToolFail) return failed(err.code, undefined, err.refused)
+      if (err instanceof ReadError) return failed(err.code)
       if (err instanceof WriteError) return failed(err.code, err.code === 'rate_limited' ? (err.retryAfterMs ?? 0) : undefined)
       log({ evt: 'mcp-error', name: err instanceof Error ? err.name : typeof err })
       return failed('internal')
     }
-    return answer(tool, value)
+    return answer(tool, value, listing)
+  }
+
+  // A write's probe found something, before any effect: the native rule (server.ts `refuse`).
+  const refuse = (tool: ToolName, leaks: readonly EdgeLeak[]): never => {
+    logLeaks(log, `mcp:${tool}`, leaks)
+    const refused = refusedOf(leaks)
+    throw refused === null ? new ToolFail('internal') : new ToolFail('content_refused', refused)
   }
 
   const preflight = (tool: ToolName, conv: string, text: string): void => {
     const leaks = scanWriteProbe(conv, text)
-    if (leaks.length > 0) {
-      logLeaks(log, `mcp:${tool}`, leaks)
-      throw new ToolFail('internal')
-    }
+    if (leaks.length > 0) refuse(tool, leaks)
   }
 
   server.registerTool('list_conversations', TOOL_SPECS.list_conversations, (a) => run('list_conversations', () => read.conversations({ limit: a.limit, cursor: a.cursor })))
@@ -279,6 +298,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
         thread: a.thread,
         ...(a.after !== undefined && { oldest: a.after, inclusive: false }),
       }),
+      true,
     ),
   )
 
@@ -338,10 +358,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       // The native rules (unique ids, the id shape, at most one primary, label length) → invalid_argument.
       const options = approvalOptionsOf(a.options)
       const leaks = scanApprovalProbe(a.conversation, a.text, options)
-      if (leaks.length > 0) {
-        logLeaks(log, 'mcp:request_approval', leaks)
-        throw new ToolFail('internal')
-      }
+      if (leaks.length > 0) refuse('request_approval', leaks)
       const rich = richOf(a.text, a.markdown)
       return facade.request(a.conversation, {
         text: a.text,
@@ -397,10 +414,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       if (a.text.trim() === '') throw new ToolFail('invalid_argument')
       if (Buffer.byteLength(a.text, 'utf8') > PANEL_TEXT_MAX) throw new ToolFail('payload_too_large')
       const leaks = scanPanelProbe(a.conversation, a.text, a.title)
-      if (leaks.length > 0) {
-        logLeaks(log, 'mcp:set_panel', leaks)
-        throw new ToolFail('internal')
-      }
+      if (leaks.length > 0) refuse('set_panel', leaks)
       const rich = richOf(a.text, a.markdown)
       return facade.set(a.conversation, { text: a.text, ...(rich !== undefined && { rich }), ...(a.title !== undefined && { title: a.title }) })
     }),
@@ -419,10 +433,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       // The native rules and leak-scan, before the facade.
       const set = validateCommands(a.commands)
       const leaks = scanCommandsProbe(set)
-      if (leaks.length > 0) {
-        logLeaks(log, 'mcp:set_commands', leaks)
-        throw new ToolFail('internal')
-      }
+      if (leaks.length > 0) refuse('set_commands', leaks)
       return facade.set(set)
     }),
   )

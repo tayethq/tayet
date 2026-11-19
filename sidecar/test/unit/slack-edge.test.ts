@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { scanSlack } from '../../src/api/slack/edge'
-import { GENERAL, call, idLeaks, startSlack, type SlackHarness } from '../support/slack-world'
+import { ALICE, BOB, GENERAL, ME, SECRET, call, idLeaks, message, refusal, startSlack, type SlackHarness } from '../support/slack-world'
 
 // The Slack edge (PLANO-AGENTES §0.3.12 item 2) over every answer that carries user text (§8.19 item 18):
 // the text a person or the agent wrote is content — id shapes only — wherever the Slack shape puts it
@@ -118,8 +118,9 @@ describe('the Slack edge — block_actions (A3-4)', () => {
     }
   })
 
-  it('the rest stays structural: a deny word in a structural field, or the same field outside block_actions, blocks', () => {
-    expect(scanSlack(payload({}, { channel: { id: GENERAL.id, name: 'verificar' } })).map((l) => l.pattern)).toContain('verify')
+  it('the rest stays structural: a deny word in a structural field, or the same field outside block_actions, blocks; the channel’s name takes the id shapes only', () => {
+    expect(scanSlack(payload({}, { channel: { id: GENERAL.id, name: 'verificar' } }))).toEqual([])
+    expect(scanSlack(payload({}, { channel: { id: GENERAL.id, name: 'u-abcdefghij23' } })).map((l) => l.pattern)).toContain('opaque-localpart')
     expect(scanSlack(payload({ type: 'verified-button' })).map((l) => l.pattern)).toContain('verify')
     expect(scanSlack({ type: 'something_else', actions: [{ value: 'verificar' }] }).map((l) => l.pattern)).toContain('verify')
   })
@@ -163,9 +164,139 @@ describe('the Slack edge — slash_commands (A4-3)', () => {
     }
   })
 
-  it('the rest stays structural: a deny word in another field, or the same fields outside slash_commands, blocks', () => {
-    expect(scanSlack(frame({ channel_name: 'verificar' })).map((l) => l.pattern)).toContain('verify')
-    expect(scanSlack(frame({ user_name: 'verificar' })).map((l) => l.pattern)).toContain('verify')
+  it('the rest stays structural: the same fields outside slash_commands block; the channel’s and the person’s names take the id shapes only', () => {
+    expect(scanSlack(frame({ channel_name: 'verificar' }))).toEqual([])
+    expect(scanSlack(frame({ channel_name: '@alice:tayet.local' })).map((l) => l.pattern)).toContain('mxid')
+    expect(scanSlack(frame({ user_name: 'verificar' }))).toEqual([])
+    expect(scanSlack(frame({ user_name: 'a-abcdefghij23' })).map((l) => l.pattern)).toContain('agent-localpart')
     expect(scanSlack(frame({ command: '/verify' }, 'events_api')).map((l) => l.pattern)).toContain('verify')
+  })
+})
+
+// A user id in content needs a boundary before its `@`: the address of an scp, a git remote, an rsync target
+// and host:port are text a person or an agent writes. A structural field keeps the full set.
+describe('the Slack edge — an address is not a user id in content', () => {
+  const ADDRESSES = [
+    'scp dev@build-host:project/test/goldens/home.png .',
+    'git clone git@github.com:org/repo.git',
+    'rsync -av user@host:dir/ .',
+    'ssh root@10.0.0.1:22',
+    'ana@vereda.com:8080',
+  ]
+  const found = (v: unknown): string[] => scanSlack(v).map((l) => `${l.path} ${l.pattern}`)
+
+  it.each(ADDRESSES)('passes in a message text and a file name: %s', (text) => {
+    expect(found({ ok: true, text, message: { type: 'message', ts: '1.000001', text } })).toEqual([])
+    expect(found({ ok: true, file: { id: 'FA', name: text, title: text } })).toEqual([])
+  })
+
+  it.each(ADDRESSES)('still blocks in a structural field: %s', (text) => {
+    expect(found({ ok: true, name: text })).toEqual(['$.name mxid'])
+    expect(found({ ok: true, topic: { text } })).toEqual(['$.topic.text mxid'])
+  })
+})
+
+// Names written by people in the Slack shape: what translates a conversation's name and topic, a person's name and
+// the agent's own name gets the id shapes and the two internal identifiers (a person's name also the custody
+// account's). An id shape there is still `internal_error`.
+describe('the Slack edge — names written by people', () => {
+  const VERIFICACAO = { ...GENERAL, name: 'Verificação de contas', topic: 'decrypt e escrow' }
+  const VERONICA = { ...ALICE, name: 'Verônica (verificação)' }
+  const names = (conversation: typeof GENERAL, person: typeof ALICE, me = ME) => {
+    h.world.read.conversations = () => ({ conversations: [conversation, SECRET] })
+    h.world.read.conversation = (id) => (id === conversation.id ? conversation : SECRET)
+    h.world.read.members = () => ({ people: [me, person, BOB] })
+    h.world.read.person = (id) => (id === person.id ? person : id === me.id ? me : BOB)
+    h.world.read.me = () => Promise.resolve(me)
+  }
+
+  it('conversations.list, conversations.info, conversations.open, users.list, users.info and auth.test answer ok with the vocabulary in the names', async () => {
+    names(VERIFICACAO, VERONICA, { ...ME, name: 'Verificador de contas' })
+    const list = await ok('conversations.list', {})
+    expect((list.channels as Array<Record<string, unknown>>)[0]).toMatchObject({ name: 'Verificação de contas', topic: { value: 'decrypt e escrow' } })
+    expect(await ok('conversations.info', { channel: GENERAL.id })).toMatchObject({ channel: { name: 'Verificação de contas', topic: { value: 'decrypt e escrow' } } })
+    expect(await ok('conversations.open', { channel: GENERAL.id, return_im: true })).toMatchObject({ channel: { name: 'Verificação de contas' } })
+    const users = await ok('users.list', {})
+    expect((users.members as Array<Record<string, unknown>>).map((u) => u.name)).toContain('Verônica (verificação)')
+    expect(await ok('users.info', { user: ALICE.id })).toMatchObject({ user: { name: 'Verônica (verificação)', real_name: 'Verônica (verificação)', profile: { display_name: 'Verônica (verificação)', real_name: 'Verônica (verificação)' } } })
+    expect(await ok('auth.test', {})).toMatchObject({ user: 'Verificador de contas' })
+    expect(blocked()).toEqual([])
+  })
+
+  it('an id shape in a name is still internal_error', async () => {
+    names({ ...GENERAL, name: 'u-abcdefghij23' }, VERONICA)
+    expect(await refusal(h.client(), 'conversations.list', {})).toBe('internal_error')
+    expect(await refusal(h.client(), 'conversations.info', { channel: GENERAL.id })).toBe('internal_error')
+    names(GENERAL, { ...ALICE, name: '@alice:tayet.local' })
+    expect(await refusal(h.client(), 'users.info', { user: ALICE.id })).toBe('internal_error')
+    expect(await refusal(h.client(), 'users.list', {})).toBe('internal_error')
+    expect(JSON.stringify(h.logs)).not.toContain('u-abcdefghij23')
+  })
+
+  const channel = { id: GENERAL.id, name: 'geral', is_channel: true, is_group: false, is_im: false, is_mpim: false, is_private: false, is_archived: false, is_member: true, created: 0, topic: { value: '', creator: '', last_set: 0 }, purpose: { value: '', creator: '', last_set: 0 }, num_members: 3 }
+  const user = { id: ALICE.id, team_id: ME.workspace, name: 'Alice', real_name: 'Alice', deleted: false, is_bot: false, profile: { display_name: 'Alice', real_name: 'Alice' } }
+  const found = (v: unknown): string[] => scanSlack(v).map((l) => `${l.path} ${l.pattern}`)
+
+  it('the scan by shape: a channel’s name and topic, a user’s four names, auth.test’s user', () => {
+    expect(found({ ok: true, channel: { ...channel, name: 'cofre', topic: { value: 'verificar', creator: '', last_set: 0 } } })).toEqual([])
+    expect(found({ ok: true, user: { ...user, name: 'verificar', real_name: 'decrypt', profile: { display_name: 'escrow', real_name: 'olm' } } })).toEqual([])
+    expect(found({ ok: true, url: 'https://chat.example.com/', team: ME.workspace, team_id: ME.workspace, user: 'verificar', user_id: ME.id, bot_id: 'BAGENTAAAAA' })).toEqual([])
+    expect(found({ ok: true, user: { ...user, profile: { display_name: 'cofre', real_name: 'Alice' } } })).toEqual(['$.user.profile.display_name custody-identity'])
+    expect(found({ ok: true, url: 'https://chat.example.com/', team: ME.workspace, team_id: ME.workspace, user: 'cofre', user_id: ME.id, bot_id: 'BAGENTAAAAA' })).toEqual(['$.user custody-identity'])
+    expect(found({ ok: true, channels: [{ ...channel, name: '!r:tayet.local' }] })).toEqual(['$.channels[0].name room-id'])
+    expect(found({ ok: true, members: [{ ...user, real_name: 'u-abcdefghij23' }] })).toEqual(['$.members[0].real_name opaque-localpart'])
+  })
+
+  it('what does not translate those names stays structural: purpose, the other fields, a user object with another shape', () => {
+    expect(found({ ok: true, channel: { ...channel, purpose: { value: 'verificar', creator: '', last_set: 0 } } })).toEqual(['$.channel.purpose.value verify'])
+    expect(found({ ok: true, user: { ...user, deleted: 'verified' } })).toEqual(['$.user.deleted verify'])
+    expect(found({ ok: true, user: { id: ALICE.id, name: 'verificar' } })).toEqual(['$.user.name verify'])
+    expect(found({ ok: true, team: 'verificar' })).toEqual(['$.team verify'])
+  })
+
+  it('a view_submission’s user: the names take the id shapes only', () => {
+    const submission = (u: Record<string, unknown>) => ({ type: 'view_submission', team: { id: ME.workspace, domain: '' }, user: { id: ALICE.id, team_id: ME.workspace, ...u } })
+    expect(found(submission({ username: 'verificar', name: 'cofre verificado' }))).toEqual(['$.user.name custody-identity'])
+    expect(found(submission({ username: 'Verônica', name: 'Verônica (verificação)' }))).toEqual([])
+    expect(found(submission({ username: 'u-abcdefghij23', name: 'x' }))).toEqual(['$.user.username opaque-localpart'])
+  })
+
+  it('a block_actions’ user: the names take the id shapes only', () => {
+    const click = (u: Record<string, unknown>) => ({ type: 'block_actions', user: { id: ALICE.id, team_id: ME.workspace, ...u }, actions: [] })
+    expect(found(click({ username: 'verificar', name: 'Verônica (verificação)' }))).toEqual([])
+    expect(found(click({ username: 'Ana', name: '@ana:tayet.local' }))).toEqual(['$.user.name mxid'])
+  })
+})
+
+// A reaction's name in the Slack shape (`reactions[].name` of a message) is user content: the id shapes only.
+describe('the Slack edge — a reaction’s name is content', () => {
+  const found = (v: unknown): string[] => scanSlack(v).map((l) => `${l.path} ${l.pattern}`)
+  const withReaction = (name: string) => ({ ok: true, messages: [{ type: 'message', user: ALICE.id, text: 'ok', ts: '1.000001', reactions: [{ name, count: 1, users: [] }] }] })
+
+  it('the vocabulary passes; an id shape flags', () => {
+    expect(found(withReaction('verificado'))).toEqual([])
+    expect(found(withReaction('@alice:tayet.local'))).toEqual(['$.messages[0].reactions[0].name mxid'])
+  })
+
+  it('outside a message object, a reaction-like `name` stays structural', () => {
+    expect(found({ ok: true, reactions: [{ name: 'verificado', count: 1 }] })).toEqual(['$.reactions[0].name verify'])
+  })
+
+  it('conversations.history: a reaction with the vocabulary reads back; one with an id shape withholds only its message', async () => {
+    h.world.messages.get(GENERAL.id)?.unshift(
+      message({ id: '1730000500.000500', text: 'ok', reactions: [{ emoji: 'verificado', count: 1, mine: false }] }),
+      message({ id: '1730000400.000400', text: 'ok', reactions: [{ emoji: '@bob:server.example', count: 1, mine: false }] }),
+    )
+    const res = await ok('conversations.history', { channel: GENERAL.id, limit: 2 })
+    const messages = res.messages as Array<Record<string, unknown>>
+    expect(messages[0]).toMatchObject({ ts: '1730000500.000500', text: 'ok', reactions: [{ name: 'verificado', count: 1, users: [] }] })
+    expect(messages[1]).toEqual({ type: 'message', user: ALICE.id, text: '', ts: '1730000400.000400' })
+    expect(blocked()).toEqual([{ evt: 'leak-blocked', where: 'slack conversations.history', path: '$.messages[1].reactions[0].emoji', pattern: 'mxid' }])
+  })
+
+  it('conversations.replies: the withheld reply carries its thread_ts', async () => {
+    h.world.messages.get(GENERAL.id)?.unshift(message({ id: '1730000400.000400', author: BOB.id, text: 'e @alice:server.example', thread: '1730000100.000100' }))
+    const res = await ok('conversations.replies', { channel: GENERAL.id, ts: '1730000100.000100' })
+    expect((res.messages as Array<Record<string, unknown>>).at(-1)).toEqual({ type: 'message', user: BOB.id, text: '', ts: '1730000400.000400', thread_ts: '1730000100.000100' })
   })
 })

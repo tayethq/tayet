@@ -1,7 +1,7 @@
 // In-memory read and write facades for the Slack layer's tests (no SDK, no stack): a small world of
 // conversations, people and messages, tokenized as the core hands them out, plus the real local API
 // server on an ephemeral port and the real @slack/web-api client pointed at it.
-import { WebClient, type WebClientOptions } from '@slack/web-api'
+import { WebAPIPlatformError, WebClient, type WebClientOptions } from '@slack/web-api'
 import { PROTOCOL_PATTERNS } from '@tayet/shared/leak-scan'
 import { createApiServer, type ApiServer } from '../../src/api/server'
 import type { ApiConversation, ApiEvent, ApiMe, ApiMessage, ApiPerson } from '../../src/api/contract'
@@ -363,4 +363,16 @@ export async function refusal(client: WebClient, method: string, args: Record<st
     return (err as { data?: { error?: string } }).data?.error ?? String(err)
   }
   return 'ok'
+}
+
+// The whole answer of a platform error, as the WebClient hands it (`WebAPIPlatformError.data`): `error` and
+// `response_metadata`. Throws when the call did not fail with one.
+export async function refusalData(client: WebClient, method: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  try {
+    await client.apiCall(method, args)
+  } catch (err) {
+    if (err instanceof WebAPIPlatformError) return { ...err.data }
+    throw err
+  }
+  throw new Error(`${method} did not fail`)
 }

@@ -6,7 +6,7 @@ import { WriteError } from '../../src/core/write'
 import { MULTIPART_OVERHEAD, UPLOAD_TTL_MS, UploadStaging } from '../../src/api/slack/staging'
 import { boundaryOf, parseFilePart } from '../../src/api/slack/multipart'
 import { mimetypeOf } from '../../src/api/slack/files'
-import { GENERAL, ME, TOKEN, call, createWorld, idLeaks, refusal, startSlack, type SlackHarness } from '../support/slack-world'
+import { GENERAL, ME, TOKEN, call, createWorld, idLeaks, refusal, refusalData, startSlack, type SlackHarness } from '../support/slack-world'
 
 // The upload v2 flow (PLANO-AGENTES §0.3.12 item 6) through the real @slack/web-api filesUploadV2: the
 // local upload_url, the hand-written multipart parser, the staging (TTL, single-use tickets), and
@@ -212,14 +212,22 @@ describe('files.completeUploadExternal — partial failure', () => {
     expect(await staged()).toEqual([])
   })
 
-  it('an id shape in the comment or the filename → internal_error before any effect', async () => {
+  it('an id shape in the comment or the filename → invalid_arguments before any effect', async () => {
     const t = await ticket('a.txt', 1)
     const { body, type } = multipart([{ name: 'body', filename: 'a.txt', data: 'x' }])
     await post(t.upload_url, body, type)
-    expect(await refusal(h.client(), 'files.completeUploadExternal', { files: JSON.stringify([{ id: t.file_id }]), channel_id: GENERAL.id, initial_comment: 'fale com @bob:server.example' })).toBe('internal_error')
+    expect(await refusal(h.client(), 'files.completeUploadExternal', { files: JSON.stringify([{ id: t.file_id }]), channel_id: GENERAL.id, initial_comment: 'fale com @bob:server.example' })).toBe('invalid_arguments')
     const named = await ticket('@bob:server.example.txt', 1)
     await post(named.upload_url, body, type)
-    expect(await refusal(h.client(), 'files.completeUploadExternal', { files: JSON.stringify([{ id: named.file_id }]), channel_id: GENERAL.id })).toBe('internal_error')
+    const data = await refusalData(h.client(), 'files.completeUploadExternal', { files: JSON.stringify([{ id: named.file_id }]), channel_id: GENERAL.id })
+    // The title defaults to the filename: two findings, two lines.
+    expect(data).toEqual({
+      ok: false,
+      error: 'invalid_arguments',
+      response_metadata: { messages: ['[ERROR] content looks like an internal id: user_id', '[ERROR] content looks like an internal id: user_id'] },
+    })
+    expect(JSON.stringify(data)).not.toContain('@bob')
+    expect(h.logs.filter((l) => l.evt === 'leak-blocked' && l.where === 'slack files.completeUploadExternal').map((l) => l.path)).toContain('$.files[0].name')
     expect(effects()).toEqual([])
   })
 

@@ -257,6 +257,31 @@ The edit of a panel or of a commands list (this agent's or another's) never reac
 Errors are `{ "error": { "code": "…", "message": "…" } }`; `rate_limited` (429) comes with
 `Retry-After`. After a revocation every route answers 503 `revoked` and the process exits with 78.
 
+A write whose content looks like an internal id is refused before anything is sent or queued: 422
+`content_refused`, with `refused`, one entry per finding. `field` is where (`text`, `title`, `files[0].name`,
+`approval.options[0].label`, `commands[0].description`, …) and `pattern` the kind of id, by product name:
+`user_id`, `conversation_id`, `message_id` or `media_address`. The text that matched never comes back. Rephrase
+and send again. This applies to the message POST and PATCH, the card POST and close, the panel PUT, the commands
+PUT and the file POST (a name).
+
+```json
+{ "error": { "code": "content_refused", "message": "…", "refused": [{ "field": "text", "pattern": "user_id" }] } }
+```
+
+In a read of messages (`GET …/messages`, with or without `thread`), a message whose content (its text, rich text,
+file names, card, command or the emoji of a reaction) looks like an internal id comes back withheld: `id`,
+`conversation`, `author`, `mentionsMe` and `thread` (on a reply) stay, `text` is empty, `reactions` is empty and
+`unavailable` is `true`; nothing else (no `rich`, `files`, thread summary, card or command). The rest of the page
+comes back as usual. The message of an event goes out the same way.
+
+The names people write — a conversation's `name` and `topic`, a person's `name`, the agent's own `name` — come back
+as written: an ordinary word in them does not withhold the answer (a channel named `Verificação de contas` is
+listed as such).
+
+A 500 `internal` is the agent's own failure: an answer it withholds (a read that still carries an internal id once
+those messages are withheld, such as one in a name, or the answer of a write that already happened), or a refusal
+before the write for anything other than an id shape in the content.
+
 ## Slack layer (Web API)
 
 The same listener speaks part of Slack's Web API, so a program written against a Slack SDK can run as a
@@ -359,6 +384,16 @@ The methods (Slack's cut for v1). Ids are the same opaque ids as the native API,
   true for agents. `deleted` is always false, and there is never an `email`.
 - **Answers.** HTTP 200 `{ ok }`, except the limit: HTTP 429 with `Retry-After`, which the Slack SDKs wait
   out. The upload and download URLs answer with HTTP status codes, as a file host does.
+- **Content that looks like an internal id.** `chat.postMessage` (text or card), `chat.update`,
+  `files.completeUploadExternal` and `views.open` refuse it before anything is sent: `invalid_arguments`, with
+  one line per finding in `response_metadata.messages`, such as
+  `[ERROR] content looks like an internal id: user_id` (`user_id`, `conversation_id`, `message_id` or
+  `media_address`; never the text that matched). The Slack SDKs put the lines in the error's `data` and log
+  them. `internal_error` stays the agent's own failure.
+- **Messages withheld in a read.** In `conversations.history` and `conversations.replies`, a message whose content
+  (the emoji of a reaction included) looks like an internal id comes back with an empty `text` and no files or
+  reactions; a reply keeps its `thread_ts`. The rest of the page comes back. A thread's root keeps `thread_ts`, `reply_count` and `latest_reply` in `conversations.replies`,
+  counted from the replies read.
 - **Fixed Slack domains.** An app that checks Slack's domains in its code must also accept the sidecar's
   addresses: the `response_url` is on this listener (`<api.json url>/slack/response/…`, not
   `https://hooks.slack.com`), and so is the `upload_url` of upload v2 (not `files.slack.com`). A button whose
@@ -415,7 +450,8 @@ at once are fine: every event goes to each of them.
   supported: it takes the `chat.update` path above (changes the request; closes the card if still open; with
   an `actions` block, edits the open card or posts a new one in its place). Without `replace_original`, or
   with `delete_original` → HTTP 400 `invalid_arguments`; an unknown, expired or used-up URL → 404
-  `expired_url`.
+  `expired_url`. Content that looks like an internal id → HTTP 400 `invalid_arguments`, nothing changed (no
+  `response_metadata` here).
 - **Slash commands.** A person's `/` command to your app comes as a `slash_commands` envelope (below).
 - **Forms.** The `trigger_id` of a click or of a command opens one form with `views.open`, and the person's
   submission comes as a `view_submission` in an `interactive` envelope ([Forms](#forms)).
@@ -472,7 +508,8 @@ npx tayet-agent --server <your Tayet address> --token <credential> --slack-manif
   approval card). With several connections open, each gets the envelope and only the first ack counts.
 - **`response_url`.** One per command, on this listener, valid for 30 minutes and 5 calls, with no token (the URL is
   the credential: keep it out of your logs). HTTP 200 `{ ok: true }`, also when there is nothing to write; an
-  unknown, expired or used-up URL → 404 `expired_url`.
+  unknown, expired or used-up URL → 404 `expired_url`; content that looks like an internal id → HTTP 400
+  `invalid_arguments`, nothing written.
 
 ```js
 app.command('/deploy', async ({ ack, command, respond }) => {
@@ -682,7 +719,11 @@ const { structuredContent } = await mcp.callTool({ name: 'wait_for_mention', arg
 
 The values are the local API's (same shapes as its JSON), in `structuredContent` and as JSON text in
 `content`. A refused call has `isError: true` and the local API's error code as its text (`not_member`,
-`rate_limited` with `retryAfterMs` in `structuredContent`, …).
+`rate_limited` with `retryAfterMs` in `structuredContent`, …). Content that looks like an internal id
+(`send_message`, `request_approval`, `close_approval`, `set_panel`, `set_commands`) is `content_refused`, with
+the local API's `refused` list in `structuredContent`; nothing is sent. `read_messages` gives back the page with a
+message whose content looks like an internal id withheld, as the local API does (`unavailable: true`, no content).
+`internal` is the agent's own failure.
 
 - **`send_message`** renders `text` as Markdown by default, as the local API does with `markdown: true`;
   pass `markdown: false` to send the text literally.

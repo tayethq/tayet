@@ -148,12 +148,36 @@ describe('MCP tools — the facades’ errors', () => {
 })
 
 describe('MCP tools — the edge scan (before serialization)', () => {
-  it('read_messages: an id in a message text → internal, leak-blocked with where mcp:read_messages', async () => {
+  it('read_messages: an id in a message text → the page with that message withheld, leak-blocked with where mcp:read_messages', async () => {
     h = await startMcp()
     h.world.messages.get(GENERAL.id)?.unshift(message({ id: '1730000400.000400', text: 'fala com @bob:server.example' }))
-    expect(refused(await callTool(await h.client(), 'read_messages', { conversation: GENERAL.id }))).toBe('internal')
-    expect(leakLines(h.logs, 'mcp:read_messages')).toHaveLength(1)
+    const page = ok(await callTool(await h.client(), 'read_messages', { conversation: GENERAL.id }))
+    const messages = page.messages as Array<Record<string, unknown>>
+    expect(messages[0]).toEqual({ id: '1730000400.000400', conversation: GENERAL.id, author: ALICE.id, text: '', mentionsMe: false, reactions: [], unavailable: true })
+    expect(messages.slice(1).map((m) => [m.id, m.text])).toEqual([
+      ['1730000200.000200', 'mensagem de quem saiu'],
+      ['1730000100.000100', 'pergunta do Bob'],
+    ])
+    expect(leakLines(h.logs, 'mcp:read_messages')).toEqual([{ evt: 'leak-blocked', where: 'mcp:read_messages', path: '$.messages[0].text', pattern: 'mxid' }])
     expect(JSON.stringify(h.logs)).not.toContain('@bob')
+  })
+
+  it('read_messages with `thread`: a reply with an id in its text comes back withheld, the rest of the page with its text', async () => {
+    h = await startMcp()
+    h.world.messages.get(GENERAL.id)?.unshift(message({ id: '1730000400.000400', text: 'e @bob:server.example', thread: '1730000100.000100' }))
+    const page = ok(await callTool(await h.client(), 'read_messages', { conversation: GENERAL.id, thread: '1730000100.000100' }))
+    expect((page.messages as Array<Record<string, unknown>>).map((m) => [m.id, m.text, m.unavailable ?? false])).toEqual([
+      ['1730000400.000400', '', true],
+      ['1730000300.000300', 'resposta da Alice', false],
+    ])
+    expect(leakLines(h.logs, 'mcp:read_messages')).toHaveLength(1)
+  })
+
+  it('read_messages: a structural finding in a message (a raw id in author) → internal', async () => {
+    h = await startMcp()
+    h.world.messages.get(GENERAL.id)?.unshift(message({ id: '1730000400.000400', author: '@bob:server.example' }))
+    expect(refused(await callTool(await h.client(), 'read_messages', { conversation: GENERAL.id }))).toBe('internal')
+    expect(h.logs).toContainEqual({ evt: 'leak-blocked', where: 'mcp:read_messages', path: '$.messages[0].author', pattern: 'mxid' })
   })
 
   it('a protocol word in a structural field (a conversation name) → internal', async () => {
@@ -176,9 +200,47 @@ describe('MCP tools — the edge scan (before serialization)', () => {
 
   it('send_message: an id in the text is refused BEFORE the send (preflight)', async () => {
     h = await startMcp()
-    expect(refused(await callTool(await h.client(), 'send_message', { conversation: GENERAL.id, text: 'oi @bob:server.example' }))).toBe('internal')
+    const answer = await callTool(await h.client(), 'send_message', { conversation: GENERAL.id, text: 'oi @bob:server.example' })
+    expect(refused(answer)).toBe('content_refused')
+    expect(answer.structuredContent).toEqual({ code: 'content_refused', refused: [{ field: 'text', pattern: 'user_id' }] })
+    expect(JSON.stringify(answer)).not.toContain('@bob')
     expect(h.world.calls).toEqual([])
     expect(leakLines(h.logs, 'mcp:send_message')).toHaveLength(1)
+  })
+
+  it('send_message: a probe finding that is not an id shape (a word of the deny list in the conversation) stays internal', async () => {
+    h = await startMcp()
+    const answer = await callTool(await h.client(), 'send_message', { conversation: 'verify-room', text: 'ask @alice:tayet.local' })
+    expect(refused(answer)).toBe('internal')
+    expect(answer.structuredContent).toEqual({ code: 'internal' })
+    expect(h.logs).toContainEqual({ evt: 'leak-blocked', where: 'mcp:send_message', path: '$.conversation', pattern: 'verify' })
+    expect(h.world.calls).toEqual([])
+  })
+
+  it('send_message: an id shape in the conversation (the structural scan) stays internal, alone or with an id shape in the text', async () => {
+    h = await startMcp()
+    const c = await h.client()
+    for (const text of ['ok', 'ask @alice:tayet.local']) {
+      const answer = await callTool(c, 'send_message', { conversation: '!abc:tayet.local', text })
+      expect(refused(answer)).toBe('internal')
+      expect(answer.structuredContent).toEqual({ code: 'internal' })
+    }
+    expect(h.logs).toContainEqual({ evt: 'leak-blocked', where: 'mcp:send_message', path: '$.conversation', pattern: 'room-id' })
+    expect(h.world.calls).toEqual([])
+  })
+
+  it('send_message: an scp address is not a user id, the send happens; a user id is still refused before it', async () => {
+    h = await startMcp()
+    const c = await h.client()
+    const text = 'scp dev@build-host:project/test/goldens/home.png .'
+    // Not through ok(): its net is the full pattern set, where this address still flags by design.
+    const sent = await callTool(c, 'send_message', { conversation: GENERAL.id, text })
+    expect(sent.isError).not.toBe(true)
+    expect(sent.structuredContent).toMatchObject({ text })
+    expect(h.world.calls).toMatchObject([{ op: 'post', conversation: GENERAL.id, text }])
+    expect(leakLines(h.logs, 'mcp:send_message')).toEqual([])
+    expect(refused(await callTool(c, 'send_message', { conversation: GENERAL.id, text: 'ask @alice:tayet.local' }))).toBe('content_refused')
+    expect(h.world.calls).toHaveLength(1)
   })
 
   it('send_message: an answer the edge withholds after the send → internal (the reply scan)', async () => {
@@ -194,5 +256,42 @@ describe('MCP tools — the edge scan (before serialization)', () => {
     h = await startMcp()
     h.world.messages.get(GENERAL.id)?.unshift(message({ id: '1730000400.000400', text: 'pode verificar o cofre e a federation?' }))
     ok(await callTool(await h.client(), 'read_messages', { conversation: GENERAL.id }))
+  })
+})
+
+// Names written by people, a reaction's emoji and the withheld form's thread, through the MCP tools.
+describe('MCP tools — names written by people, reactions, the withheld thread', () => {
+  it('list_conversations, list_members and get_person return the page with the vocabulary in the names', async () => {
+    h = await startMcp()
+    const verificacao = { ...GENERAL, name: 'Verificação de contas', topic: 'decrypt e escrow' }
+    const veronica = { ...ALICE, name: 'Verônica (verificação)' }
+    h.world.read.conversations = () => ({ conversations: [verificacao] })
+    h.world.read.members = () => ({ people: [veronica] })
+    h.world.read.person = () => veronica
+    const c = await h.client()
+    expect(ok(await callTool(c, 'list_conversations'))).toEqual({ conversations: [verificacao] })
+    expect(ok(await callTool(c, 'list_members', { conversation: GENERAL.id }))).toEqual({ people: [veronica] })
+    expect(ok(await callTool(c, 'get_person', { id: ALICE.id }))).toEqual(veronica)
+    expect(h.logs.filter((l) => l.evt === 'leak-blocked')).toEqual([])
+  })
+
+  it('read_messages: a reaction with the vocabulary passes; one with an id shape withholds only its message', async () => {
+    h = await startMcp()
+    h.world.messages.get(GENERAL.id)?.unshift(
+      message({ id: '1730000500.000500', text: 'ok', reactions: [{ emoji: 'verificado', count: 1, mine: false }] }),
+      message({ id: '1730000400.000400', text: 'ok', reactions: [{ emoji: '@bob:server.example', count: 1, mine: false }] }),
+    )
+    const page = ok(await callTool(await h.client(), 'read_messages', { conversation: GENERAL.id }))
+    const messages = page.messages as Array<Record<string, unknown>>
+    expect(messages[0]).toMatchObject({ id: '1730000500.000500', text: 'ok', reactions: [{ emoji: 'verificado', count: 1, mine: false }] })
+    expect(messages[1]).toMatchObject({ id: '1730000400.000400', text: '', reactions: [], unavailable: true })
+    expect(leakLines(h.logs, 'mcp:read_messages')).toEqual([{ evt: 'leak-blocked', where: 'mcp:read_messages', path: '$.messages[1].reactions[0].emoji', pattern: 'mxid' }])
+  })
+
+  it('read_messages with `thread`: the withheld reply keeps its thread', async () => {
+    h = await startMcp()
+    h.world.messages.get(GENERAL.id)?.unshift(message({ id: '1730000400.000400', text: 'e @bob:server.example', thread: '1730000100.000100' }))
+    const page = ok(await callTool(await h.client(), 'read_messages', { conversation: GENERAL.id, thread: '1730000100.000100' }))
+    expect((page.messages as Array<Record<string, unknown>>)[0]).toEqual({ id: '1730000400.000400', conversation: GENERAL.id, author: ALICE.id, text: '', mentionsMe: false, reactions: [], unavailable: true, thread: '1730000100.000100' })
   })
 })

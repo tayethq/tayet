@@ -5,7 +5,7 @@
 //
 // Ids are the native API's opaque tokens (api/ids.ts): `C…`/`D…` conversation, `U…` person; a message
 // is its `ts` inside its conversation. A `cursor` is opaque and comes from an earlier answer.
-import type { ApiApprovalOption, ApiApprovalStatus, ApiCommand, ApiCommandsAccepted, ApiConversationList, ApiPanelAccepted, ApiErrorCode, ApiMessage, ApiMessageList, ApiPeopleList, ApiPerson } from '../contract'
+import type { ApiApprovalOption, ApiApprovalStatus, ApiCommand, ApiCommandsAccepted, ApiConversationList, ApiPanelAccepted, ApiErrorCode, ApiMessage, ApiMessageList, ApiPeopleList, ApiPerson, ApiRefused } from '../contract'
 
 export interface McpListConversationsArgs {
   limit?: number
@@ -145,4 +145,6 @@ export interface McpToolError {
   code: McpErrorCode
   // With `rate_limited`: how long to wait before retrying.
   retryAfterMs?: number
+  // With `content_refused`: what to rephrase (the local API's list).
+  refused?: ApiRefused[]
 }

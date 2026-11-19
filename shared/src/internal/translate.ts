@@ -29,7 +29,7 @@ import { roleOf } from './role-mapping'
 import { brandChannelId, brandUserId, brandMessageId } from './protocol-ids'
 import { richFromContent, stripReplyFallback } from './rich-text'
 import { editAppliesTo } from './edit-author'
-import { approvalClosed, isAgentSender, readApprovalOptions } from './approval'
+import { approvalClosed, isAgentSender, readApprovalNeeded, readApprovalOptions } from './approval'
 import { readCommandMarker, startsWithCommand } from './commands'
 import {
   APPROVAL_MSGTYPE,
@@ -141,6 +141,9 @@ export interface ApprovalCardFacts {
   bornClosedAt: number | undefined
   // The author edited the card: the first close, if any, is read from its edits.
   edited: boolean
+  // How many answers the card asks for, from its original content; absent on a card its first answer
+  // resolves.
+  needed?: number
 }
 
 // The card behind a translation: its ORIGINAL content (the options come only from there — an edit never
@@ -746,16 +749,29 @@ function approvalBody(
   if (!card || !isAgentSender(card.sender)) return unsupported(shape, 'message-content', ctx)
   const options = readApprovalOptions(card.original)
   if (!options) return unsupported(shape, 'message-content', ctx)
+  const needed = readApprovalNeeded(card.original)
+  if (needed === null) return unsupported(shape, 'message-content', ctx)
   const raw = typeof content.body === 'string' ? content.body : ''
   const text = isReply ? stripReplyFallback(raw) : raw
   const request = richFromContent(content)
   const closedAt = approvalClosed(content) ? (card?.editedAt ?? card?.sentAt) : undefined
   const bornClosedAt = card && approvalClosed(card.original) ? card.sentAt : undefined
   const realId = card?.realEventId
-  const facts: ApprovalCardFacts = { options, author: card?.sender ?? '', closedAt, bornClosedAt, edited: card?.editedAt !== undefined }
-  const state: ApprovalState =
-    (realId !== undefined ? ctx.approvalStateFor?.(realId, facts) : undefined) ??
-    (closedAt !== undefined ? { kind: 'closed' } : { kind: 'open' })
+  const facts: ApprovalCardFacts = {
+    options,
+    author: card?.sender ?? '',
+    closedAt,
+    bornClosedAt,
+    edited: card?.editedAt !== undefined,
+    ...(needed !== undefined && { needed }),
+  }
+  const unread: ApprovalState =
+    needed !== undefined
+      ? { kind: 'multi', needed, answers: [], closed: closedAt !== undefined }
+      : closedAt !== undefined
+        ? { kind: 'closed' }
+        : { kind: 'open' }
+  const state: ApprovalState = (realId !== undefined ? ctx.approvalStateFor?.(realId, facts) : undefined) ?? unread
   return { kind: 'approval', text, ...(request && { request }), options, state }
 }
 

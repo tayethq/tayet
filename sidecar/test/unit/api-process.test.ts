@@ -457,9 +457,16 @@ describe('files through the real SDK (§0.3.7 items 7, 8)', () => {
     const b = await boot()
     await online(b)
     expect(errorCode(await b.call('GET', `/v1/files/${fileToken('mxc://fake.local/nothing')}`))).toBe('file_not_found')
-    // The listing registers the files (it answers 500 itself: one name in it is an id).
+    // The listing registers the files (the message whose file name is an id comes back withheld, the rest with their files).
     const listing = await b.call('GET', `${FILES}/messages`)
-    expect([listing.status, errorCode(listing)]).toEqual([500, 'internal'])
+    expect(listing.status).toBe(200)
+    const listed = (listing.json as { messages: Array<{ unavailable?: true; files?: unknown[] }> }).messages
+    expect(listed.map((m) => [m.unavailable ?? false, m.files?.length ?? 0])).toEqual([
+      [true, 0],
+      [false, 1],
+      [false, 1],
+    ])
+    expect(b.p.lines).toContainEqual({ evt: 'leak-blocked', where: 'GET messages', path: '$.messages[0].files[0].name', pattern: 'mxid' })
     const tampered = await b.call('GET', `/v1/files/${fileToken(FILE_TAMPERED.uri)}`)
     expect([tampered.status, errorCode(tampered)]).toEqual([502, 'upstream_failed'])
     expect(b.p.lines).toContainEqual(expect.objectContaining({ evt: 'download-integrity-failed' }))

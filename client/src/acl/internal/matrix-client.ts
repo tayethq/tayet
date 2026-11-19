@@ -213,7 +213,7 @@ import {
   EDIT_REDACTION_FIELD,
   undecryptedArrival,
 } from '@tayet/shared/internal'
-import { ApprovalAggregator, PendingAnswers, answerFactOf, answeredCardOf, editFactOf, fetchAnswerPage, fetchEditPage, type PendingAnswer } from './approval-state'
+import { ApprovalAggregator, PendingAnswers, answerFactOf, answeredCardOf, editFactOf, fetchAnswerPage, fetchEditPage, takesAnswer, type PendingAnswer } from './approval-state'
 import { PanelAggregator, fetchPanelPage } from './panel-state'
 import { CommandAggregator, fetchCommandsPage } from './command-state'
 import { FormReplies, FormSession, fetchFormPage, formRelatedOf, realClock, type FormClock, type SubmitOutcome } from './form-state'
@@ -2320,7 +2320,8 @@ export class MatrixGateway {
       // ADR-091: the card's aggregated state — cached, else open/closed while the read runs.
       // A3-2: this session's own answer in flight folds in while the card is open (the aggregated state wins).
       approvalStateFor: room
-        ? (realEventId, card) => this.pendingAnswers.overlay(room.roomId, realEventId, this.approvals.stateFor(room.roomId, realEventId, card))
+        ? (realEventId, card) =>
+            this.pendingAnswers.overlay(room.roomId, realEventId, this.approvals.stateFor(room.roomId, realEventId, card), this.client?.getUserId() ?? undefined)
         : undefined,
       formReplyFor: room ? (realEventId, anchor) => this.formReplies.replyFor(room.roomId, realEventId, anchor) : undefined,
     }
@@ -4519,7 +4520,8 @@ export class MatrixGateway {
     if (!chosen) throw new Error('option not on the card')
     const inFlight = this.pendingAnswers.get(roomId, cardId)
     if (body.state.kind === 'sending' && inFlight?.work) return inFlight.work
-    if (body.state.kind !== 'open' && body.state.kind !== 'failed') throw new Error('approval card not open')
+    if (body.state.kind === 'multi' && body.state.own?.status === 'sending' && inFlight?.work) return inFlight.work
+    if (!takesAnswer(body.state, client.getUserId() ?? undefined)) throw new Error('approval card not open')
 
     const pending: PendingAnswer = { option, status: 'sending' }
     const txnId = client.makeTxnId()

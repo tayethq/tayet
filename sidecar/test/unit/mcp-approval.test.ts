@@ -140,13 +140,27 @@ describe.each<Era>(['legacy', 'modern'])('approval card tools (%s era)', (era) =
     expect(f.calls).toHaveLength(1)
   })
 
-  it('request_approval: a protocol id in a label is refused before any effect (internal, leak line)', async () => {
+  it('request_approval: a protocol id in a label is refused before any effect (content_refused, leak line)', async () => {
     const f = fakeApprovals()
     h = await startMcp({ approvals: f.approvals })
     const c = await h.client(era)
-    expect(refused(await callTool(c, 'request_approval', { conversation: GENERAL.id, text: 'Publicar?', options: [{ id: 'a', label: '@bob:tayet.local' }] }))).toBe('internal')
+    const answer = await callTool(c, 'request_approval', { conversation: GENERAL.id, text: 'Publicar?', options: [{ id: 'a', label: '@bob:tayet.local' }] })
+    expect(refused(answer)).toBe('content_refused')
+    expect(answer.structuredContent).toEqual({ code: 'content_refused', refused: [{ field: 'approval.options[0].label', pattern: 'user_id' }] })
+    expect(JSON.stringify(answer)).not.toContain('bob')
     expect(h.logs.some((l) => l.evt === 'leak-blocked' && l.where === 'mcp:request_approval')).toBe(true)
     expect(JSON.stringify(h.logs)).not.toContain('bob')
+    expect(f.calls).toEqual([])
+  })
+
+  it('close_approval: an id shape in the new text → content_refused before the close', async () => {
+    const f = fakeApprovals()
+    h = await startMcp({ approvals: f.approvals })
+    const c = await h.client(era)
+    const answer = await callTool(c, 'close_approval', { conversation: GENERAL.id, id: CARD, text: 'ver mxc://tayet.local/m' })
+    expect(refused(answer)).toBe('content_refused')
+    expect(answer.structuredContent).toEqual({ code: 'content_refused', refused: [{ field: 'text', pattern: 'media_address' }] })
+    expect(h.logs).toContainEqual({ evt: 'leak-blocked', where: 'mcp:close_approval', path: '$.text', pattern: 'mxc-uri' })
     expect(f.calls).toEqual([])
   })
 

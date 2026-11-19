@@ -24,7 +24,7 @@
 //   GET    /v1/commands                            → { commands, pending }
 // One set for every conversation the agent is a member of, written there under the panel's budget (`pending`
 // counts the conversations still to write). A rule broken, a repeated name or an unknown field is 400; a
-// manifest over 8 KiB is 413 `payload_too_large`; an id shape in a name, description or hint is 500 `internal`.
+// manifest over 8 KiB is 413 `payload_too_large`; an id shape in a name, description or hint is 422 `content_refused`.
 // A JSON body over 256 KiB or a `text` over 32 KiB is 413 `payload_too_large`; a file over the upload
 // limit is 413 `file_too_large` (before reading, when Content-Length says so; otherwise the body is cut
 // as soon as it passes the limit). The connection is closed after either 413.
@@ -37,11 +37,15 @@
 //   5. `Authorization: Bearer <local token>`, compared in constant time over sha256 (401 `unauthorized`);
 //   6. the route (404 `not_found`, 405 `method_not_allowed` with `Allow`).
 // Errors are `{ error: { code, message } }`. Every body and every event goes through the edge scan
-// (api/edge.ts) first: a finding answers 500 `internal` (an event goes out `unavailable`).
+// (api/edge.ts) first: a finding answers 500 `internal` (an event goes out `unavailable`, and so does a
+// message of the messages GET whose content alone is at fault: the rest of the page comes back).
 //
 // A write whose answer would be withheld at the edge (an id shape in the text or the file name) is
-// refused BEFORE any effect, with the same 500 `internal` and `leak-blocked` line: an answer withheld
-// after the send would invite a retry and a duplicate.
+// refused BEFORE any effect, with the same `leak-blocked` line: an answer withheld after the send would
+// invite a retry and a duplicate. When every finding is an id shape in the content the caller sent, the
+// answer is 422 `content_refused` with `refused: [{ field, pattern }]` (the kind of id by its product name,
+// never the matched text), so the caller rephrases; any other finding (a structural field of the probe, such
+// as the conversation, even with an id shape) stays 500 `internal`.
 //
 // This module imports neither the SDK nor @tayet/shared/internal (lint): it sees only the core's read
 // and write facades, which take and hand out opaque tokens.
@@ -71,10 +75,10 @@ import { PANEL_TEXT_MAX, type PanelFacade } from '../core/panels'
 import { validateCommands, type CommandsFacade } from '../core/commands'
 import { parseCompose, type RichDoc } from '@tayet/shared'
 import { EventBus, type BusEntry } from './bus'
-import type { ApiCloseApproval, ApiCommand, ApiEditMessage, ApiError, ApiErrorCode, ApiEvent, ApiMessage, ApiPostApproval, ApiPostMessage, ApiPutPanel } from './contract'
+import type { ApiCloseApproval, ApiCommand, ApiEditMessage, ApiError, ApiErrorCode, ApiEvent, ApiPostApproval, ApiPostMessage, ApiPutPanel, ApiRefused } from './contract'
 import { MIMETYPE, sendDownload } from './download'
 import { isEmojiArgument } from './emoji'
-import { logLeaks, scanApprovalProbe, scanCommandsProbe, scanEdge, scanPanelProbe, scanWriteProbe } from './edge'
+import { logLeaks, refusedOf, type EdgeLeak, scanApprovalProbe, scanCommandsProbe, scanEdge, scanPanelProbe, scanWriteProbe, withheld, withholdMessages } from './edge'
 import { createMcpLayer, type McpLayer } from './mcp/handler'
 import type { SetTimer } from './mcp/wait'
 import { createSlackLayer, type SlackLayer, type SlackMethods } from './slack/router'
@@ -153,6 +157,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   upstream_failed: 502,
   revoked: 503,
   unavailable: 503,
+  content_refused: 422,
   internal: 500,
 }
 
@@ -178,6 +183,7 @@ const MESSAGES: Record<ApiErrorCode, string> = {
   upstream_failed: 'the server refused or could not be reached',
   revoked: 'the agent credential was revoked',
   unavailable: 'the agent is not ready',
+  content_refused: 'the content looks like an internal id; rephrase it',
   internal: 'internal error',
 }
 
@@ -196,14 +202,19 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
   res.end(raw)
 }
 
-function fail(res: ServerResponse, code: ApiErrorCode, headers?: Record<string, string>, retryAfterMs?: number): void {
-  const body: ApiError = { error: { code, message: MESSAGES[code], ...(retryAfterMs !== undefined && { retryAfterMs }) } }
+function fail(res: ServerResponse, code: ApiErrorCode, headers?: Record<string, string>, retryAfterMs?: number, refused?: readonly ApiRefused[]): void {
+  const body: ApiError = {
+    error: { code, message: MESSAGES[code], ...(retryAfterMs !== undefined && { retryAfterMs }), ...(refused !== undefined && { refused: [...refused] }) },
+  }
   send(res, STATUS[code], body, headers)
 }
 
-// A refusal of this layer (the body, the parameters), with its code.
+// A refusal of this layer (the body, the parameters), with its code; `refused` with `content_refused`.
 class ApiFail extends Error {
-  constructor(readonly code: ApiErrorCode) {
+  constructor(
+    readonly code: ApiErrorCode,
+    readonly refused?: readonly ApiRefused[],
+  ) {
     super(code)
     this.name = 'ApiFail'
   }
@@ -471,7 +482,11 @@ function strParam(q: URLSearchParams, key: string): string | undefined {
 
 // The error of a failed request → its answer (a 429 carries Retry-After in seconds, rounded up).
 function failWith(res: ServerResponse, err: unknown): boolean {
-  if (err instanceof ReadError || err instanceof ApiFail) {
+  if (err instanceof ApiFail) {
+    fail(res, err.code, undefined, undefined, err.refused)
+    return true
+  }
+  if (err instanceof ReadError) {
     fail(res, err.code)
     return true
   }
@@ -487,18 +502,18 @@ function failWith(res: ServerResponse, err: unknown): boolean {
   return false
 }
 
-// A message withheld at the edge: same ids, no content.
-function withheld(m: ApiMessage): ApiMessage {
-  return { id: m.id, conversation: m.conversation, author: m.author, text: '', mentionsMe: m.mentionsMe, reactions: [], unavailable: true }
+// A write's probe found something, before any effect: one `leak-blocked` line per finding, then 422
+// `content_refused` when every finding is an id shape in the content the caller sent, else 500 `internal`.
+function refuse(log: Log, where: string, leaks: readonly EdgeLeak[]): never {
+  logLeaks(log, where, leaks)
+  const refused = refusedOf(leaks)
+  throw refused === null ? new ApiFail('internal') : new ApiFail('content_refused', refused)
 }
 
 // The answer a write would give, before the write: what the edge would withhold is refused now.
 function preflight(log: Log, where: string, conversation: string, text: string, fileName?: string): void {
   const leaks = scanWriteProbe(conversation, text, fileName)
-  if (leaks.length > 0) {
-    logLeaks(log, where, leaks)
-    throw new ApiFail('internal')
-  }
+  if (leaks.length > 0) refuse(log, where, leaks)
 }
 
 export function createApiServer(opts: ApiServerOptions): ApiServer {
@@ -715,6 +730,10 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
           inclusive: inclusive === 'true' || inclusive === '1',
           thread: strParam(q, 'thread'),
         })
+        // A message whose content alone is at fault goes out withheld; the rest of the page comes back.
+        const listed = withholdMessages(body)
+        logLeaks(log, `GET ${r.name}`, listed.leaks)
+        body = listed.body
         break
       }
     }
@@ -763,10 +782,7 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
         if (r.name === 'approvals') {
           const { markdown, ...post } = postApprovalOf(await readBody(req, JSON_MAX, 'payload_too_large'))
           const leaks = scanApprovalProbe(r.id, post.text, post.options)
-          if (leaks.length > 0) {
-            logLeaks(log, 'POST approvals', leaks)
-            throw new ApiFail('internal')
-          }
+          if (leaks.length > 0) refuse(log, 'POST approvals', leaks)
           const rich = richOf(post.text, markdown)
           return reply(res, 200, await approvals.request(r.id, rich ? { ...post, rich } : post), 'POST approvals')
         }
@@ -782,10 +798,7 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
           const { markdown, ...put } = putPanelOf(await readBody(req, JSON_MAX, 'payload_too_large'))
           // Before anything is queued: an id shape in the text or the title never leaves.
           const leaks = scanPanelProbe(r.id, put.text, put.title)
-          if (leaks.length > 0) {
-            logLeaks(log, 'PUT panel', leaks)
-            throw new ApiFail('internal')
-          }
+          if (leaks.length > 0) refuse(log, 'PUT panel', leaks)
           const rich = richOf(put.text, markdown)
           return reply(res, 202, await panels.set(r.id, rich ? { ...put, rich } : put), 'PUT panel')
         }
@@ -800,10 +813,7 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
           const set = putCommandsOf(await readBody(req, JSON_MAX, 'payload_too_large'))
           // Before anything is kept or queued: an id shape in a name, a description or a hint never leaves.
           const leaks = scanCommandsProbe(set)
-          if (leaks.length > 0) {
-            logLeaks(log, 'PUT commands', leaks)
-            throw new ApiFail('internal')
-          }
+          if (leaks.length > 0) refuse(log, 'PUT commands', leaks)
           return reply(res, 202, await commands.set(set), 'PUT commands')
         }
         const cleared = await commands.clear()

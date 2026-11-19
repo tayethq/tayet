@@ -40,6 +40,7 @@ import { flattenBlocks, type BlockResolve } from './blocks'
 import { emojiOf } from './emoji'
 import { personName, viewOf } from './conversations'
 import { mrkdwnToRich, unescapeMrkdwn, type Parsed } from './mrkdwn'
+import { refusalOf } from './errors'
 import { bool, nested, required, SLACK_TEXT_MAX, SlackError, str, type SlackArgs, type SlackCtx, type SlackMethods, type SlackResult } from './router'
 import { slackMessage } from './translate'
 
@@ -123,7 +124,7 @@ function preflightCard(ctx: SlackCtx, channel: string, text: string, card: CardS
   ]
   if (leaks.length > 0) {
     logLeaks(ctx.log, 'slack chat.postMessage', leaks)
-    throw new SlackError('internal_error')
+    throw refusalOf(leaks)
   }
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CONTENT_FIELDS, scanCommandsProbe, scanEdge, scanFormProbe, scanFormResultProbe, scanPanelProbe } from '../../src/api/edge'
+import { CONTENT_FIELDS, refusedOf, scanCommandsProbe, scanWriteProbe, scanEdge, scanFormProbe, scanFormResultProbe, scanPanelProbe, withheld, withholdMessages } from '../../src/api/edge'
 
 // ADR-089 dec. 1: structural fields with the full set; user content (message text, rich, file name)
 // with the id shapes and envelope keys only.
@@ -35,9 +35,7 @@ describe('edge scan', () => {
     ])
     expect(patterns({ id: 'UA', name: 'cofre', kind: 'member' })).toEqual(['$.name custody-identity'])
     // A `name` outside a message's files is structural even next to a message.
-    expect(patterns({ type: 'member.changed', conversation: 'CA', person: { id: 'UA', name: 'verify', kind: 'member' }, state: 'joined' })).toEqual([
-      '$.person.name verify',
-    ])
+    expect(patterns({ type: 'member.changed', conversation: 'CA', person: { id: 'UA', name: 'verify', kind: 'member' }, state: 'joined' })).toEqual([])
   })
 
   it('no opaque keys: a raw id in an id field blocks', () => {
@@ -187,5 +185,258 @@ describe('edge scan — an agent’s form', () => {
   it('the result probe: denied words pass in the messages and the field ids; an id shape blocks', () => {
     expect(scanFormResultProbe('CAAAAAAAAAA', { verify: 'abra o cofre' })).toEqual([])
     expect(scanFormResultProbe('CAAAAAAAAAA', { verify: `fale com ${ID}` }).map((l) => `${l.path} ${l.pattern}`)).toEqual(['$.result.errors.verify mxid'])
+  })
+})
+
+// A user id in content needs a boundary before its `@`: the address of an scp, a git remote, an rsync target
+// and host:port are text a person or an agent writes. A structural field keeps the full set.
+describe('edge scan — an address is not a user id in content', () => {
+  const ADDRESSES = [
+    'scp dev@build-host:project/test/goldens/home.png .',
+    'git clone git@github.com:org/repo.git',
+    'rsync -av user@host:dir/ .',
+    'ssh root@10.0.0.1:22',
+    'ana@vereda.com:8080',
+  ]
+
+  it.each(ADDRESSES)('passes in a message text, rich and a file name: %s', (text) => {
+    expect(patterns({ messages: [message({ text })] })).toEqual([])
+    expect(patterns(message({ rich: { t: 'p', children: [{ t: 'text', text }] } }))).toEqual([])
+    expect(patterns(message({ files: [{ id: 'FA', name: text, mimetype: 'text/plain', size: 1 }] }))).toEqual([])
+  })
+
+  it.each(ADDRESSES)('still blocks in a structural field; passes in a name written by people: %s', (text) => {
+    expect(patterns({ conversations: [{ id: 'CA', name: 'geral', kind: text, memberCount: 2 }] })).toEqual(['$.conversations[0].kind mxid'])
+    expect(patterns({ conversations: [{ id: 'CA', name: text, kind: 'public', memberCount: 2 }] })).toEqual([])
+  })
+})
+
+// A write's refusal as the caller's fault: the product names of the four id shapes, the field without `$.`, and
+// any other finding keeps the refusal internal (null).
+describe('refusedOf', () => {
+  it('maps each id shape to its product name and the path to the field', () => {
+    const leaks = [
+      { path: '$.text', pattern: 'mxid', value: 'x', content: true as const },
+      { path: '$.approval.options[0].label', pattern: 'room-id', value: 'x', content: true as const },
+      { path: '$.panel.title', pattern: 'event-id', value: 'x', content: true as const },
+      { path: '$.files[0].name', pattern: 'mxc-uri', value: 'x', content: true as const },
+    ]
+    expect(refusedOf(leaks)).toEqual([
+      { field: 'text', pattern: 'user_id' },
+      { field: 'approval.options[0].label', pattern: 'conversation_id' },
+      { field: 'panel.title', pattern: 'message_id' },
+      { field: 'files[0].name', pattern: 'media_address' },
+    ])
+    expect(JSON.stringify(refusedOf(leaks))).not.toContain('"x"')
+  })
+
+  it('any finding that is not an id shape → null; no finding → null', () => {
+    expect(refusedOf([{ path: '$.text', pattern: 'mxid', value: 'x', content: true }, { path: '$.conversation', pattern: 'verify', value: 'x' }])).toBeNull()
+    expect(refusedOf([])).toBeNull()
+  })
+
+  it('decides by where the finding came from: an id shape of the structural scan → null', () => {
+    const inConversation = scanWriteProbe('!abc:tayet.local', 'ok')
+    expect(inConversation.map((l) => `${l.path} ${l.pattern}`)).toEqual(['$.conversation room-id'])
+    expect(refusedOf(inConversation)).toBeNull()
+    const mixed = scanWriteProbe('!abc:tayet.local', 'ask @alice:tayet.local')
+    expect(mixed.map((l) => `${l.path} ${l.pattern}`)).toEqual(['$.conversation room-id', '$.text mxid'])
+    expect(refusedOf(mixed)).toBeNull()
+    expect(refusedOf(scanWriteProbe('CAAAAAAAAAA', 'ask @alice:tayet.local'))).toEqual([{ field: 'text', pattern: 'user_id' }])
+  })
+
+  it('a form probe with an envelope key inside a content object → null (the content scan found it, but it is no id shape)', () => {
+    const leaks = scanFormProbe('CAAAAAAAAAA', {
+      title: 'Pedido',
+      submitLabel: 'Enviar',
+      fields: [{ id: 'c', kind: 'context', text: 'ok', rich: [{ t: 'p', format: 'x', children: [{ t: 'text', text: 'ok' }] }] }],
+    })
+    expect(leaks.map((l) => `${l.path} ${l.pattern}`)).toEqual(['$.form.fields[0].rich[0].format envelope-key'])
+    expect(leaks[0]?.content).toBe(true)
+    expect(refusedOf(leaks)).toBeNull()
+  })
+})
+
+// A listing withholds only the message whose content carries an id shape, as an event does; the rest of the page
+// comes back. A structural finding leaves the message as it is, for the scan of the whole answer.
+describe('withholdMessages', () => {
+  const held = (m: ReturnType<typeof message> & { thread?: string }) => ({
+    id: m.id,
+    conversation: m.conversation,
+    author: m.author,
+    text: '',
+    mentionsMe: m.mentionsMe,
+    reactions: [],
+    unavailable: true,
+    ...(m.thread !== undefined && { thread: m.thread }),
+  })
+  const page = (middle: ReturnType<typeof message>) => ({
+    messages: [message({ id: '1730900000.000300', text: 'primeira' }), middle, message({ id: '1730900000.000100', text: 'terceira', reactions: [{ emoji: '👍', count: 1, mine: false }] })],
+    next: 'cur_1',
+  })
+  const findings = (leaks: ReturnType<typeof withholdMessages>['leaks']) => leaks.map((l) => `${l.path} ${l.pattern}`)
+
+  it('an id shape in the middle message’s text: only it goes out withheld, the others intact, the findings with the path in the answer', () => {
+    const middle = message({ id: '1730900000.000200', text: 'fale com @alice:tayet.local', mentionsMe: true, reactions: [{ emoji: '👀', count: 2, mine: true }], thread: '1730900000.000050' })
+    const body = page(middle)
+    const out = withholdMessages(body)
+    expect(out.body).toEqual({ ...body, messages: [body.messages[0], held(middle), body.messages[2]] })
+    expect(findings(out.leaks)).toEqual(['$.messages[1].text mxid'])
+    expect(out.leaks.every((l) => l.content === true)).toBe(true)
+    expect(scanEdge(out.body)).toEqual([])
+  })
+
+  it.each([
+    ['rich', { rich: { t: 'link', href: 'mxc://x/y' } }, '$.messages[1].rich.href mxc-uri'],
+    ['a file name', { files: [{ id: 'FA', name: '!r:tayet.local', mimetype: 'x', size: 1 }] }, '$.messages[1].files[0].name room-id'],
+    ['a card option label', { approval: { options: [{ id: 'ok', label: 'ver @bob:tayet.local' }], state: 'open' } }, '$.messages[1].approval.options[0].label mxid'],
+    ['a command’s args', { command: { name: 'buscar', args: '$' + 'A'.repeat(43) } }, '$.messages[1].command.args event-id'],
+  ])('the same for an id shape in %s', (_what, over, finding) => {
+    const middle = message({ id: '1730900000.000200', ...over })
+    const body = page(middle)
+    const out = withholdMessages(body)
+    expect(out.body).toEqual({ ...body, messages: [body.messages[0], held(middle), body.messages[2]] })
+    expect(findings(out.leaks)).toEqual([finding])
+    expect(scanEdge(out.body)).toEqual([])
+  })
+
+  it('a structural finding in the message (a raw id in author) leaves it as it is, for the scan of the whole answer', () => {
+    for (const middle of [message({ id: '1730900000.000200', author: '@alice:tayet.local' }), message({ id: '1730900000.000200', author: '@alice:tayet.local', text: 'e @bob:tayet.local' })]) {
+      const body = page(middle)
+      const out = withholdMessages(body)
+      expect(out.body).toBe(body)
+      expect(out.leaks).toEqual([])
+      expect(findings(scanEdge(out.body))).toContain('$.messages[1].author mxid')
+    }
+  })
+
+  it('one message alone (not a listing) is handled too, with the path from the root', () => {
+    const one = message({ text: 'fale com @alice:tayet.local' })
+    const out = withholdMessages(one)
+    expect(out.body).toEqual(held(one))
+    expect(findings(out.leaks)).toEqual(['$.text mxid'])
+  })
+
+  it('a clean answer comes back as it is, with no finding', () => {
+    const body = page(message({ id: '1730900000.000200', text: 'pode verificar o cofre?' }))
+    expect(withholdMessages(body)).toEqual({ body, leaks: [] })
+    expect(withholdMessages(body).body).toBe(body)
+  })
+})
+
+// Names written by people: a conversation's `name` and `topic`, a person's `name` and the agent's own `name` get the
+// id shapes and the two internal account identifiers (a person's and the agent's name also the custody account's).
+// A finding there still withholds the whole answer: it is not a content finding.
+describe('edge scan — names written by people', () => {
+  const conversation = (over: Record<string, unknown> = {}) => ({ id: 'CA', name: 'geral', kind: 'public', topic: 'Avisos', memberCount: 3, ...over })
+  const person = (over: Record<string, unknown> = {}) => ({ id: 'UA', name: 'Alice', kind: 'member', ...over })
+  const agent = (over: Record<string, unknown> = {}) => ({ id: 'UG', workspace: 'TA', name: 'Relatórios', kind: 'agent', ...over })
+  const fields: Array<[string, (v: string) => unknown, string]> = [
+    ['a conversation name', (v) => ({ conversations: [conversation({ name: v })] }), '$.conversations[0].name'],
+    ['a conversation topic', (v) => conversation({ topic: v }), '$.topic'],
+    ['a person name', (v) => ({ people: [person({ name: v })] }), '$.people[0].name'],
+    ['the agent name', (v) => agent({ name: v }), '$.name'],
+  ]
+
+  it.each(fields)('the vocabulary passes in %s', (_what, build) => {
+    for (const v of ['Verificação de contas', 'escrow-team', 'decrypt the backup', 'olm', 'megolm']) expect(patterns(build(v))).toEqual([])
+  })
+
+  it('`cofre` passes in a conversation name and topic; in a person name and the agent name it flags', () => {
+    expect(patterns({ conversations: [conversation({ name: 'cofre', topic: 'o cofre do time' })] })).toEqual([])
+    expect(patterns({ people: [person({ name: 'cofre' })] })).toEqual(['$.people[0].name custody-identity'])
+    expect(patterns(agent({ name: 'cofre' }))).toEqual(['$.name custody-identity'])
+  })
+
+  it.each(fields)('an id shape and the two internal identifiers flag in %s', (_what, build, path) => {
+    expect(patterns(build('@alice:tayet.local'))).toEqual([`${path} mxid`])
+    expect(patterns(build('!r:tayet.local'))).toEqual([`${path} room-id`])
+    expect(patterns(build('u-abcdefghij23'))).toEqual([`${path} opaque-localpart`])
+    expect(patterns(build('a-abcdefghij23'))).toEqual([`${path} agent-localpart`])
+  })
+
+  it('a finding in a name carries no content mark: refusedOf → null', () => {
+    for (const [, build] of fields) {
+      const leaks = scanEdge(build('@alice:tayet.local'))
+      expect(leaks).toHaveLength(1)
+      expect(leaks[0]?.content).toBeUndefined()
+      expect(refusedOf(leaks)).toBeNull()
+    }
+  })
+
+  it('conversation.added and member.changed with the vocabulary in the names pass', () => {
+    expect(patterns({ type: 'conversation.added', conversation: conversation({ name: 'Verificação de contas', topic: 'decrypt' }) })).toEqual([])
+    expect(patterns({ type: 'member.changed', conversation: 'CA', person: person({ name: 'Verônica (verificação)' }), state: 'joined' })).toEqual([])
+    expect(patterns({ type: 'member.changed', conversation: 'CA', person: person({ name: 'u-abcdefghij23' }), state: 'left' })).toEqual(['$.person.name opaque-localpart'])
+  })
+
+  it('a `name` or `topic` in any other object keeps the full set', () => {
+    expect(patterns({ name: 'verificar', topic: 'cofre' })).toEqual(['$.name verify', '$.topic custody-identity'])
+    expect(patterns({ id: 'UA', name: 'verificar' })).toEqual(['$.name verify'])
+    expect(patterns({ kind: 'public', name: 'verificar' })).toEqual(['$.name verify'])
+  })
+
+  it('the other fields of a conversation, a person and the agent stay structural', () => {
+    expect(patterns(conversation({ kind: 'verified' }))).toEqual(['$.kind verify'])
+    expect(patterns(person({ id: '@alice:tayet.local' }))).toEqual(['$.id mxid'])
+    expect(patterns(agent({ workspace: 'escrow' }))).toEqual(['$.workspace escrow'])
+  })
+
+  it('a withheld listing or event never changes because of a name: withholdMessages leaves a page of people as it is', () => {
+    const body = { people: [person({ name: '@alice:tayet.local' })] }
+    expect(withholdMessages(body)).toEqual({ body, leaks: [] })
+  })
+})
+
+// A reaction's `emoji` is user content: the id shapes only, with the content mark.
+describe('edge scan — a reaction’s emoji is content', () => {
+  const reacted = (emoji: string) => message({ reactions: [{ emoji: '👍', count: 1, mine: false }, { emoji, count: 2, mine: true }] })
+
+  it('the vocabulary passes in a message’s reaction and in reaction.changed', () => {
+    expect(patterns(reacted('verificado'))).toEqual([])
+    expect(patterns({ type: 'reaction.changed', conversation: 'CA', id: '1.000001', reactions: [{ emoji: 'cofre', count: 1, mine: false }] })).toEqual([])
+  })
+
+  it('an id shape flags, with the content mark, in a message and in reaction.changed', () => {
+    const inMessage = scanEdge(reacted('@alice:tayet.local'))
+    expect(inMessage.map((l) => `${l.path} ${l.pattern}`)).toEqual(['$.reactions[1].emoji mxid'])
+    expect(inMessage[0]?.content).toBe(true)
+    const inEvent = scanEdge({ type: 'reaction.changed', conversation: 'CA', id: '1.000001', reactions: [{ emoji: '!r:tayet.local', count: 1, mine: false }] })
+    expect(inEvent.map((l) => `${l.path} ${l.pattern}`)).toEqual(['$.reactions[0].emoji room-id'])
+    expect(inEvent[0]?.content).toBe(true)
+  })
+
+  it('the rest of a reaction stays structural', () => {
+    expect(patterns(message({ reactions: [{ emoji: '👍', count: 1, mine: false, kind: 'verified' }] }))).toEqual(['$.reactions[0].kind verify'])
+  })
+
+  it('a listed message with an id shape in a reaction goes out withheld; its neighbours intact', () => {
+    const body = { messages: [message({ id: '1730900000.000300' }), reacted('@alice:tayet.local'), message({ id: '1730900000.000100' })] }
+    const out = withholdMessages(body)
+    expect((out.body.messages as Array<Record<string, unknown>>).map((m) => m.unavailable ?? false)).toEqual([false, true, false])
+    expect(out.leaks.map((l) => `${l.path} ${l.pattern}`)).toEqual(['$.messages[1].reactions[1].emoji mxid'])
+    expect(scanEdge(out.body)).toEqual([])
+  })
+
+  it('CONTENT_FIELDS lists the reaction', () => {
+    expect(CONTENT_FIELDS).toContain('message.reactions[].emoji')
+    expect(CONTENT_FIELDS).toContain('reaction.changed.reactions[].emoji')
+  })
+})
+
+// The withheld form of a message keeps its thread.
+describe('withheld', () => {
+  it('keeps the thread of a reply; a message with no thread gets none', () => {
+    expect(withheld(message({ text: 'x', thread: '1730900000.000050', threadSummary: { replyCount: 1, latestReplyAt: 1 } }))).toEqual({
+      id: '1730900000.100123',
+      conversation: 'CAAAAAAAAAA',
+      author: 'UAAAAAAAAAA',
+      text: '',
+      mentionsMe: false,
+      reactions: [],
+      unavailable: true,
+      thread: '1730900000.000050',
+    })
+    expect(withheld(message())).not.toHaveProperty('thread')
   })
 })

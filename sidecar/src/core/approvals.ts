@@ -255,7 +255,9 @@ function viewOf(options: readonly ApprovalOption[], state: ApprovalState, person
     case 'open':
     case 'sending':
     case 'failed':
-      // The client's local states never come out of resolveApproval.
+    case 'multi':
+      // The client's local states and the state of a card that asks for several answers never come out of
+      // resolveApproval.
       return { ...view, state: 'open' }
   }
 }

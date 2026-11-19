@@ -261,6 +261,18 @@ export type ApprovalState =
   | { kind: 'failed'; option: string }
   | { kind: 'answered'; by: UserId; at: Timestamp; option?: string }
   | { kind: 'closed' }
+  // A card that declares how many answers it asks for. `answers` are the answers that count, in the
+  // server's order: one per person (that person's first answer that counts), cut at `needed`; `option` is
+  // absent while an answer cannot be read yet. The card is complete with `needed` answers; `closed` = its
+  // author closed it (a complete card that is then closed stays complete). `own` = the viewer's own answer
+  // in flight or not sent, folded in only while the card still takes the viewer's answer.
+  | {
+      kind: 'multi'
+      needed: number
+      answers: Array<{ by: UserId; at: Timestamp; option?: string }>
+      closed: boolean
+      own?: { status: 'sending' | 'failed'; option: string }
+    }
 
 // ADR-091 dec. 12 (A3-5): an agent's pinned panel in a conversation — the board the agent keeps
 // up to date, shown above the timeline and never a line of it. `agent` is the author, in the idiom of
