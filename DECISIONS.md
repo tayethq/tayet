@@ -87,6 +87,7 @@ The documents themselves live in the private development repository.
 - ADR-086 — Modelo de agente: identidade por localpart reservado `a-`, `kind: 'agent'` derivado abaixo do barrel, credencial por personal session com device cunhada pelo escrow, agente fora de `#all`, imutabilidade do `kind`, nunca admin, fila de envio no sidecar (estende ADR-083; revisa ADR-083 addendum "nunca cunha para outra conta" e dec. 8; toca ADR-040/054/069/082) (Aceito)
 - ADR-087 — Sidecar `tayet-agent`: processo do operador com store cifrado, ids opacos na borda, três superfícies (API nativa, compatibilidade Slack por Socket Mode emulado, MCP) sobre um núcleo, descoberta pelo produto, revogação terminal, lock de instância (estende ADR-086; toca ADR-008/069) (Aceito)
 - ADR-088 — Pacote `shared/` (`@tayet/shared`): opção (c) do ADR-007 com o segundo consumidor — `file:../shared` + `resolve.dedupe` do SDK/wasm + `preserveSymlinks`; `exports` `.`/`./internal`/`./leak-scan`; lint de fronteira por nome de pacote com testes negativos; `postbuild` com exatamente 1 SDK e 1 wasm; `errors.ts` e leak-scan no `shared`; cross-import de 5 diretórios; builders de envio em `internal/outbound.ts` (estende ADR-007; toca ADR-060/087) (Aceito)
+- ADR-089 — Leak-scan na borda do sidecar: escopo por campo (estruturais com o conjunto completo; conteúdo do usuário só com formas de id e chaves de envelope; acusou → `500 internal` + `leak-blocked` sem valor), padrão de id de evento global com `replyTo` opaco, `mentions?: UserId[]` opcional com opacidade herdada por elemento de array (toca ADR-018/026/087) (Aceito)
 - ADR-090 — O agente é do operador: só o operador adiciona o agente a conversas e abre DM com ele — imposto no sidecar (ADR-087 dec. 12), oferecido só a ele no client, com backstop na ACL; operador lido do escrow; remoção como a de gente; sem módulo do Synapse; itens (i)–(iii) depois do app mobile (estende ADR-086; revisa ADR-029 dec. 3; toca ADR-087) (Aceito)
 - ADR-091 — Cartão de aprovação e painel fixado: mensagens de tipo próprio; a resposta é de pessoa (membro ou convidado; agente, custódia e `system` nunca), relacionada ao cartão por um tipo de relação próprio e agregada pelo produto — a primeira válida na ordem do servidor (relações do cartão, direção explícita para frente), por uma função pura comum a client e sidecar; fecho por edição do autor e selo do sidecar; regras de notificação tiram resposta e painel das não lidas; painel ancorado no evento de criação, nunca state event, com orçamento de escrita por agente; responder pelo client é um verbo do barrel, com o eco dobrado no cartão; ler o painel também, com a lista filtrada e ordenada pela ACL (estende ADR-086/088; toca ADR-089/090) (Aceito)
 - ADR-092 — Nenhum material criptográfico no tree: as chaves do MAS do dev-stack são geradas no primeiro `up` pela imagem fixada, ao lado da config num diretório ignorado pelo git, e a config versionada só aponta os arquivos; trocar as chaves de uma stack existente não pede `reset`; secret scan com gitleaks fixado por versão e sha256 sobre o tree público montado (no `assemble`, no CI público e num job leve do CI privado), sem `.gitleaks.toml`, sem config por variável e com `--ignore-gitleaks-allow`; falso positivo sai na fonte; o histórico privado não é reescrito (relaciona ADR-021/046/071) (Aceito)
@@ -97,6 +98,7 @@ The documents themselves live in the private development repository.
 - ADR-100 — A conversa aberta é lida conforme as mensagens chegam: recibo na chegada com a conversa à vista, na thread aberta e na volta da aba (Aceito)
 - ADR-101 — Cartão de aprovação com até 25 opções e edição com botões pela camada Slack (Aceito)
 - ADR-103 — Formulários do agente: o agente abre um formulário para a pessoa que clicou ou mandou o comando (Aceito)
+- ADR-104 — Cartão de aprovação com vários aprovadores: o cartão declara quantas respostas pede (Aceito)
 
 ## Plans
 
@@ -111,6 +113,7 @@ The documents themselves live in the private development repository.
 - PLANO-DESIGN-SYSTEM
 - PLANO-EXPORT-DADOS
 - PLANO-FASE-1
+- PLANO-FASE-1-EDICAO-RICA
 - PLANO-FASE-1-REPLY
 - PLANO-FASE-1-THREADS
 - PLANO-FASE-1-TRADUTORES
@@ -136,4 +139,4 @@ The documents themselves live in the private development repository.
 
 ---
 
-88 architecture decision records, 33 plans, tree a5d32509188ec0e65a242a51db91e503c3190b2b.
+90 architecture decision records, 34 plans, tree a48cddd711421b4f623f8fbd9193345ed0ee6109.
