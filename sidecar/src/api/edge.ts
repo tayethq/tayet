@@ -23,8 +23,9 @@ import type { ApiMessage, ApiRefused, ApiRefusedPattern } from './contract'
 // - `text` and `rich` (the whole subtree) of a message;
 // - `name` of a file of a message (`files[].name`);
 // - an approval card's options (ADR-089 addendum, A3-3): `id` and `label` of each option, and the chosen
-//   option's `id` — in the `approval` of a message or of the state answer (`approval.answer.option`) and
-//   in the `approval.answered` event (`option`). The agent wrote them: "Verificar" is a label, not the
+//   option's `id` — in the `approval` of a message or of the state answer (`approval.answer.option`), in
+//   each answer of a card that asks for several (`approval.answers[].option`, ADR-104) and in the
+//   `approval.answered` event (`option`). The agent wrote them: "Verificar" is a label, not the
 //   product talking. Everything else of the card (`style`, `state`, `by`, `at`) is structural.
 // - the pinned panel's `text` and `title` (ADR-089 addendum, A3-6), in the panel's GET: the agent wrote them.
 //   `updatedAt` and the rest of the answer are structural.
@@ -49,6 +50,7 @@ export const CONTENT_FIELDS = [
   'approval.options[].id',
   'approval.options[].label',
   'approval.answer.option',
+  'approval.answers[].option',
   'approval.answered.option',
   'panel.text',
   'panel.title',
@@ -118,7 +120,8 @@ function split(root: unknown): Split {
     content.push({ path, value })
     return STRIPPED
   }
-  // An `approval` object: the options' id/label and the answer's option are content; the rest structural.
+  // An `approval` object: the options' id/label and the answer's (and each of `answers`') option are content;
+  // the rest structural.
   const approval = (v: Record<string, unknown>, path: string): unknown => {
     const out: Record<string, unknown> = {}
     for (const [k, val] of Object.entries(v)) {
@@ -132,6 +135,12 @@ function split(root: unknown): Split {
       } else if (k === 'answer' && val !== null && typeof val === 'object' && !Array.isArray(val)) {
         const { option, ...rest } = val as Record<string, unknown>
         out[k] = walk(option === undefined ? rest : { ...rest, option: strip(option, `${p}.option`) }, p)
+      } else if (k === 'answers' && Array.isArray(val)) {
+        out[k] = val.map((a, i) => {
+          if (!isRecord(a)) return walk(a, `${p}[${i}]`)
+          const { option, ...rest } = a
+          return walk(option === undefined ? rest : { ...rest, option: strip(option, `${p}[${i}].option`) }, `${p}[${i}]`)
+        })
       } else {
         out[k] = walk(val, p)
       }
@@ -259,6 +268,16 @@ export function scanWriteProbe(conversation: string, text: string, fileName?: st
 // options — an id shape in a label is refused before any effect, as in a text.
 export function scanApprovalProbe(conversation: string, text: string, options: ReadonlyArray<{ id: string; label: string; style?: string }>): EdgeLeak[] {
   return scanEdge({ id: '0.000000', conversation, author: 'U', text, mentionsMe: false, reactions: [], approval: { options, state: 'open' } })
+}
+
+// The answer a reaction would give (the reaction PUT, the MCP `react`): a probe message carrying the reaction
+// in `reactions` — an id shape in the emoji is refused before any effect, as the read side would withhold it.
+// A finding in the reaction is named by the argument the caller sent (`emoji`).
+export function scanReactionProbe(conversation: string, emoji: string): EdgeLeak[] {
+  const at = '$.reactions[0].emoji'
+  return scanEdge({ id: '0.000000', conversation, author: 'U', text: '', mentionsMe: false, reactions: [{ emoji, count: 1, mine: true }] }).map((leak) =>
+    leak.path.startsWith(at) ? { ...leak, path: `$.emoji${leak.path.slice(at.length)}` } : leak,
+  )
 }
 
 // The answer of the panel's GET with the text and title a PUT would carry: an id shape in either is refused

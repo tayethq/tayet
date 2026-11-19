@@ -181,3 +181,63 @@ describe('wait_for_mention through the real client', () => {
     await c.close().catch(() => {})
   })
 })
+
+// ADR-104 (Aprovadores 2): the card wait on a card that asks for several answers (`approval.needed`).
+describe('the card wait with `needed` (bus only)', () => {
+  const CARD = '1730000400.000400'
+  const card = { conversation: GENERAL.id, id: CARD }
+  const options = [{ id: 'ok', label: 'OK' }]
+  const st = (state: 'open' | 'answered' | 'closed', answers: Array<{ option?: string; by: string; at: number }>) => ({ conversation: GENERAL.id, id: CARD, approval: { options, needed: 3, answers, state } })
+  const ev = (by: string, at: number, count: number) => ({ type: 'approval.answered' as const, conversation: GENERAL.id, id: CARD, option: 'ok', by, at, count, needed: 3 })
+  const until = async (pred: () => boolean): Promise<void> => {
+    for (let i = 0; i < 300 && !pred(); i++) await new Promise((r) => setTimeout(r, 5))
+  }
+
+  it('each event of the card reads it again; the wait goes on through the partial states and ends at `answered`', async () => {
+    const bus = new EventBus({ epoch: 'e1' })
+    const clock = fakeClock()
+    const waits = createWaits(bus, clock.setTimer)
+    const states = [st('open', []), st('open', [{ option: 'ok', by: 'UA', at: 1 }]), st('open', [{ option: 'ok', by: 'UA', at: 1 }, { option: 'ok', by: 'UB', at: 2 }])]
+    const done = st('answered', [{ option: 'ok', by: 'UA', at: 1 }, { option: 'ok', by: 'UB', at: 2 }, { option: 'ok', by: 'UC', at: 3 }])
+    states.push(done)
+    const read = vi.fn(() => Promise.resolve(states.shift() ?? done))
+    let settled = false
+    const p = waits.approval(card, read, 25_000).then((v) => {
+      settled = true
+      return v
+    })
+    await until(() => read.mock.calls.length === 1)
+    bus.publish(ev('UA', 1, 1))
+    await until(() => read.mock.calls.length === 2)
+    bus.publish(ev('UB', 2, 2))
+    await until(() => read.mock.calls.length === 3)
+    expect(settled).toBe(false)
+    bus.publish(ev('UC', 3, 3))
+    expect(await p).toEqual({ kind: 'settled', status: done })
+    expect(read).toHaveBeenCalledTimes(4)
+  })
+
+  it('an answer counted but not read keeps the card open: the wait goes on; `closed` ends it', async () => {
+    const bus = new EventBus({ epoch: 'e1' })
+    const waits = createWaits(bus, fakeClock().setTimer)
+    let now = st('open', [{ option: 'ok', by: 'UA', at: 1 }, { by: 'UB', at: 2 }])
+    const read = vi.fn(() => Promise.resolve(now))
+    const p = waits.approval(card, read, 25_000)
+    await until(() => read.mock.calls.length === 1)
+    now = st('closed', [{ option: 'ok', by: 'UA', at: 1 }])
+    bus.publish({ type: 'message.edited', conversation: GENERAL.id, message: message({ id: CARD }) })
+    expect(await p).toEqual({ kind: 'settled', status: now })
+  })
+
+  it('the timeout carries the last state read', async () => {
+    const bus = new EventBus({ epoch: 'e1' })
+    const clock = fakeClock()
+    const waits = createWaits(bus, clock.setTimer)
+    const open = st('open', [{ option: 'ok', by: 'UA', at: 1 }])
+    const p = waits.approval(card, () => Promise.resolve(open), 25_000)
+    await until(() => clock.timers.length === 1)
+    await new Promise((r) => setTimeout(r, 10))
+    clock.timers[0]!.fire()
+    expect(await p).toEqual({ kind: 'timedOut', status: open })
+  })
+})

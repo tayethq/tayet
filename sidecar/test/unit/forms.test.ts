@@ -387,3 +387,39 @@ describe('WriteError codes stay the write path’s', () => {
     expect(new FormError('origin_mismatch')).not.toBeInstanceOf(WriteError)
   })
 })
+
+// ADR-104 (Aprovadores 2): a click on a card that asks for several answers — the trigger is the clicking
+// person's answer that counts, once read.
+describe('open from a click on a card with `needed`', () => {
+  const multiCard = (needed: unknown = 2) => new FakeEvent({ id: '$card', sender: ME, content: { msgtype: 'io.tayet.approval', body: 'Publicar?', 'io.tayet.approval': { options: OPTIONS, needed } } })
+  const reading = (counted: NonNullable<CardReading['counted']>): CardReading => ({
+    state: { kind: 'multi', needed: 2, answers: counted.map(({ by, at, option }) => ({ by: by as never, at: at as never, ...(option !== undefined && { option }) })), closed: false },
+    closedAt: undefined,
+    ignored: [],
+    answerIds: counted.map((a) => a.eventId),
+    counted,
+    pendings: [],
+  })
+
+  it('accepts the person who answered (their answer is the trigger); refuses one whose answer is not read yet, or who did not answer', async () => {
+    const r = reading([
+      { eventId: '$alice-ans', by: ALICE, at: 5, option: 'edit' },
+      { eventId: '$bob-ans', by: BOB, at: 6 },
+    ])
+    const w = world({ events: [multiCard()], reading: r })
+    expect(await w.core.facade.open({ conversation: CONV, origin: { kind: 'card', card: 'ts-$card', person: 'UALICE00000' }, form: FORM })).toEqual({ id: 'ts-$sent1' })
+    expect(w.jobs[0]).toEqual({ kind: 'content', channel: ROOM, content: buildFormDefinitionContent('$card', '$alice-ans', FORM.title, FORM.submitLabel, FIELDS) })
+    expect(w.reads).toEqual([{ cardId: '$card', fresh: true }])
+    expect(await code(w.core.facade.open({ conversation: CONV, origin: { kind: 'card', card: 'ts-$card', person: 'UBOB0000000' }, form: FORM }))).toBe('origin_mismatch')
+    const none = world({ events: [multiCard()], reading: reading([{ eventId: '$alice-ans', by: ALICE, at: 5, option: 'edit' }]) })
+    expect(await code(none.core.facade.open({ conversation: CONV, origin: { kind: 'card', card: 'ts-$card', person: 'UBOB0000000' }, form: FORM }))).toBe('origin_mismatch')
+    expect(none.jobs).toEqual([])
+    expect(w.jobs).toHaveLength(1)
+  })
+
+  it('an invalid declaration on the card: not_approval, nothing read', async () => {
+    const w = world({ events: [multiCard(11)] })
+    expect(await code(w.core.facade.open({ conversation: CONV, origin: { kind: 'card', card: 'ts-$card', person: 'UALICE00000' }, form: FORM }))).toBe('not_approval')
+    expect(w.reads).toEqual([])
+  })
+})

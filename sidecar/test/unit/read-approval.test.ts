@@ -127,3 +127,45 @@ describe('read side — approval cards (A3-3)', () => {
     expect(seen.map((e) => (e.type === 'approval.answered' ? e.id : ''))).toEqual(['1.000001', '1.000002', '1.000003'])
   })
 })
+
+// ADR-104 (Aprovadores 2): a card that declares `needed` — the read side hands it to the view, and with no
+// state readable the options come with `needed` alone (I3).
+describe('read side — a card that asks for several answers (ADR-104)', () => {
+  const multiCard = (sender: string, needed: unknown = 3): Partial<IEvent> => {
+    n += 1
+    return {
+      event_id: `$multi${n}:tayet.local`,
+      room_id: ROOM_ID,
+      sender,
+      type: 'm.room.message',
+      origin_server_ts: 2000 + n,
+      content: { msgtype: 'io.tayet.approval', body: 'Publicar?', 'io.tayet.approval': { options: OPTIONS, needed } },
+    }
+  }
+
+  it('the own card: `needed` reaches the view, and its projection (answers, state) comes out with the person as a token', async () => {
+    const { side, view } = harness([multiCard(ME)])
+    const projected = { options: OPTIONS, needed: 3, answers: [{ option: 'verify', by: personToken(ALICE), at: 7 }, { by: personToken(ALICE), at: 8 }], state: 'open' as const }
+    view.mockImplementationOnce(() => Promise.resolve(projected as never))
+    const page = await side.facade.messages(CONVERSATION, {})
+    expect(view.mock.calls[0]?.[3]).toBe(true)
+    expect((view.mock.calls[0] as unknown[] | undefined)?.[4]).toBe(3)
+    expect(page.messages[0]?.approval).toEqual(projected)
+    expect(JSON.stringify(page)).not.toMatch(/@alice|\$multi/)
+  })
+
+  it('another agent’s card: the view is asked with own=false and `needed`; a state that cannot be read leaves options and `needed`', async () => {
+    const { side, view } = harness([multiCard(OTHER)])
+    view.mockImplementationOnce(() => Promise.reject(new Error('down')))
+    const page = await side.facade.messages(CONVERSATION, {})
+    expect(view.mock.calls[0]?.[3]).toBe(false)
+    expect((view.mock.calls[0] as unknown[] | undefined)?.[4]).toBe(3)
+    expect(page.messages[0]?.approval).toEqual({ options: OPTIONS, needed: 3 })
+  })
+
+  it('a card without the declaration: the view gets no `needed` (unchanged)', async () => {
+    const { side, view } = harness([card(ME)])
+    await side.facade.messages(CONVERSATION, {})
+    expect((view.mock.calls[0] as unknown[] | undefined)?.[4]).toBeUndefined()
+  })
+})

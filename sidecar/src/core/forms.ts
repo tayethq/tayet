@@ -3,7 +3,8 @@
 // a valid live submission to one in-memory listener — outside the event bus, the event stream and the MCP.
 //
 // - Opening from a click: the card is read again (fresh) and the answer that decided it is the trigger; it
-//   must be the clicking person's. Opening from a command: the message must be a command for this agent; it
+//   must be the clicking person's. On a card that asks for several answers (ADR-104), the trigger is that
+//   person's answer that counts, once read. Opening from a command: the message must be a command for this agent; it
 //   is both the trigger and the anchor. The definition is checked by the shared reader before any effect
 //   and written through the write queue, as a card is.
 // - The watch takes a live submission when: it reads as one; it names a valid definition this agent wrote
@@ -25,6 +26,7 @@ import {
   RESPONSE_REL_TYPE,
   buildFormDefinitionContent,
   buildFormResultContent,
+  readApprovalNeeded,
   readApprovalOptions,
   readFormDefinition,
   readFormMeta,
@@ -138,6 +140,14 @@ export function createFormCore(deps: FormDeps): FormCore {
     const original = ev.getOriginalContent()
     const options = !ev.isDecryptionFailure() && original.msgtype === APPROVAL_MSGTYPE ? readApprovalOptions(original) : undefined
     if (options === undefined) throw new WriteError('not_approval')
+    const needed = readApprovalNeeded(original)
+    if (needed === null) throw new WriteError('not_approval')
+    if (needed !== undefined) {
+      const reading = await reader.read(room.roomId, eventId, options, { fresh: true, needed })
+      const mine = reading.counted?.find((a) => a.by === by && a.option !== undefined)
+      if (mine === undefined) throw new FormError('origin_mismatch')
+      return { anchorId: eventId, trigger: mine.eventId }
+    }
     const reading = await reader.read(room.roomId, eventId, options, { fresh: true })
     if (reading.state.kind !== 'answered' || reading.decidedId === undefined || (reading.state.by as unknown as string) !== by) throw new FormError('origin_mismatch')
     return { anchorId: eventId, trigger: reading.decidedId }

@@ -105,7 +105,9 @@ export interface ApiApprovalOption {
 }
 
 // open: no answer counts yet; answered: the first valid answer of a person decided it (the card may
-// already be sealed); closed: closed with no valid answer before the close.
+// already be sealed); closed: closed with no valid answer before the close. A card that asks for several
+// answers (`needed`): open while answers are missing or not read yet; answered with `needed` answers read;
+// closed when the agent closed it short of that.
 export type ApiApprovalState = 'open' | 'answered' | 'closed'
 
 export interface ApiApprovalAnswer {
@@ -120,7 +122,13 @@ export interface ApiApprovalAnswer {
 export interface ApiApproval {
   options: ApiApprovalOption[]
   state?: ApiApprovalState
+  // A card resolved by its first answer: the answer that decided it.
   answer?: ApiApprovalAnswer
+  // A card that asks for several answers: how many (2–10), on any card that declares it.
+  needed?: number
+  // ...and, on the agent's own card, the answers that count (one per person, in the server's order, at
+  // most `needed`); no `answer`.
+  answers?: ApiApprovalAnswer[]
 }
 
 // GET /v1/conversations/:id/approvals/:ts — the current state of one of the agent's own cards.
@@ -228,13 +236,15 @@ export interface ApiPostMessage {
 }
 
 // POST /v1/conversations/:id/approvals — an approval card: `text` is the request (`markdown` as in the
-// message POST), `options` 1–25 (ApiApprovalOption; more than one `primary` is refused, never demoted).
+// message POST), `options` 1–25 (ApiApprovalOption; more than one `primary` is refused, never demoted),
+// `needed` 2–10: the card asks for that many answers (absent: resolved by its first answer).
 export interface ApiPostApproval {
   text: string
   markdown?: boolean
   options: ApiApprovalOption[]
   thread?: string
   mentions?: string[]
+  needed?: number
 }
 
 // POST /v1/conversations/:id/approvals/:ts/close — closes the agent's own card; without `text` the
@@ -305,8 +315,10 @@ export type ApiEvent =
   | { type: 'agent.revoked' }
   // ADR-091 (A3-3): a person answered one of the agent's own cards. `id` is the card's `ts`, `option` the
   // chosen option's id, `by` the person (`U…`), `at` the answer's instant. Delivered at least once (a
-  // restart between the event and the card's seal sends it again): treat it as idempotent by `id`.
-  | { type: 'approval.answered'; conversation: string; id: string; option: string; by: string; at: number }
+  // restart between the event and the card's seal sends it again): treat it as idempotent by `id`. A card
+  // that asks for several answers sends one per answer, with `needed` and `count` (the answers that count
+  // and are read so far; `count` equal to `needed` is the last): idempotent by `id`, `by` and `at`.
+  | { type: 'approval.answered'; conversation: string; id: string; option: string; by: string; at: number; count?: number; needed?: number }
   // The stream cannot replay from the given id (another run, or older than the buffer): re-read
   // what you need through the listings (`oldest=`).
   | { type: 'resync' }

@@ -315,3 +315,88 @@ describe('the card wait (bus only)', () => {
     await expect(p).rejects.toMatchObject({ code: 'message_not_found' })
   })
 })
+
+// ADR-104 (Aprovadores 2): a card that asks for several answers through the MCP — `needed` on
+// request_approval, the wait across the partial events (it ends at the close), the timeout carrying the
+// state, close_approval's final state; and the probe on `react`.
+const BOB_ID = 'UBOB0000000'
+const multiStatus = (state: 'open' | 'answered' | 'closed', answers: Array<{ option?: string; by: string; at: number }>): ApiApprovalStatus =>
+  status({ options: OPTIONS, needed: 2, answers, state })
+const A1 = { option: 'approve', by: ALICE.id, at: 1730000500000 }
+const B1 = { option: 'reject', by: BOB_ID, at: 1730000600000 }
+const answeredEv = (a: { option: string; by: string; at: number }, count: number) => ({ type: 'approval.answered' as const, conversation: GENERAL.id, id: CARD, ...a, count, needed: 2 })
+
+describe.each<Era>(['legacy', 'modern'])('approval card tools with `needed` (%s era)', (era) => {
+  it('request_approval passes `needed` to the facade and answers with it; outside 2–10 the schema refuses', async () => {
+    const f = fakeApprovals()
+    f.approvals.request = (c, r) => {
+      f.calls.push(['request', c, r])
+      return Promise.resolve(message({ id: CARD, conversation: c, author: ME.id, text: r.text, approval: { options: OPTIONS, needed: r.needed, answers: [], state: 'open' } }))
+    }
+    h = await startMcp({ approvals: f.approvals })
+    const c = await h.client(era)
+    const m = ok(await callTool(c, 'request_approval', { conversation: GENERAL.id, text: 'Publicar?', options: OPTIONS, needed: 3, markdown: false }))
+    expect(m).toMatchObject({ approval: { needed: 3, answers: [], state: 'open' } })
+    expect(f.calls).toEqual([['request', GENERAL.id, { text: 'Publicar?', options: OPTIONS, needed: 3 }]])
+    for (const needed of [1, 11, 2.5, '3']) {
+      expect(refused(await callTool(c, 'request_approval', { conversation: GENERAL.id, text: 'Publicar?', options: OPTIONS, needed })), JSON.stringify(needed)).toMatch(/needed/)
+    }
+    // F2: an unknown argument is dropped without an error (the schemas are not strict).
+    ok(await callTool(c, 'request_approval', { conversation: GENERAL.id, text: 'Publicar?', options: OPTIONS, markdown: false, quorum: 2 }))
+    expect(f.calls).toHaveLength(2)
+    expect(f.calls[1]).toEqual(['request', GENERAL.id, { text: 'Publicar?', options: OPTIONS }])
+  })
+
+  it('wait_for_approval: the partial events read the card again; the wait ends when all the answers are in', async () => {
+    const f = fakeApprovals(multiStatus('open', []))
+    const clock = fakeClock()
+    h = await startMcp({ approvals: f.approvals, setTimer: clock.setTimer })
+    const c = await h.client(era)
+    const p = callTool(c, 'wait_for_approval', { conversation: GENERAL.id, id: CARD })
+    await until(() => clock.timers.length === 1 && f.calls.length === 1)
+    f.set(multiStatus('open', [A1]))
+    h.world.emit(answeredEv(A1, 1))
+    await until(() => f.calls.length === 2)
+    f.set(multiStatus('answered', [A1, B1]))
+    h.world.emit(answeredEv(B1, 2))
+    expect(ok(await p)).toEqual(multiStatus('answered', [A1, B1]))
+    expect(f.calls).toHaveLength(3)
+  })
+
+  it('wait_for_approval: the timeout carries the state so far; a card closed short of N ends the wait with `closed`', async () => {
+    const f = fakeApprovals(multiStatus('open', [A1]))
+    const clock = fakeClock()
+    h = await startMcp({ approvals: f.approvals, setTimer: clock.setTimer })
+    const c = await h.client(era)
+    const p = callTool(c, 'wait_for_approval', { conversation: GENERAL.id, id: CARD })
+    await until(() => clock.timers.length === 1 && f.calls.length === 1)
+    clock.timers[0]!.fire()
+    expect(ok(await p)).toEqual({ conversation: GENERAL.id, id: CARD, timedOut: true, approval: multiStatus('open', [A1]).approval })
+    f.set(multiStatus('closed', [A1]))
+    expect(ok(await callTool(c, 'wait_for_approval', { conversation: GENERAL.id, id: CARD }))).toEqual(multiStatus('closed', [A1]))
+  })
+
+  it('close_approval: the final state with `needed` and `answers`', async () => {
+    const f = fakeApprovals(multiStatus('open', [A1]))
+    f.approvals.close = (c, ts) => {
+      f.calls.push(['close', c, ts])
+      return Promise.resolve(message({ id: ts, conversation: c, author: ME.id, text: 'x', approval: multiStatus('closed', [A1]).approval }))
+    }
+    h = await startMcp({ approvals: f.approvals })
+    const c = await h.client(era)
+    expect(ok(await callTool(c, 'close_approval', { conversation: GENERAL.id, id: CARD }))).toEqual(multiStatus('closed', [A1]))
+  })
+
+  it('react: an id shape in the emoji → content_refused before any effect; an emoji passes', async () => {
+    h = await startMcp()
+    const c = await h.client(era)
+    const answer = await callTool(c, 'react', { conversation: GENERAL.id, message: '1730000200.000200', emoji: '@nome:servidor.local' })
+    expect(refused(answer)).toBe('content_refused')
+    expect(answer.structuredContent).toEqual({ code: 'content_refused', refused: [{ field: 'emoji', pattern: 'user_id' }] })
+    expect(JSON.stringify(answer)).not.toContain('servidor')
+    expect(h.logs).toContainEqual({ evt: 'leak-blocked', where: 'mcp:react', path: '$.emoji', pattern: 'mxid' })
+    expect(h.world.calls.filter((x) => x.op === 'react')).toHaveLength(0)
+    ok(await callTool(c, 'react', { conversation: GENERAL.id, message: '1730000200.000200', emoji: '👍' }))
+    expect(h.world.calls.filter((x) => x.op === 'react')).toHaveLength(1)
+  })
+})

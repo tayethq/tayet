@@ -1297,3 +1297,68 @@ describe('reactions and threads in the withheld form (edge)', () => {
     s.close()
   })
 })
+
+// ADR-104 (Aprovadores 2): `needed` on the card's POST, and the probe on the reaction write.
+describe('write routes: a card that asks for several answers (ADR-104)', () => {
+  const path = '/v1/conversations/CAAAAAAAAAA/approvals'
+  const options = [{ id: 'ok', label: 'OK' }]
+  const fakeApprovals = () => {
+    const calls: unknown[] = []
+    const approvals: ApprovalFacade = {
+      request: (c, r) => {
+        calls.push(['request', c, r])
+        return Promise.resolve(msg({ id: '1.000002', text: r.text, approval: { options, needed: r.needed, answers: [], state: 'open' } }))
+      },
+      close: () => Promise.reject(new Error('unused')),
+      state: () => Promise.reject(new Error('unused')),
+    }
+    return { approvals, calls }
+  }
+
+  it('POST with `needed` 2 to 10 reaches the facade; anything else → 400 invalid_argument, nothing sent', async () => {
+    const a = fakeApprovals()
+    const { port } = await start(fakeRead().read, { approvals: a.approvals })
+    for (const needed of [2, 10]) {
+      const r = await send(port, path, { method: 'POST', ...json({ text: 'x', options, needed }) })
+      expect(r.status).toBe(200)
+      expect(r.body).toMatchObject({ approval: { needed, answers: [], state: 'open' } })
+    }
+    expect(a.calls).toEqual([
+      ['request', 'CAAAAAAAAAA', { text: 'x', options, needed: 2 }],
+      ['request', 'CAAAAAAAAAA', { text: 'x', options, needed: 10 }],
+    ])
+    for (const needed of [1, 11, 0, -2, 2.5, '3', null, true, [3]]) {
+      const r = await send(port, path, { method: 'POST', ...json({ text: 'x', options, needed }) })
+      expect([r.status, errCode(r)], JSON.stringify(needed)).toEqual([400, 'invalid_argument'])
+    }
+    expect(a.calls).toHaveLength(2)
+  })
+})
+
+describe('write routes: the probe on the reaction write (ADR-104 dec. 23)', () => {
+  const base = '/v1/conversations/CAAAAAAAAAA/messages/1.000001/reactions/'
+
+  it('an id shape in the reaction → 422 content_refused before any effect; an emoji and a short text pass; DELETE has no probe', async () => {
+    const w = fakeWrite()
+    const { port } = await start(fakeRead().read, { write: w.write })
+    for (const emoji of ['👍', '🎉', '✅', '❤️', '👍🏽', '🇧🇷', '👨‍👩‍👧', 'ok', 'Verificar']) {
+      expect((await send(port, base + encodeURIComponent(emoji), { method: 'PUT' })).status, emoji).toBe(204)
+    }
+    const shapes: Array<[string, string]> = [
+      ['@nome:servidor.local', 'user_id'],
+      ['!sala:servidor.local', 'conversation_id'],
+      ['$' + 'E'.repeat(43), 'message_id'],
+      ['mxc://servidor.local/abc', 'media_address'],
+    ]
+    for (const [emoji, pattern] of shapes) {
+      const r = await send(port, base + encodeURIComponent(emoji), { method: 'PUT' })
+      expect([r.status, errCode(r)], emoji).toEqual([422, 'content_refused'])
+      expect(errRefused(r)).toEqual([{ field: 'emoji', pattern }])
+      expect(r.raw.toString()).not.toContain(emoji)
+    }
+    expect(logs).toContainEqual({ evt: 'leak-blocked', where: 'PUT reaction', path: '$.emoji', pattern: 'mxid' })
+    expect((await send(port, base + encodeURIComponent('@nome:servidor.local'), { method: 'DELETE' })).status).toBe(204)
+    expect(w.calls.filter((c) => c[0] === 'react').map((c) => c[3])).toEqual(['👍', '🎉', '✅', '❤️', '👍🏽', '🇧🇷', '👨‍👩‍👧', 'ok', 'Verificar'])
+    expect(w.calls.filter((c) => c[0] === 'unreact').map((c) => c[3])).toEqual(['@nome:servidor.local'])
+  })
+})

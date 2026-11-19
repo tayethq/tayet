@@ -18,6 +18,11 @@
 //   is read again BEFORE the close write (a decided answer → the event and the seal, which is the close) and
 //   once more AFTER it, against the close event's server instant (an answer up to it → the event). An
 //   answer that cannot be read yet keeps the card watched, closed or not, until it decrypts.
+// - A card that declares how many answers it asks for (ADR-104, `needed`): read with `resolveMultiApproval`
+//   (the client's rule), page by page until `approvalSettled` or the end. One `approval.answered` per answer
+//   that counts once its option is read, with `count` and `needed`; the seal only with `needed` answers read.
+//   What went out is kept per card as person token + instant (in memory and in the file, written AFTER the
+//   event): the boot emits only what is missing, and a stop between the event and the write repeats it.
 // - Nothing of the protocol reaches a log line: reasons and counts only.
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk'
 import { Direction, MatrixEvent as SdkEvent, MatrixEventEvent, RelationType } from 'matrix-js-sdk'
@@ -26,25 +31,30 @@ import {
   APPROVAL_LABEL_MAX,
   APPROVAL_MAX_OPTIONS,
   APPROVAL_MSGTYPE,
+  APPROVAL_NEEDED_MAX,
+  APPROVAL_NEEDED_MIN,
   APPROVAL_OPTION_ID,
   RESPONSE_REL_TYPE,
   aggregateReactions,
   approvalClosed,
+  approvalSettled,
   brandUserId,
   buildApprovalContent,
   buildApprovalEditContent,
   displayedEdit,
   editAppliesTo,
   mayAnswer,
+  readApprovalNeeded,
   readApprovalOptions,
   resolveApproval,
+  resolveMultiApproval,
   responseOption,
   richFromContent,
   type ApprovalAccounts,
   type ApprovalAnswer,
 } from '@tayet/shared/internal'
 import type { ApprovalOption, ApprovalState, RichDoc } from '@tayet/shared'
-import type { ApiApproval, ApiApprovalStatus, ApiEvent, ApiMessage, ApiRich } from '../api/contract'
+import type { ApiApproval, ApiApprovalAnswer, ApiApprovalStatus, ApiEvent, ApiMessage, ApiRich } from '../api/contract'
 import { writeJsonAtomic } from '../store'
 import { ReadError, type Resolver } from './read'
 import { MENTIONS_MAX, WriteError, writeHelpers, type WriteDeps } from './write'
@@ -55,6 +65,9 @@ type Log = (line: Record<string, unknown>) => void
 // (demoting is the Slack layer's, A3-4). ─────────────────────────────────────────────────────────────
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const OPTION_KEYS: ReadonlySet<string> = new Set(['id', 'label', 'style'])
+
+// A card's declared number of answers (ADR-104 I7): an integer from 2 to 10.
+export const neededValid = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= APPROVAL_NEEDED_MIN && n <= APPROVAL_NEEDED_MAX
 
 export function approvalOptionsOf(raw: unknown): ApprovalOption[] {
   const bad = (): never => {
@@ -93,14 +106,18 @@ export interface CardReading {
   pending?: MatrixEvent
   // The id of the answer that decided the card, when one did.
   decidedId?: string
+  // Only for a card that declares `needed` (state `multi`): the answers that count, in the server's order
+  // (the event id is internal), and EVERY one of them that cannot be read yet.
+  counted?: Array<{ eventId: string; by: string; at: number; option?: string }>
+  pendings?: MatrixEvent[]
 }
 
 export interface CardReader {
   // The card's state from the server. `fresh` skips the cache (a closed card's reading is kept: after the
   // close nothing counts any more).
   // `closedAt` is a close instant already known (the server's instant of the agent's own close event): the
-  // edits are not read for it.
-  read(roomId: string, cardId: string, options: readonly ApprovalOption[], opts?: { fresh?: boolean; closedAt?: number }): Promise<CardReading>
+  // edits are not read for it. `needed`: the card declares how many answers it asks for (ADR-104).
+  read(roomId: string, cardId: string, options: readonly ApprovalOption[], opts?: { fresh?: boolean; closedAt?: number; needed?: number }): Promise<CardReading>
 }
 
 export const SETTLED_MAX = 500
@@ -135,6 +152,30 @@ function verdictOf(a: AnswerFact, options: readonly ApprovalOption[], closedAt: 
   return a.option !== undefined && options.some((o) => o.id === a.option) ? 'counts' : 'unknown-option'
 }
 
+// The reading of a card that declares `needed`: each answer that counts (the state's, one per person) with
+// its event, the ones that cannot be read yet, and the answers that do not count ahead of the last one that
+// does (a second answer of the same person, or one past the last that fits, is no line of the log).
+function multiReading(state: Extract<ApprovalState, { kind: 'multi' }>, answers: readonly AnswerFact[], options: readonly ApprovalOption[], closedAt: number | undefined, accounts: ApprovalAccounts): CardReading {
+  const counted: NonNullable<CardReading['counted']> = []
+  const pendings: MatrixEvent[] = []
+  const ignored: CardReading['ignored'] = []
+  const taken = new Set<AnswerFact>()
+  for (const s of state.answers) {
+    const fact = answers.find((a) => !taken.has(a) && a.sender === (s.by as unknown as string) && a.ts === (s.at as unknown as number) && verdictOf(a, options, closedAt, accounts) === 'counts')
+    if (fact === undefined) continue
+    taken.add(fact)
+    counted.push({ eventId: fact.eventId, by: fact.sender, at: fact.ts, ...(s.option !== undefined && { option: s.option }) })
+    if (!fact.decrypted) pendings.push(fact.event)
+  }
+  const last = counted.length > 0 ? answers.findIndex((a) => a.eventId === counted[counted.length - 1]?.eventId) : answers.length - 1
+  const upTo = counted.length >= state.needed ? last : answers.length - 1
+  for (const a of answers.slice(0, upTo + 1)) {
+    const verdict = verdictOf(a, options, closedAt, accounts)
+    if (verdict !== 'counts' && verdict !== 'redacted') ignored.push({ eventId: a.eventId, reason: verdict })
+  }
+  return { state, closedAt, ignored, answerIds: answers.map((a) => a.eventId), counted, pendings }
+}
+
 export function createCardReader(client: RelationsClient, accounts: () => ApprovalAccounts, author: () => string, max = SETTLED_MAX): CardReader {
   const settled = new Map<string, CardReading>()
   return {
@@ -159,10 +200,12 @@ export function createCardReader(client: RelationsClient, accounts: () => Approv
         if (page.next === undefined) break
         from = page.next
       }
-      // The answers, until the end or the first one that resolves the card.
+      // The answers, until the end or the first one that resolves the card (with `needed`: until the card
+      // holds all the answers it asks for).
       const answers: AnswerFact[] = []
       let state: ApprovalState
       const closedOn = closedAt
+      const { needed } = opts
       from = undefined
       for (;;) {
         const page = await relationPage(client, roomId, cardId, RESPONSE_REL_TYPE, from)
@@ -171,9 +214,18 @@ export function createCardReader(client: RelationsClient, accounts: () => Approv
           const fact = answerFactOf(ev)
           if (fact !== undefined) answers.push(fact)
         }
-        state = resolveApproval(options, answers, closedOn, accounts())
-        if (state.kind === 'answered' || page.next === undefined) break
+        state = needed !== undefined ? resolveMultiApproval(options, answers, closedOn, accounts(), needed) : resolveApproval(options, answers, closedOn, accounts())
+        if (approvalSettled(state) || page.next === undefined) break
         from = page.next
+      }
+      if (state.kind === 'multi') {
+        const reading = multiReading(state, answers, options, closedAt, accounts())
+        if (closedAt !== undefined && reading.pendings?.length === 0) {
+          settled.delete(key)
+          settled.set(key, reading)
+          if (settled.size > max) settled.delete(settled.keys().next().value as string)
+        }
+        return reading
       }
       const ignored: CardReading['ignored'] = []
       let pending: MatrixEvent | undefined
@@ -212,6 +264,8 @@ export interface ApprovalRequest {
   options: ApprovalOption[]
   thread?: string
   mentions?: string[]
+  // ADR-104: how many answers the card asks for (2 to 10); absent → resolved by its first answer.
+  needed?: number
 }
 
 export interface ApprovalFacade {
@@ -230,6 +284,8 @@ interface Card {
   eventId: string
   ev: MatrixEvent
   options: ApprovalOption[]
+  // ADR-104: the number of answers the ORIGINAL content declares, when it does.
+  needed?: number
   // The content the card shows: the author's latest edit (PLANO-AGENTES §8.30), else the original.
   shown: Record<string, unknown>
 }
@@ -240,8 +296,9 @@ export interface ApprovalCore {
   editCard: NonNullable<WriteDeps['editCard']>
   // The seal of the watch: the close write, keeping the request (no write when already closed).
   seal: (roomId: string, eventId: string) => Promise<void>
-  // The `approval` of a message the read side projects: the state only on the agent's own cards.
-  approvalOf: (roomId: string, eventId: string, options: readonly ApprovalOption[], own: boolean) => Promise<ApiApproval>
+  // The `approval` of a message the read side projects: the state only on the agent's own cards; `needed`
+  // on any card that declares it (ADR-104 I3).
+  approvalOf: (roomId: string, eventId: string, options: readonly ApprovalOption[], own: boolean, needed?: number) => Promise<ApiApproval>
 }
 
 // The `approval` of an own card from a reading's state.
@@ -252,12 +309,17 @@ function viewOf(options: readonly ApprovalOption[], state: ApprovalState, person
       return { ...view, state: 'answered', answer: { ...(state.option !== undefined && { option: state.option }), by: personToken(state.by), at: state.at as unknown as number } }
     case 'closed':
       return { ...view, state: 'closed' }
+    case 'multi': {
+      // ADR-104 I2: `answered` only with the `needed` answers read; `closed` when closed short of that; an
+      // answer that counts and cannot be read yet comes without its option. No singular `answer`.
+      const answers: ApiApprovalAnswer[] = state.answers.map((a) => ({ ...(a.option !== undefined && { option: a.option }), by: personToken(a.by), at: a.at }))
+      const read = state.answers.filter((a) => a.option !== undefined).length
+      return { ...view, needed: state.needed, answers, state: read >= state.needed ? 'answered' : state.closed ? 'closed' : 'open' }
+    }
     case 'open':
     case 'sending':
     case 'failed':
-    case 'multi':
-      // The client's local states and the state of a card that asks for several answers never come out of
-      // resolveApproval.
+      // The client's local states never come out of resolveApproval.
       return { ...view, state: 'open' }
   }
 }
@@ -277,6 +339,9 @@ export function createApprovalCore(deps: ApprovalDeps): ApprovalCore {
     const original = ev.getOriginalContent()
     const options = original.msgtype === APPROVAL_MSGTYPE ? readApprovalOptions(original) : undefined
     if (options === undefined) throw new WriteError('not_approval')
+    // ADR-104 dec. 12: a declaration that is no integer from 2 to 10 makes the card malformed.
+    const needed = readApprovalNeeded(original)
+    if (needed === null) throw new WriteError('not_approval')
     if (room.findEventById(eventId) === undefined && ev.replacingEvent() === null) {
       const bundled = ev.getServerAggregatedRelation<Record<string, unknown>>(RelationType.Replace)
       if (bundled) {
@@ -285,7 +350,7 @@ export function createApprovalCore(deps: ApprovalDeps): ApprovalCore {
         if (!edit.isDecryptionFailure() && editAppliesTo(edit.getSender(), ev.getSender())) ev.makeReplaced(edit)
       }
     }
-    return { eventId, ev, options, shown: displayedEdit(ev).content }
+    return { eventId, ev, options, ...(needed !== undefined && { needed }), shown: displayedEdit(ev).content }
   }
 
   const cardAt = async (room: Room, ts: string): Promise<Card> => {
@@ -293,9 +358,9 @@ export function createApprovalCore(deps: ApprovalDeps): ApprovalCore {
     return cardOf(room, eventId, ev)
   }
 
-  const approvalOf = async (roomId: string, eventId: string, options: readonly ApprovalOption[], own: boolean): Promise<ApiApproval> => {
-    if (!own) return { options: optionsView(options) }
-    const { state } = await reader.read(roomId, eventId, options)
+  const approvalOf = async (roomId: string, eventId: string, options: readonly ApprovalOption[], own: boolean, needed?: number): Promise<ApiApproval> => {
+    if (!own) return { options: optionsView(options), ...(needed !== undefined && { needed }) }
+    const { state } = await reader.read(roomId, eventId, options, needed !== undefined ? { needed } : undefined)
     return viewOf(options, state, (u) => resolver.tokenOfPerson(u))
   }
 
@@ -314,7 +379,7 @@ export function createApprovalCore(deps: ApprovalDeps): ApprovalCore {
       mentionsMe: false,
       reactions: aggregateReactions(room, card.eventId, h.me()).map((r) => ({ emoji: r.emoji, count: r.count, mine: r.mine })),
       ...(editedAt !== undefined && { editedAt }),
-      approval: state !== undefined ? viewOf(card.options, state, (u) => resolver.tokenOfPerson(u)) : await approvalOf(room.roomId, card.eventId, card.options, true),
+      approval: state !== undefined ? viewOf(card.options, state, (u) => resolver.tokenOfPerson(u)) : await approvalOf(room.roomId, card.eventId, card.options, true, card.needed),
     }
   }
 
@@ -324,7 +389,7 @@ export function createApprovalCore(deps: ApprovalDeps): ApprovalCore {
     const keep = text === undefined
     const body = keep ? (typeof card.shown.body === 'string' ? card.shown.body : '') : text
     const doc = keep ? richFromContent(card.shown) : rich
-    const content = buildApprovalEditContent(body, doc, card.options, true, card.eventId)
+    const content = buildApprovalEditContent(body, doc, card.options, true, card.eventId, card.needed)
     const editId = await h.run({ kind: 'content', channel: room.roomId, content }, 'approval-close')
     return { shown: content['m.new_content'], closedAt: await h.instantOf(room, editId) }
   }
@@ -340,6 +405,8 @@ export function createApprovalCore(deps: ApprovalDeps): ApprovalCore {
     async request(conversation, req) {
       const options = approvalOptionsOf(req.options)
       if (req.text.trim() === '') throw new WriteError('invalid_argument')
+      const { needed } = req
+      if (needed !== undefined && !neededValid(needed)) throw new WriteError('invalid_argument')
       const tokens = req.mentions ?? []
       if (tokens.length > MENTIONS_MAX || new Set(tokens).size !== tokens.length) throw new WriteError('invalid_argument')
       const room = h.joined(conversation)
@@ -350,11 +417,11 @@ export function createApprovalCore(deps: ApprovalDeps): ApprovalCore {
         thread = await h.threadRoot(room, req.thread)
         threadTs = await resolver.tsOfRelated(room, thread)
       }
-      const content = buildApprovalContent(req.text, req.rich, options, mentions, thread)
+      const content = buildApprovalContent(req.text, req.rich, options, mentions, thread, needed)
       const eventId = await h.run({ kind: 'content', channel: room.roomId, content, ...(thread !== undefined && { thread }) }, 'approval')
       const id = await h.acceptedTs(room, eventId)
       const token = resolver.tokenOfRoom(room.roomId)
-      await deps.watch.track({ conversation: token, id, options }, { roomId: room.roomId, eventId })
+      await deps.watch.track({ conversation: token, id, options, ...(needed !== undefined && { needed }) }, { roomId: room.roomId, eventId })
       return {
         id,
         conversation: token,
@@ -365,7 +432,7 @@ export function createApprovalCore(deps: ApprovalDeps): ApprovalCore {
         mentionsMe: false,
         ...(tokens.length > 0 && { mentions: tokens }),
         reactions: [],
-        approval: { options: optionsView(options), state: 'open' },
+        approval: needed !== undefined ? { options: optionsView(options), needed, answers: [], state: 'open' } : { options: optionsView(options), state: 'open' },
       }
     },
 
@@ -373,7 +440,7 @@ export function createApprovalCore(deps: ApprovalDeps): ApprovalCore {
     async close(conversation, ts, text, rich) {
       const room = h.joined(conversation)
       const card = await cardAt(room, ts)
-      const tracked: TrackedCard = { conversation: resolver.tokenOfRoom(room.roomId), id: ts, options: card.options }
+      const tracked: TrackedCard = { conversation: resolver.tokenOfRoom(room.roomId), id: ts, options: card.options, ...(card.needed !== undefined && { needed: card.needed }) }
       const where = { roomId: room.roomId, eventId: card.eventId }
       if (approvalClosed(card.shown)) {
         // Already closed: no write; an answer up to the close that was never reported goes out now.
@@ -381,7 +448,8 @@ export function createApprovalCore(deps: ApprovalDeps): ApprovalCore {
         return messageOf(room, card, card.shown, undefined, out.reading?.state)
       }
       const before = await settled(tracked, where)
-      // A decided answer was there: the event went out and the seal is the close (no second close).
+      // A decided answer was there (with `needed`: all the answers, read): the event went out and the seal is
+      // the close (no second close).
       if (before.outcome === 'answered') return messageOf(room, card, card.shown, undefined, before.reading?.state)
       const written = await writeClose(room, card, text, rich)
       const after = await deps.watch.settle(tracked, where, written.closedAt)
@@ -391,7 +459,7 @@ export function createApprovalCore(deps: ApprovalDeps): ApprovalCore {
     async state(conversation, ts) {
       const room = h.joined(conversation)
       const card = await cardAt(room, ts)
-      return { conversation: resolver.tokenOfRoom(room.roomId), id: ts, approval: await approvalOf(room.roomId, card.eventId, card.options, true) }
+      return { conversation: resolver.tokenOfRoom(room.roomId), id: ts, approval: await approvalOf(room.roomId, card.eventId, card.options, true, card.needed) }
     },
   }
 
@@ -399,8 +467,8 @@ export function createApprovalCore(deps: ApprovalDeps): ApprovalCore {
     facade,
     async editCard(room, eventId, ev, text, rich) {
       const card = await cardOf(room, eventId, ev)
-      // Only the request changes: the original options, and the close as it is.
-      const content = buildApprovalEditContent(text, rich, card.options, approvalClosed(card.shown), eventId)
+      // Only the request changes: the original options and `needed`, and the close as it is.
+      const content = buildApprovalEditContent(text, rich, card.options, approvalClosed(card.shown), eventId, card.needed)
       const editId = await h.run({ kind: 'content', channel: room.roomId, content }, 'approval-edit')
       return messageOf(room, card, content['m.new_content'], await h.instantOf(room, editId))
     },
@@ -425,11 +493,18 @@ export const DECRYPT_RECHECK_MS = 60_000
 // A card whose message cannot be found is given this many attempts before it leaves the file.
 export const LOCATE_ATTEMPTS = 5
 
-// What the file keeps: API tokens and the options, never a protocol id.
+// What the file keeps: API tokens and the options, never a protocol id. A card that declares `needed`
+// (ADR-104) also keeps it, and the answers already emitted (person token + instant).
 export interface TrackedCard {
   conversation: string
   id: string
   options: ApprovalOption[]
+  needed?: number
+}
+
+export interface EmittedAnswer {
+  by: string
+  at: number
 }
 
 export type SetTimer = (fn: () => void, ms: number) => () => void
@@ -470,12 +545,24 @@ interface Watched extends TrackedCard {
   locateMisses: number
   // The server's instant of the agent's own close, when this run wrote it.
   closedAt?: number
+  // ADR-104: the answers of a card with `needed` whose event went out (this run or, from the file, earlier).
+  emitted: EmittedAnswer[]
   current?: Promise<void>
   last?: Settled
   cancel?: () => void
 }
 
 const keyOf = (c: TrackedCard): string => `${c.conversation} ${c.id}`
+const answerKeyOf = (c: TrackedCard, a: EmittedAnswer): string => `${keyOf(c)} ${a.by} ${a.at}`
+const watchedOf = (card: TrackedCard, where?: { roomId: string; eventId: string }, emitted: EmittedAnswer[] = []): Watched => ({
+  ...card,
+  ...where,
+  emitted,
+  running: false,
+  again: false,
+  attempts: 0,
+  locateMisses: 0,
+})
 
 export class ApprovalWatch {
   private readonly cards = new Map<string, Watched>()
@@ -485,6 +572,8 @@ export class ApprovalWatch {
   private readonly logged = new Set<string>()
   // Cards whose event went out in this run (kept past the card leaving the watch: never twice per run).
   private readonly emitted = new Set<string>()
+  // ADR-104: the same per answer of a card with `needed` (card, person token, instant), with the file's.
+  private readonly emittedAnswers = new Set<string>()
   private saving: Promise<void> = Promise.resolve()
   private readonly setTimer: SetTimer
   private stopped = false
@@ -507,7 +596,14 @@ export class ApprovalWatch {
       if (!isRecord(item) || typeof item.conversation !== 'string' || typeof item.id !== 'string') continue
       const options = readApprovalOptions({ [APPROVAL_MSGTYPE]: { options: item.options } })
       if (options === undefined) continue
-      const card: Watched = { conversation: item.conversation, id: item.id, options, running: false, again: false, attempts: 0, locateMisses: 0 }
+      // ADR-104: an invalid `needed` drops the entry like invalid options; a malformed `emitted` is empty.
+      if ('needed' in item && !neededValid(item.needed)) continue
+      const needed = neededValid(item.needed) ? item.needed : undefined
+      const emitted = needed !== undefined && Array.isArray(item.emitted) && item.emitted.every((e) => isRecord(e) && typeof e.by === 'string' && typeof e.at === 'number')
+        ? (item.emitted as EmittedAnswer[]).map(({ by, at }) => ({ by, at }))
+        : []
+      const card = watchedOf({ conversation: item.conversation, id: item.id, options, ...(needed !== undefined && { needed }) }, undefined, emitted)
+      for (const a of emitted) this.emittedAnswers.add(answerKeyOf(card, a))
       this.cards.set(keyOf(card), card)
     }
     if (this.cards.size > 0) this.deps.log({ evt: 'approvals-loaded', count: this.cards.size })
@@ -520,7 +616,7 @@ export class ApprovalWatch {
   // A card just sent: kept (on disk before the answer of the send) and read once — an answer may have
   // come before the watch knew the card.
   async track(card: TrackedCard, where: { roomId: string; eventId: string }): Promise<void> {
-    const watched: Watched = { ...card, ...where, running: false, again: false, attempts: 0, locateMisses: 0 }
+    const watched = watchedOf(card, where)
     this.cards.set(keyOf(card), watched)
     this.byEvent.set(where.eventId, watched)
     await this.persist()
@@ -533,7 +629,7 @@ export class ApprovalWatch {
   async settle(card: TrackedCard, where: { roomId: string; eventId: string }, closedAt?: number): Promise<Settled> {
     let watched = this.byEvent.get(where.eventId) ?? this.cards.get(keyOf(card))
     if (watched === undefined) {
-      watched = { ...card, ...where, running: false, again: false, attempts: 0, locateMisses: 0 }
+      watched = watchedOf(card, where)
       this.cards.set(keyOf(card), watched)
       this.byEvent.set(where.eventId, watched)
     }
@@ -642,7 +738,11 @@ export class ApprovalWatch {
     }
     let reading: CardReading
     try {
-      reading = await this.deps.reader.read(card.roomId, card.eventId, card.options, { fresh: true, ...(card.closedAt !== undefined && { closedAt: card.closedAt }) })
+      reading = await this.deps.reader.read(card.roomId, card.eventId, card.options, {
+        fresh: true,
+        ...(card.closedAt !== undefined && { closedAt: card.closedAt }),
+        ...(card.needed !== undefined && { needed: card.needed }),
+      })
     } catch {
       log({ evt: 'approval-check-failed', stage: 'read' })
       card.last = { outcome: 'retry' }
@@ -655,6 +755,7 @@ export class ApprovalWatch {
       log({ evt: 'approval-answer-ignored', reason })
     }
     const state = reading.state
+    if (state.kind === 'multi') return this.onceMulti(card, reading, state)
     if (state.kind !== 'answered') {
       // Closed with no valid answer up to the close: nothing more to watch.
       if (reading.closedAt !== undefined) {
@@ -688,6 +789,67 @@ export class ApprovalWatch {
       card.last = { outcome: 'answered', reading }
       return this.drop(card)
     }
+    await this.sealOf(card, reading)
+  }
+
+  // ADR-104: a card that declares `needed`. One event per answer that counts and is read, not out yet, in
+  // the server's order, then the file (emit, then write: a stop between them repeats the event). `count`
+  // (I1) is the number of answers that count and are read, up to that event in this reading: the event
+  // whose `count` equals `needed` is the last. The seal only with `needed` answers read; an answer that
+  // cannot be read holds it, and its event goes out when it decrypts. A removed answer only reads again.
+  private async onceMulti(card: Watched, reading: CardReading, state: Extract<ApprovalState, { kind: 'multi' }>): Promise<void> {
+    const counted = reading.counted ?? []
+    const read = counted.filter((a) => a.option !== undefined)
+    const news: Array<{ answer: (typeof read)[number]; key: EmittedAnswer }> = []
+    let count = 0
+    for (const a of read) {
+      const key = { by: this.deps.personToken(a.by), at: a.at }
+      if (this.emittedAnswers.has(answerKeyOf(card, key))) count += 1
+      else news.push({ answer: a, key })
+    }
+    for (const { answer, key } of news) {
+      count += 1
+      this.emittedAnswers.add(answerKeyOf(card, key))
+      card.emitted.push(key)
+      this.deps.log({ evt: 'approval-answered', count, needed: state.needed })
+      this.deps.emit({
+        type: 'approval.answered',
+        conversation: card.conversation,
+        id: card.id,
+        option: answer.option as string,
+        by: key.by,
+        at: key.at,
+        count,
+        needed: state.needed,
+      })
+    }
+    if (news.length > 0) void this.persist()
+    const pendings = reading.pendings ?? []
+    if (pendings.length > 0) {
+      // Who and when are known, the option is not: wait for each key, closed or not (as item 7).
+      card.last = { outcome: 'waiting', reading }
+      for (const ev of pendings) ev.once(MatrixEventEvent.Decrypted, () => void this.check(card))
+      return this.later(card, DECRYPT_RECHECK_MS)
+    }
+    if (read.length >= state.needed) {
+      if (reading.closedAt !== undefined) {
+        card.last = { outcome: 'answered', reading }
+        return this.drop(card)
+      }
+      return this.sealOf(card, reading)
+    }
+    if (reading.closedAt !== undefined) {
+      // Closed short of `needed`: what counted up to the close went out; nothing more to watch.
+      card.last = { outcome: 'closed', reading }
+      return this.drop(card)
+    }
+    card.last = { outcome: 'open', reading }
+  }
+
+  // The seal of a card whose answer(s) went out: the close write, tried again on failure.
+  private async sealOf(card: Watched, reading: CardReading): Promise<void> {
+    const { log } = this.deps
+    if (card.roomId === undefined || card.eventId === undefined) return
     try {
       await this.deps.seal(card.roomId, card.eventId)
       card.last = { outcome: 'answered', reading }
@@ -719,7 +881,16 @@ export class ApprovalWatch {
   // Writes are chained (writeJsonAtomic's temp name is per process); each one writes the latest set.
   private persist(): Promise<void> {
     this.saving = this.saving
-      .then(() => writeJsonAtomic(this.deps.file, { cards: [...this.cards.values()].map(({ conversation, id, options }) => ({ conversation, id, options })) }))
+      .then(() =>
+        writeJsonAtomic(this.deps.file, {
+          cards: [...this.cards.values()].map(({ conversation, id, options, needed, emitted }) => ({
+            conversation,
+            id,
+            options,
+            ...(needed !== undefined && { needed, emitted: emitted.map(({ by, at }) => ({ by, at })) }),
+          })),
+        }),
+      )
       .catch(() => this.deps.log({ evt: 'approvals-file-error' }))
     return this.saving
   }

@@ -5,7 +5,7 @@
 //
 // Ids are the native API's opaque tokens (api/ids.ts): `C…`/`D…` conversation, `U…` person; a message
 // is its `ts` inside its conversation. A `cursor` is opaque and comes from an earlier answer.
-import type { ApiApprovalOption, ApiApprovalStatus, ApiCommand, ApiCommandsAccepted, ApiConversationList, ApiPanelAccepted, ApiErrorCode, ApiMessage, ApiMessageList, ApiPeopleList, ApiPerson, ApiRefused } from '../contract'
+import type { ApiApproval, ApiApprovalOption, ApiApprovalStatus, ApiCommand, ApiCommandsAccepted, ApiConversationList, ApiPanelAccepted, ApiErrorCode, ApiMessage, ApiMessageList, ApiPeopleList, ApiPerson, ApiRefused } from '../contract'
 
 export interface McpListConversationsArgs {
   limit?: number
@@ -76,6 +76,8 @@ export type McpWaitForMentionResult =
 
 // `markdown`: default true, as send_message. `options`: 1 to 25, `id` [a-z0-9_-]{1,32} unique, at most one
 // `primary` (the native POST's rules). Answers the card as a message (`approval.state: 'open'`).
+// `needed`: 2 to 10, the card asks for that many answers (the answer then carries `approval.needed` and
+// an empty `approval.answers`).
 export interface McpRequestApprovalArgs {
   conversation: string
   text: string
@@ -83,6 +85,7 @@ export interface McpRequestApprovalArgs {
   thread?: string
   mentions?: string[]
   markdown?: boolean
+  needed?: number
 }
 export type McpRequestApprovalResult = ApiMessage
 
@@ -93,8 +96,9 @@ export interface McpWaitForApprovalArgs {
   timeout_s?: number
 }
 // The card's state once it is no longer open (`answered` with `answer.option`, or `closed`); or, when the
-// time ran out with the card still open, `timedOut` (call again).
-export type McpWaitForApprovalResult = ApiApprovalStatus | { conversation: string; id: string; timedOut: true }
+// time ran out with the card still open, `timedOut` (call again). A card with `needed`: `answered` with
+// all its `answers` read, or `closed`; `timedOut` carries `approval`, the last state read.
+export type McpWaitForApprovalResult = ApiApprovalStatus | { conversation: string; id: string; timedOut: true; approval?: ApiApproval }
 
 // `text`: the request's new text (absent → the request stays).
 export interface McpCloseApprovalArgs {
@@ -104,6 +108,7 @@ export interface McpCloseApprovalArgs {
   markdown?: boolean
 }
 // The final state: `closed`, or `answered` when a person's answer came first (its event already went out).
+// A card with `needed`: `needed` and `answers`, `answered` only when they were all in and read.
 export type McpCloseApprovalResult = ApiApprovalStatus
 
 // ── Pinned panel (A3-6; ADR-091, Proposto, dec. 13; PLANO-AGENTES §0.3.16 item 13) ─────────────────

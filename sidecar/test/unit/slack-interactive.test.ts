@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { App, LogLevel } from '@slack/bolt'
 import { RESPONSE_TTL_MS } from '../../src/api/slack/response'
 import { open, type Frame, type RawSocket } from '../support/slack-socket'
-import { ALICE, BOT, GENERAL, ME, TOKEN, call, createWorld, idLeaks, startSlack, type SlackHarness, type SlackStart } from '../support/slack-world'
+import { ALICE, BOB, BOT, GENERAL, GONE, ME, TOKEN, call, createWorld, idLeaks, startSlack, type SlackHarness, type SlackStart } from '../support/slack-world'
 import { fakeApprovals, type FakeApprovals } from '../support/slack-approvals'
 
 // The approval card's click on the Slack layer (A3-4; PLANO-AGENTES §0.3.17): `block_actions` in an
@@ -378,5 +378,27 @@ describe('block_actions — names written by people', () => {
       user: { id: ALICE.id, username: 'Verônica (verificação)', name: 'Verônica (verificação)' },
     })
     expect(h!.logs.filter((l) => l.evt === 'leak-blocked')).toEqual([])
+  })
+})
+
+// ADR-104 (Aprovadores 2): a card created by the native API that asks for several answers reaches the
+// Slack layer as one `block_actions` per answer — none is deduplicated, the card unknown to the layer's file.
+describe('block_actions — a card that asks for several answers (ADR-104)', () => {
+  it('three approval.answered of the same card → three interactive envelopes, one per person, in order', async () => {
+    await start()
+    const s = await sock()
+    const ts = '1732000400.000100'
+    const people = [ALICE, BOB, GONE]
+    people.forEach((p, i) => h!.world.emit({ type: 'approval.answered', conversation: GENERAL.id, id: ts, option: 'approve', by: p.id, at: AT + i, count: i + 1, needed: 3 }))
+    await expect.poll(() => interactive(s).length).toBe(3)
+    const payloads = interactive(s).map(payloadOf)
+    expect(payloads.map((p) => (p.user as { id: string }).id)).toEqual(people.map((p) => p.id))
+    expect(payloads.map((p) => (p.container as { message_ts: string }).message_ts)).toEqual([ts, ts, ts])
+    expect(payloads.map((p) => (p.actions as Array<{ action_id: string; block_id: string }>)[0])).toMatchObject(people.map(() => ({ action_id: 'approve', block_id: 'approval' })))
+    expect(new Set(payloads.map((p) => p.response_url)).size).toBe(3)
+    for (const f of interactive(s)) s.send({ envelope_id: f.envelope_id })
+    await tick()
+    expect(interactive(s)).toHaveLength(3)
+    expect(idLeaks(payloads)).toEqual([])
   })
 })

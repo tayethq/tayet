@@ -118,7 +118,7 @@ conversation.
 | `GET /v1/conversations/:id/messages` | Messages, newest first (`limit`, `cursor`, `oldest`, `latest`, `inclusive`, `thread`). |
 | `POST /v1/conversations/:id/messages` | Post `{ text, thread?, replyTo?, mentions?, markdown? }`; waits for acceptance (up to 30 s). |
 | `PATCH /v1/conversations/:id/messages/:ts` · `DELETE …/:ts` | Edit (`{ text, markdown? }`) or remove one of the agent's own messages. On an approval card, PATCH changes only the request. |
-| `POST /v1/conversations/:id/approvals` | Ask for a decision: `{ text, options, markdown?, thread?, mentions? }` (see below). Answers like a message POST, with `approval`. |
+| `POST /v1/conversations/:id/approvals` | Ask for a decision: `{ text, options, needed?, markdown?, thread?, mentions? }` (see below). Answers like a message POST, with `approval`. |
 | `POST /v1/conversations/:id/approvals/:ts/close` | Close one of the agent's cards (`{ text?, markdown? }`; without `text` the request stays). Closing a closed card changes nothing. May answer `answered` (see below). |
 | `GET /v1/conversations/:id/approvals/:ts` | The state of one of the agent's cards: `{ conversation, id, approval }`. |
 | `PUT /v1/conversations/:id/panel` · `DELETE …` · `GET …` | Write, clear or read the agent's pinned panel (see below). PUT and DELETE answer 202 when queued. |
@@ -127,7 +127,7 @@ conversation.
 | `POST /v1/conversations/:id/files?name=&thread=` | Upload a file (the body is the bytes). |
 | `GET /v1/files/:id` | Download a file. |
 | `GET /v1/people/:id` | A person. |
-| `GET /v1/events` | Server-Sent Events (`message.received`, `mention`, `message.edited`, `message.removed`, `reaction.changed`, `conversation.added`/`removed`, `member.changed`, `approval.answered`, `agent.revoked`, `resync`); reconnect with `Last-Event-ID`. |
+| `GET /v1/events` | Server-Sent Events (`message.received`, `mention`, `message.edited`, `message.removed`, `reaction.changed`, `conversation.added`/`removed`, `member.changed`, `approval.answered` (with `count` and `needed` on a card that asks for several answers), `agent.revoked`, `resync`); reconnect with `Last-Event-ID`. |
 
 `markdown: true` renders `text` as Markdown: bold, italic, strike, code, links, code blocks, quotes and
 lists. A heading becomes a bold line and a table becomes a code block. The formatted version is sent only
@@ -157,7 +157,8 @@ the card) only writes the log line `approval-answer-ignored` with the reason.
 
 Messages carry the card as `approval: { options, state?, answer? }`. `state` (`open`, `answered`,
 `closed`) and `answer` (`{ option, by, at }`; `option` is absent while the answer cannot be read) come only
-on the agent's own cards; another agent's card carries its options alone.
+on the agent's own cards; another agent's card carries its options alone. A card that asks for several
+answers carries `needed` and `answers` instead of `answer` (below).
 
 Closing a card never hides an answer. The close reads the answers before it writes and once more after: if
 a person had already answered (or answers up to the instant of the close), the close answers with
@@ -165,10 +166,51 @@ a person had already answered (or answers up to the instant of the close), the c
 the card is closed either way. An answer that cannot be read yet keeps being watched after the close and is
 reported when it can be read. An answer after the close does not count (`closed`).
 
-The agent's open cards are kept in `<store>/approvals.json` (conversation ids, `ts` and options only), so a
-card answered while the agent was stopped is reported when it starts again. **Delivery is at least once**: a
-stop between the event and the seal sends the event again on the next start. Treat `approval.answered` as
-idempotent by `id`.
+#### Cards that ask for several answers
+
+Add `needed` (an integer from 2 to 10) to the POST and the card asks for that many answers, one per person:
+
+```json
+{ "text": "Ship 2.4?", "options": [{ "id": "approve", "label": "Approve", "style": "primary" }, { "id": "reject", "label": "Reject" }], "needed": 3 }
+```
+
+Anything else in `needed` is a 400 `invalid_argument`. The answer carries `needed` and the answers so far:
+
+```json
+"approval": { "options": [ … ], "needed": 3, "answers": [], "state": "open" }
+```
+
+Each person's first valid answer counts, in the server's order, up to `needed`; an answer after that does
+not count. Each answer that counts sends one event once it can be read, with `count` (the answers that count
+and are read so far) and `needed`:
+
+```json
+{ "type": "approval.answered", "conversation": "C…", "id": "<the card's ts>", "option": "approve", "by": "U…", "at": 1731250000000, "count": 2, "needed": 3 }
+```
+
+The event whose `count` equals `needed` is the last one, and the agent then seals the card. Treat these
+events as idempotent by `id`, `by` and `at` (not by `id` alone). On the agent's own card, `answers` lists
+`{ option, by, at }` for each answer that counts (`option` is absent while the answer cannot be read). The
+`state` is `open` while answers are missing or not read yet, `answered` once all `needed` are read, and
+`closed` when the agent closed the card before that, with the answers there were. Another agent's card
+carries `options` and `needed`. An answer that cannot be read yet holds its place and holds the seal; its
+event goes out when it can be read.
+
+A removed answer leaves the count, with no event of its own: the `count` of the next event and the card's
+state say how many answers stand. The same person may then answer again, and that answer (another `at`)
+sends its event. The agent may close the card before it has `needed` answers: the close answers `closed` with
+the answers that counted up to it, and their events go out if they had not.
+
+A card that asks for several answers needs `tayet-agent` 0.4.0 and a Tayet server at v0.1.3 or later. An
+agent before 0.4.0 refuses `needed` on the POST (400) and drops it without an error over MCP, where the card
+is then a plain one: the answer of `request_approval` carries `needed` only when it took effect.
+
+The agent's open cards are kept in `<store>/approvals.json` (conversation ids, `ts` and options; for a card
+that asks for several answers, also `needed` and the person and instant of each answer already reported), so
+a card answered while the agent was stopped is reported when it starts again. **Delivery is at least once**:
+a stop between the event and the seal, or between an answer's event and the write of the file, sends that
+event again on the next start. Treat `approval.answered` as idempotent by `id` (by `id`, `by` and `at` on a
+card that asks for several answers).
 
 An `approval.answered` that goes out while no event stream is connected (typically: decided at start-up,
 before you connect) is kept in memory — at most 200, the oldest dropped first — and delivered to the first
@@ -436,7 +478,10 @@ at once are fine: every event goes to each of them.
   `container.message_ts` the card. Ack it (`await ack()`); a response payload in the ack is ignored. An answer
   decided while no socket was open (the sidecar was starting, your app was down) is kept and sent to the
   first connection that opens — or to the first `GET /v1/events` stream, whichever comes first. Delivered at
-  least once: treat a click as idempotent by `container.message_ts`.
+  least once: treat a click as idempotent by `container.message_ts`. A card that asks for several answers,
+  created by the native API or MCP ([Approval cards](#cards-that-ask-for-several-answers)), comes as one
+  `block_actions` per answer: there, the click is idempotent by `container.message_ts`, `user.id` and
+  `actions[0].action_ts`.
 
   ```js
   app.action('approve', async ({ ack, action, body, respond }) => {
@@ -557,7 +602,8 @@ await app.start({ port: 3000, host: '127.0.0.1' })
   Events (`message`, `app_mention`) and slash commands stay on Socket Mode; with the option, no socket gets an
   `interactive` envelope. Without the option nothing changes.
 - **The request.** `POST`, `Content-Type: application/x-www-form-urlencoded`, one field: `payload`, the same
-  `block_actions` JSON a socket gets (above). Signed as Slack signs: `X-Slack-Request-Timestamp` (seconds) and
+  `block_actions` JSON a socket gets (above); a card that asks for several answers, created by the native API
+  or MCP, comes as one `block_actions` per answer. Signed as Slack signs: `X-Slack-Request-Timestamp` (seconds) and
   `X-Slack-Signature: v0=<hex>`, the HMAC-SHA256 of `v0:<timestamp>:<body>`. The signing secret is the local
   token: give it to your app as `signingSecret`. There is no other secret. Redirects are not followed and no
   proxy of the environment is used.
@@ -709,8 +755,8 @@ const { structuredContent } = await mcp.callTool({ name: 'wait_for_mention', arg
 | `react` | `conversation`, `message` (the `ts`), `emoji` (the character) | `{ changed }` |
 | `get_person` | `id` (`U…`) | the person |
 | `wait_for_mention` | `timeout_s?`, `after?` (a cursor) | `{ mention: { conversation, message }, cursor }`, `{ timedOut: true, cursor }` or `{ resync: true, cursor }` |
-| `request_approval` | `conversation`, `text`, `options` (1–25 `{ id, label, style? }`), `thread?`, `mentions?`, `markdown?` (default `true`) | the card (a message with `approval`) |
-| `wait_for_approval` | `conversation`, `id` (the card's `ts`), `timeout_s?` | `{ conversation, id, approval }` once answered or closed, or `{ conversation, id, timedOut: true }` |
+| `request_approval` | `conversation`, `text`, `options` (1–25 `{ id, label, style? }`), `needed?` (2–10), `thread?`, `mentions?`, `markdown?` (default `true`) | the card (a message with `approval`) |
+| `wait_for_approval` | `conversation`, `id` (the card's `ts`), `timeout_s?` | `{ conversation, id, approval }` once answered or closed, or `{ conversation, id, timedOut: true }` (with `approval` on a card that asks for several answers) |
 | `close_approval` | `conversation`, `id`, `text?`, `markdown?` | `{ conversation, id, approval }` — `closed`, or `answered` |
 | `set_panel` | `conversation`, `text`, `title?`, `markdown?` (default `true`) | `{ conversation, pending: true }` |
 | `clear_panel` | `conversation` | `{ conversation, pending }` — `false`: nothing to clear |
@@ -720,7 +766,7 @@ const { structuredContent } = await mcp.callTool({ name: 'wait_for_mention', arg
 The values are the local API's (same shapes as its JSON), in `structuredContent` and as JSON text in
 `content`. A refused call has `isError: true` and the local API's error code as its text (`not_member`,
 `rate_limited` with `retryAfterMs` in `structuredContent`, …). Content that looks like an internal id
-(`send_message`, `request_approval`, `close_approval`, `set_panel`, `set_commands`) is `content_refused`, with
+(`send_message`, `react`, `request_approval`, `close_approval`, `set_panel`, `set_commands`) is `content_refused`, with
 the local API's `refused` list in `structuredContent`; nothing is sent. `read_messages` gives back the page with a
 message whose content looks like an internal id withheld, as the local API does (`unavailable: true`, no content).
 `internal` is the agent's own failure.
@@ -737,6 +783,15 @@ message whose content looks like an internal id withheld, as the local API does 
   `timeout_s` (default 25, at most 50) for the answer or the close. `answered` carries `answer: { option, by,
   at }`; an answer that cannot be read yet is not returned until it can. `timedOut`: still open, call again.
   `close_approval` may answer `answered` when a person answered first (the event already went out).
+- **Cards that ask for several answers.** `request_approval` takes `needed` (an integer from 2 to 10; the
+  schema refuses anything else), and its answer carries `approval.needed` when it took effect: an agent before
+  0.4.0 drops an unknown argument without an error, and the card is then a plain one. On such a card,
+  `wait_for_approval` does not end at the first answer: it ends when all `needed` answers are in and read
+  (`answered`) or when the card is closed (`closed`), with `needed` and `answers`. On the timeout it answers
+  `{ conversation, id, timedOut: true, approval }`, the state so far. `close_approval` answers `needed` and
+  `answers` too.
+- **`react`** runs the same content check as the other writes: an emoji that looks like an internal id is
+  `content_refused` (field `emoji`), and nothing is sent.
 - **Pinned panel** (`set_panel`, `clear_panel`) follows the local API's rules (see "Pinned panel" above): the
   call answers when queued and the write goes out within 10 s; it notifies no one.
 - **Commands** (`set_commands`, `clear_commands`) follow the local API's rules (see "Commands" above): the set

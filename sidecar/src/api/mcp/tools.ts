@@ -20,7 +20,7 @@ import { approvalOptionsOf, type ApprovalFacade } from '../../core/approvals'
 import { PANEL_TEXT_MAX, type PanelFacade } from '../../core/panels'
 import { validateCommands, type CommandsFacade } from '../../core/commands'
 import type { ApiApprovalStatus, ApiMessage, ApiRefused } from '../contract'
-import { logLeaks, refusedOf, type EdgeLeak, scanApprovalProbe, scanCommandsProbe, scanEdge, scanPanelProbe, scanWriteProbe, withholdMessages } from '../edge'
+import { logLeaks, refusedOf, type EdgeLeak, scanApprovalProbe, scanCommandsProbe, scanEdge, scanPanelProbe, scanReactionProbe, scanWriteProbe, withholdMessages } from '../edge'
 import { isEmojiArgument } from '../emoji'
 import {
   WAIT_DEFAULT_S,
@@ -144,7 +144,8 @@ export const TOOL_SPECS = {
   request_approval: {
     description:
       'Ask the people of a conversation to choose one of 1–25 options (an approval card). Answers the card; its `id` (ts) is what wait_for_approval and close_approval take. ' +
-      'Only a person (member or guest) can answer, and only the first valid answer counts; the card then closes by itself.',
+      'Only a person (member or guest) can answer, and only the first valid answer counts; the card then closes by itself. ' +
+      'With `needed` (2–10) the card asks for that many answers, one per person: it closes by itself once they are all in, and the answer carries `approval.needed`.',
     inputSchema: z.object({
       conversation,
       text: z.string().describe('The request, rendered as Markdown unless markdown is false (at most 32 KiB).'),
@@ -162,12 +163,14 @@ export const TOOL_SPECS = {
       thread: ts('The ts of the first message of a thread: ask in that thread.').optional(),
       mentions: z.array(z.string().min(1)).max(MENTIONS_MAX).optional().describe('People to mention (U… ids), at most 100.'),
       markdown: z.boolean().optional().describe('Render text as Markdown (default true). Set false to send the text literally.'),
+      needed: z.number().int().min(2).max(10).optional().describe('How many answers the card asks for, 2 to 10, one per person (absent: the first valid answer decides).'),
     }),
   },
   wait_for_approval: {
     description:
       `Wait until an approval card of this agent is answered or closed. Waits up to \`timeout_s\` seconds (default ${WAIT_DEFAULT_S}, at most ${WAIT_MAX_S}); a card already answered or closed answers at once. ` +
-      '`answered`: `answer` carries `option`, `by` (U…) and `at`. `closed`: closed with no answer. `timedOut`: still open, call again.',
+      '`answered`: `answer` carries `option`, `by` (U…) and `at`. `closed`: closed with no answer. `timedOut`: still open, call again. ' +
+      'A card with `needed`: the wait ends once all the answers are in (`answered`) or the card is closed (`closed`), with `answers`; `timedOut` also carries `approval`, the state so far.',
     inputSchema: z.object({
       conversation,
       id: ts('The card’s ts (the `id` request_approval answered).'),
@@ -176,7 +179,8 @@ export const TOOL_SPECS = {
   },
   close_approval: {
     description:
-      'Close an approval card of this agent without waiting for an answer (no one can answer after it). Answers the final state: `closed`, or `answered` when a person answered first.',
+      'Close an approval card of this agent without waiting for an answer (no one can answer after it). Answers the final state: `closed`, or `answered` when a person answered first. ' +
+      'A card with `needed` answers `needed` and `answers`: `answered` when they were all in, else `closed` with the answers there were.',
     inputSchema: z.object({
       conversation,
       id: ts('The card’s ts.'),
@@ -321,6 +325,8 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
   server.registerTool('react', TOOL_SPECS.react, (a) =>
     run('react', async () => {
       if (!isEmojiArgument(a.emoji)) throw new ToolFail('invalid_argument')
+      const leaks = scanReactionProbe(a.conversation, a.emoji)
+      if (leaks.length > 0) refuse('react', leaks)
       return { changed: await write.react(a.conversation, a.message, a.emoji) }
     }),
   )
@@ -366,6 +372,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
         ...(rich !== undefined && { rich }),
         ...(a.thread !== undefined && { thread: a.thread }),
         ...(a.mentions !== undefined && { mentions: a.mentions }),
+        ...(a.needed !== undefined && { needed: a.needed }),
       })
     }),
   )
@@ -386,7 +393,10 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
         case 'closed':
           throw new ToolFail('unavailable')
         case 'timedOut':
-          return { conversation: a.conversation, id: a.id, timedOut: true }
+          // A card with `needed`: the state so far comes with it (ADR-104 I6).
+          return out.status?.approval.needed !== undefined
+            ? { conversation: a.conversation, id: a.id, timedOut: true, approval: out.status.approval }
+            : { conversation: a.conversation, id: a.id, timedOut: true }
         case 'settled':
           return out.status
       }

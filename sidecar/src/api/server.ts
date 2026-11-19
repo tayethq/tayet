@@ -70,6 +70,7 @@ import type { CoreState } from '../core/handle'
 import { ReadError, type ReadFacade } from '../core/read'
 import { WriteError, type WriteFacade } from '../core/write'
 import { approvalOptionsOf, type ApprovalFacade } from '../core/approvals'
+import { APPROVAL_NEEDED_MAX, APPROVAL_NEEDED_MIN } from '../core/approval-limits'
 import type { FormFacade } from '../core/forms'
 import { PANEL_TEXT_MAX, type PanelFacade } from '../core/panels'
 import { validateCommands, type CommandsFacade } from '../core/commands'
@@ -78,7 +79,7 @@ import { EventBus, type BusEntry } from './bus'
 import type { ApiCloseApproval, ApiCommand, ApiEditMessage, ApiError, ApiErrorCode, ApiEvent, ApiPostApproval, ApiPostMessage, ApiPutPanel, ApiRefused } from './contract'
 import { MIMETYPE, sendDownload } from './download'
 import { isEmojiArgument } from './emoji'
-import { logLeaks, refusedOf, type EdgeLeak, scanApprovalProbe, scanCommandsProbe, scanEdge, scanPanelProbe, scanWriteProbe, withheld, withholdMessages } from './edge'
+import { logLeaks, refusedOf, type EdgeLeak, scanApprovalProbe, scanCommandsProbe, scanEdge, scanPanelProbe, scanReactionProbe, scanWriteProbe, withheld, withholdMessages } from './edge'
 import { createMcpLayer, type McpLayer } from './mcp/handler'
 import type { SetTimer } from './mcp/wait'
 import { createSlackLayer, type SlackLayer, type SlackMethods } from './slack/router'
@@ -397,8 +398,14 @@ function editOf(raw: Buffer): ApiEditMessage {
 
 // ADR-091 (A3-3): the card's body. `options` are checked by the core's rule (the same one the MCP uses).
 function postApprovalOf(raw: Buffer): ApiPostApproval {
-  const body = jsonObject(raw, ['text', 'markdown', 'options', 'thread', 'mentions'])
+  const body = jsonObject(raw, ['text', 'markdown', 'options', 'thread', 'mentions', 'needed'])
   const out: ApiPostApproval = { text: textOf(body), options: approvalOptionsOf(body.options) }
+  if (body.needed !== undefined) {
+    // ADR-104: an integer from 2 to 10.
+    const n = body.needed
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < APPROVAL_NEEDED_MIN || n > APPROVAL_NEEDED_MAX) throw new ApiFail('invalid_argument')
+    out.needed = n
+  }
   const markdown = markdownOf(body)
   if (markdown !== undefined) out.markdown = markdown
   const thread = optionalString(body.thread)
@@ -826,8 +833,12 @@ export function createApiServer(opts: ApiServerOptions): ApiServer {
       }
       if (r.name === 'reaction') {
         const emoji = emojiOf(r.emoji)
-        if (method === 'PUT') await write.react(r.id, r.ts, emoji)
-        else await write.unreact(r.id, r.ts, emoji)
+        if (method === 'PUT') {
+          // Before any effect: an id shape in the reaction never leaves (the removal has no probe).
+          const leaks = scanReactionProbe(r.id, emoji)
+          if (leaks.length > 0) refuse(log, 'PUT reaction', leaks)
+          await write.react(r.id, r.ts, emoji)
+        } else await write.unreact(r.id, r.ts, emoji)
         return noContent(res)
       }
       if (r.name === 'files' && method === 'POST') {

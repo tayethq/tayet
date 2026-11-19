@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CONTENT_FIELDS, refusedOf, scanCommandsProbe, scanWriteProbe, scanEdge, scanFormProbe, scanFormResultProbe, scanPanelProbe, withheld, withholdMessages } from '../../src/api/edge'
+import { CONTENT_FIELDS, refusedOf, scanCommandsProbe, scanWriteProbe, scanEdge, scanFormProbe, scanFormResultProbe, scanPanelProbe, scanReactionProbe, withheld, withholdMessages } from '../../src/api/edge'
 
 // ADR-089 dec. 1: structural fields with the full set; user content (message text, rich, file name)
 // with the id shapes and envelope keys only.
@@ -438,5 +438,48 @@ describe('withheld', () => {
       thread: '1730900000.000050',
     })
     expect(withheld(message())).not.toHaveProperty('thread')
+  })
+})
+
+// ADR-104 (Aprovadores 2): each answer's option of a card that asks for several answers is content; the
+// reaction write's probe.
+describe('edge scan — the answers of a card that asks for several (ADR-104)', () => {
+  const card = (option: string) =>
+    message({ text: 'Publicar?', approval: { options: [{ id: 'verify', label: 'Verificar' }], needed: 2, answers: [{ option: 'verify', by: 'UB', at: 1 }, { option, by: 'UC', at: 2 }, { by: 'UD', at: 3 }], state: 'open' } })
+
+  it('an option id with a denied word in `answers` does not withhold the message (listing and state)', () => {
+    expect(patterns(card('escrow'))).toEqual([])
+    const out = withholdMessages({ messages: [card('olm')] })
+    expect(out.leaks).toEqual([])
+    expect((out.body.messages[0] as Record<string, unknown>).unavailable).toBeUndefined()
+    expect(patterns({ conversation: 'CA', id: '1.000001', approval: { options: [{ id: 'olm', label: 'decrypt' }], needed: 2, answers: [{ option: 'olm', by: 'UB', at: 1 }], state: 'open' } })).toEqual([])
+  })
+
+  it('an id shape in an answer still withholds it, with the content mark; the rest of an answer stays structural', () => {
+    const found = scanEdge(card('@alice:tayet.local'))
+    expect(found.map((l) => `${l.path} ${l.pattern}`)).toEqual(['$.approval.answers[1].option mxid'])
+    expect(found[0]?.content).toBe(true)
+    const out = withholdMessages({ messages: [card('@alice:tayet.local')] })
+    expect((out.body.messages[0] as Record<string, unknown>).unavailable).toBe(true)
+    expect(patterns(message({ approval: { options: [], needed: 2, answers: [{ option: 'a', by: '@bob:tayet.local', at: 1 }] } }))).toEqual(['$.approval.answers[0].by mxid'])
+    expect(patterns(message({ approval: { options: [], needed: 2, answers: [{ by: 'UB', at: 1, kind: 'verified' }] } }))).toEqual(['$.approval.answers[0].kind verify'])
+  })
+
+  it('CONTENT_FIELDS lists the option of each answer', () => {
+    expect(CONTENT_FIELDS).toContain('approval.answers[].option')
+  })
+})
+
+describe('the reaction write probe (ADR-104 dec. 23)', () => {
+  it('an emoji or a short text passes; an id shape is found, named by the argument (`emoji`), with the content mark', () => {
+    for (const emoji of ['👍', '❤️', '🇧🇷', 'ok', 'verificado']) expect(scanReactionProbe('CA', emoji), emoji).toEqual([])
+    const found = scanReactionProbe('CA', '@nome:servidor.local')
+    expect(found.map((l) => `${l.path} ${l.pattern}`)).toEqual(['$.emoji mxid'])
+    expect(refusedOf(found)).toEqual([{ field: 'emoji', pattern: 'user_id' }])
+    expect(refusedOf(scanReactionProbe('CA', 'mxc://servidor.local/x'))).toEqual([{ field: 'emoji', pattern: 'media_address' }])
+  })
+
+  it('an id shape in the conversation stays a structural finding (refusedOf → null)', () => {
+    expect(refusedOf(scanReactionProbe('!sala:servidor.local', '👍'))).toBeNull()
   })
 })

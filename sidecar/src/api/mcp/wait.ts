@@ -13,6 +13,9 @@
 // `approval.answered`, on an edit or removal of the card (read again: closed → answers), on
 // `agent.revoked`, on the timeout, the client giving up or the layer closing. An answer that cannot be
 // read yet (no `option`) is not an answer to the agent: the wait goes on until its event.
+// A card that asks for several answers (`approval.needed`, ADR-104): each event of the card reads it again
+// (one event per answer); the wait ends when the state read is `answered` (all the answers read) or
+// `closed`; on the timeout it carries the last state read.
 import type { BusEntry, EventBus } from '../bus'
 import type { ApiApprovalStatus, ApiMessage } from '../contract'
 
@@ -31,7 +34,8 @@ export const realTimer: SetTimer = (fn, ms) => {
   return () => clearTimeout(t)
 }
 
-export type ApprovalWaitOutcome = { kind: 'settled'; status: ApiApprovalStatus } | { kind: 'timedOut' } | { kind: 'revoked' } | { kind: 'closed' }
+// `timedOut.status`: the last state read, when one was.
+export type ApprovalWaitOutcome = { kind: 'settled'; status: ApiApprovalStatus } | { kind: 'timedOut'; status?: ApiApprovalStatus } | { kind: 'revoked' } | { kind: 'closed' }
 
 export interface Waits {
   wait(after: string | undefined, timeoutMs: number, signal?: AbortSignal): Promise<WaitOutcome>
@@ -41,8 +45,10 @@ export interface Waits {
   close(): void
 }
 
-// Settled = no longer open, and an answer only once its option can be read.
-const settled = (s: ApiApprovalStatus): boolean => s.approval.state === 'closed' || (s.approval.state === 'answered' && s.approval.answer?.option !== undefined)
+// Settled = no longer open, and an answer only once its option can be read (a card with `needed` is
+// `answered` only with all its answers read).
+const settled = (s: ApiApprovalStatus): boolean =>
+  s.approval.state === 'closed' || (s.approval.state === 'answered' && (s.approval.needed !== undefined || s.approval.answer?.option !== undefined))
 
 const outcomeOf = (entry: BusEntry): WaitOutcome | null => {
   if (entry.event.type === 'mention') return { kind: 'mention', conversation: entry.event.conversation, message: entry.event.message, cursor: entry.id }
@@ -121,15 +127,16 @@ export function createWaits(bus: EventBus, setTimer: SetTimer = realTimer): Wait
           const e = entry.event
           if (e.type === 'agent.revoked') return finish({ kind: 'revoked' })
           if (e.type === 'approval.answered' && e.conversation === card.conversation && e.id === card.id) {
-            // The event carries the decided answer; the options come from the state already read.
-            if (known !== undefined) {
+            // The event carries the decided answer; the options come from the state already read. A card
+            // with `needed` is read again: one event is one answer of several.
+            if (known !== undefined && known.approval.needed === undefined) {
               return finish({ kind: 'settled', status: { ...known, approval: { options: known.approval.options, state: 'answered', answer: { option: e.option, by: e.by, at: e.at } } } })
             }
             return check()
           }
           if ((e.type === 'message.edited' && e.conversation === card.conversation && e.message.id === card.id) || (e.type === 'message.removed' && e.conversation === card.conversation && e.id === card.id)) check()
         })
-        const cancelTimer = setTimer(() => finish({ kind: 'timedOut' }), timeoutMs)
+        const cancelTimer = setTimer(() => finish(known !== undefined ? { kind: 'timedOut', status: known } : { kind: 'timedOut' }), timeoutMs)
         const onClose = (): void => finish({ kind: 'closed' })
         const onAbort = (): void => finish({ kind: 'closed' })
         pending.add(onClose)

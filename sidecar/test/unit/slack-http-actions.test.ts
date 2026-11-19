@@ -12,7 +12,7 @@ import { writeFile } from 'node:fs/promises'
 import { ACK_TIMEOUT_MS, MAX_RETRIES } from '../../src/api/slack/envelopes'
 import type { SocketClock } from '../../src/api/slack/socket'
 import { open, type RawSocket } from '../support/slack-socket'
-import { ALICE, GENERAL, ME, TOKEN, call, createWorld, idLeaks, message, startSlack, type SlackHarness, type SlackStart } from '../support/slack-world'
+import { ALICE, BOB, GENERAL, GONE, ME, TOKEN, call, createWorld, idLeaks, message, startSlack, type SlackHarness, type SlackStart } from '../support/slack-world'
 import { fakeApprovals, type FakeApprovals } from '../support/slack-approvals'
 
 // The approval card's click as a signed HTTP POST (`--slack-actions-url`): the request (Slack's form body and
@@ -667,5 +667,25 @@ describe('a click decided before the layer is created', () => {
     const later = bus.open(undefined, () => {})
     expect(later.unheard).toEqual([])
     later.close()
+  })
+})
+
+// ADR-104 (Aprovadores 2): a card created by the native API that asks for several answers → one signed
+// POST per answer; none is deduplicated.
+describe('the layer with --slack-actions-url — a card that asks for several answers (ADR-104)', () => {
+  it('three approval.answered of the same card → three block_actions POSTs, one per person, in order', async () => {
+    rx = await receiver(() => 200)
+    await layer({ actionsUrl: rx.url })
+    const ts = '1732000400.000100'
+    const people = [ALICE, BOB, GONE]
+    people.forEach((p, i) => h!.world.emit({ type: 'approval.answered', conversation: GENERAL.id, id: ts, option: 'approve', by: p.id, at: AT + i, count: i + 1, needed: 3 }))
+    await expect.poll(() => rx!.got.length).toBe(3)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(rx.got).toHaveLength(3)
+    expect(rx.got.every((g) => g.signed)).toBe(true)
+    expect(rx.got.map((g) => (g.payload.user as { id: string }).id)).toEqual(people.map((p) => p.id))
+    expect(rx.got.map((g) => (g.payload.container as { message_ts: string }).message_ts)).toEqual([ts, ts, ts])
+    expect(rx.got.map((g) => g.payload.type)).toEqual(['block_actions', 'block_actions', 'block_actions'])
+    expect(idLeaks(rx.got.map((g) => g.payload))).toEqual([])
   })
 })

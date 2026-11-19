@@ -191,3 +191,32 @@ describe('buildApprovalContent / buildApprovalEditContent (ADR-091, A3-3)', () =
     expect(approvalClosed(edit['m.new_content'] as Record<string, unknown>)).toBe(true)
   })
 })
+
+describe('buildApprovalContent / buildApprovalEditContent with `needed` (ADR-104)', () => {
+  const OPTIONS = [
+    { id: 'approve', label: 'Aprovar', style: 'primary' as const },
+    { id: 'reject', label: 'Rejeitar' },
+  ]
+
+  it('without `needed` the card and the edit are byte for byte the ones of a plain card', () => {
+    expect(wire(buildApprovalContent('hi', RICH, OPTIONS, [BOB], ROOT_ID, undefined))).toBe(wire(buildApprovalContent('hi', RICH, OPTIONS, [BOB], ROOT_ID)))
+    expect(wire(buildApprovalEditContent('x', undefined, OPTIONS, true, TARGET_ID, undefined))).toBe(wire(buildApprovalEditContent('x', undefined, OPTIONS, true, TARGET_ID)))
+  })
+
+  it('the card carries `needed` beside the options, in the block', () => {
+    expect(wire(buildApprovalContent('Publicar?', undefined, OPTIONS, undefined, undefined, 3))).toBe(
+      '{"msgtype":"io.tayet.approval","body":"Publicar?","io.tayet.approval":{"options":[{"id":"approve","label":"Aprovar","style":"primary"},{"id":"reject","label":"Rejeitar"}],"needed":3}}',
+    )
+  })
+
+  it('the edit and the close carry the original `needed`, and it reads back', async () => {
+    const { readApprovalNeeded, approvalClosed } = await import('../src/internal')
+    expect(wire(buildApprovalEditContent('Novo', undefined, OPTIONS, false, TARGET_ID, 3))).toBe(
+      '{"msgtype":"io.tayet.approval","body":"* Novo","m.new_content":{"msgtype":"io.tayet.approval","body":"Novo","io.tayet.approval":{"options":[{"id":"approve","label":"Aprovar","style":"primary"},{"id":"reject","label":"Rejeitar"}],"needed":3}},"m.relates_to":{"rel_type":"m.replace","event_id":"$target:tayet.local"}}',
+    )
+    const closed = buildApprovalEditContent('Novo', undefined, OPTIONS, true, TARGET_ID, 3)
+    expect(closed['m.new_content']['io.tayet.approval']).toEqual({ options: OPTIONS, needed: 3, closed: true })
+    expect(approvalClosed(closed['m.new_content'] as Record<string, unknown>)).toBe(true)
+    expect(readApprovalNeeded(buildApprovalContent('x', undefined, OPTIONS, undefined, undefined, 10) as Record<string, unknown>)).toBe(10)
+  })
+})

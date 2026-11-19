@@ -419,7 +419,8 @@ export function createReadFacade(client: ReadClient, log: Log, opts: { now?: () 
 
 // ADR-091 (A3-3): the `approval` of a card the read side projects (core/approvals.ts) — bound once the
 // approval core exists (it needs this side's resolver).
-export type ApprovalView = (roomId: string, eventId: string, options: readonly ApprovalOption[], own: boolean) => Promise<ApiApproval>
+// `needed`: the number of answers the card declares (ADR-104), when it does.
+export type ApprovalView = (roomId: string, eventId: string, options: readonly ApprovalOption[], own: boolean, needed?: number) => Promise<ApiApproval>
 
 export interface ReadSide {
   facade: ReadFacade
@@ -561,10 +562,11 @@ export function createReadSide(client: ReadClient, log: Log, opts: { now?: () =>
       if (m.body.request !== undefined) out.rich = m.body.request as unknown as ApiRich
       const options = m.body.options
       const own = (m.author as unknown as string) === me()
-      out.approval = { options: options.map((o) => ({ id: o.id, label: o.label, ...(o.style !== undefined && { style: o.style }) })) }
+      const needed = m.body.state.kind === 'multi' ? m.body.state.needed : undefined
+      out.approval = { options: options.map((o) => ({ id: o.id, label: o.label, ...(o.style !== undefined && { style: o.style }) })), ...(needed !== undefined && { needed }) }
       if (approvalView !== undefined) {
         try {
-          out.approval = await approvalView(room.roomId, m.id, options, own)
+          out.approval = await approvalView(room.roomId, m.id, options, own, needed)
         } catch {
           // The state could not be read now: the options alone (the next read tries again).
           log({ evt: 'approval-state-unavailable' })

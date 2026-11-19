@@ -139,14 +139,16 @@ export function buildApprovalAnswerContent(cardEventId: string, option: string, 
 // ADR-091 dec. 1 (A3-3): the approval card the sidecar sends. The card's own type; the request
 // as the usual body/formatted body — the plain body is ONLY the request (no list of options: another
 // client shows the request, and the options are the block's); the block carrying the options (`style`
-// only when set); the intentional mentions and the thread relation, last, as in buildTextContent.
-export function buildApprovalContent(text: string, rich: RichDoc | undefined, options: readonly ApprovalOption[], mentions?: UserId[], thread?: string) {
+// only when set) and, for a card that asks for several answers (ADR-104), `needed` beside them; the
+// intentional mentions and the thread relation, last, as in buildTextContent. Without `needed` the content
+// is the one of a card resolved by its first answer, byte for byte.
+export function buildApprovalContent(text: string, rich: RichDoc | undefined, options: readonly ApprovalOption[], mentions?: UserId[], thread?: string, needed?: number) {
   const fragment = richTextContent(text, rich)
   const mentionsFragment = mentions?.length ? { 'm.mentions': { user_ids: mentions.map(userIdToRaw) } } : undefined
   return {
     msgtype: APPROVAL_MSGTYPE,
     ...fragment,
-    [APPROVAL_BLOCK]: { options: approvalOptionsOf(options) },
+    [APPROVAL_BLOCK]: { options: approvalOptionsOf(options), ...(needed !== undefined && { needed }) },
     ...mentionsFragment,
     ...(thread !== undefined && { 'm.relates_to': { rel_type: RelationType.Thread, event_id: thread } }),
   }
@@ -154,9 +156,10 @@ export function buildApprovalContent(text: string, rich: RichDoc | undefined, op
 
 // The edit of a card (A3-3): the request changed (PATCH) or the card closed (the close and the seal). The
 // new content keeps the card's type and block — the ORIGINAL options (an edit never changes them; the
-// reader takes them from the original anyway) and, when `closed`, the closing mark. The top-level body is
-// the `* `-prefixed fallback, as in buildEditContent.
-export function buildApprovalEditContent(text: string, rich: RichDoc | undefined, options: readonly ApprovalOption[], closed: boolean, targetEventId: string) {
+// reader takes them from the original anyway), the original `needed` when the card has it (ADR-104 dec. 13)
+// and, when `closed`, the closing mark. The top-level body is the `* `-prefixed fallback, as in
+// buildEditContent.
+export function buildApprovalEditContent(text: string, rich: RichDoc | undefined, options: readonly ApprovalOption[], closed: boolean, targetEventId: string, needed?: number) {
   const fragment = richTextContent(text, rich)
   return {
     msgtype: APPROVAL_MSGTYPE,
@@ -164,7 +167,7 @@ export function buildApprovalEditContent(text: string, rich: RichDoc | undefined
     'm.new_content': {
       msgtype: APPROVAL_MSGTYPE,
       ...fragment,
-      [APPROVAL_BLOCK]: { options: approvalOptionsOf(options), ...(closed && { closed: true }) },
+      [APPROVAL_BLOCK]: { options: approvalOptionsOf(options), ...(needed !== undefined && { needed }), ...(closed && { closed: true }) },
     },
     'm.relates_to': { rel_type: RelationType.Replace, event_id: targetEventId },
   }
