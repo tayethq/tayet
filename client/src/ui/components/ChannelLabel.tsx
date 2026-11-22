@@ -83,6 +83,6 @@ export function PrivateMarkSpace() {
 export function manageLabel(channel: Channel): string {
   if (channel.kind === 'group') return t('group.details')
   return channel.kind === 'private'
-    ? t('channel.managePrivate', { mark: t('channel.privateMark'), name: channel.name.replace(/^#/, '') })
+    ? t('channel.managePrivate', { name: channel.name.replace(/^#/, '') })
     : t('channel.manageNamed', { name: channel.name })
 }

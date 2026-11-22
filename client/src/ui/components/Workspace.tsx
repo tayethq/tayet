@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import type {
   AccessId,
   AgentCommand,
@@ -25,7 +26,9 @@ import type {
   UserProfile,
 } from '@tayet/client'
 import type { ComposeResult } from '../compose'
-import type { ComposerCommand } from '../composer/RichComposer'
+import type { ComposerCommand, ComposerModeProps } from '../composer/RichComposer'
+import { LinkSheet, type LinkRequest } from '../composer/LinkSheet'
+import { historyOf, textBodyHTML } from '../composer/history'
 import { ChannelList } from './ChannelList'
 import { SearchField } from './SearchField'
 import { SearchResults } from './SearchResults'
@@ -34,7 +37,9 @@ import { ChannelLabel, bareName, manageLabel } from './ChannelLabel'
 import { AgentAvatar } from './AgentAvatar'
 import { GroupBlock, groupCount } from './GroupBlock'
 import { resolveAuthor } from '../author'
-import { Timeline, excerptOf } from './Timeline'
+import { Timeline, excerptOf, actionsOf, type ActionsOrigin } from './Timeline'
+import { MessageActionsSheet } from './MessageActionsSheet'
+import { ImageViewer, OpenImageContext, type ImageView } from './ImageViewer'
 import { Composer } from './Composer'
 import { ThreadPanel } from './ThreadPanel'
 import { ChannelManagementPanel } from './ChannelManagementPanel'
@@ -49,10 +54,13 @@ import { NewAccessBanner, type NewAccess } from './NewAccessBanner'
 import { ResetAccessBanner, type ResetStatus } from './ResetAccessBanner'
 import { PinnedPanel } from './PinnedPanel'
 import { usePanelPref } from '../panel-pref'
-import { Avatar } from '../primitives'
-import { Settings, More } from '../icons'
+import { Avatar, ScreenHeader } from '../primitives'
+import { Settings, More, Plus, Search } from '../icons'
 import { useMedia } from '../MediaContext'
+import { isCoarseOrNarrow } from '../narrow'
+import { useStackBack, useStackDialog } from '../stack'
 import type { Theme } from '../theme'
+import type { LanguageState } from '../useLanguage'
 import { t, APP_NAME, GLYPH } from '../i18n'
 
 // workspace.md §13 item 2: at rest (`connected`) the sidebar says nothing.
@@ -78,6 +86,10 @@ export interface SearchProps {
   selected?: MessageId
   failed?: MessageId
   onPick: (hit: ResolvedHit) => void
+  // The narrow window's full-screen search (workspace.md §23.5 item 3; PLANO-MOBILE M6 B1): whether it is
+  // open (a screen of the stack, between the list and the conversation) and what opens it.
+  open?: boolean
+  onOpen?: () => void
 }
 
 // Pure presentational shell: channel list + timeline + composer. All data arrives as props, so
@@ -154,6 +166,7 @@ export function Workspace({
   onSignOut,
   theme,
   onThemeChange,
+  language,
   notificationsPrompt,
   search,
   jump,
@@ -164,6 +177,8 @@ export function Workspace({
   onDismissAccess,
   attentionNeeded,
   resetStatus,
+  narrow = false,
+  onBackToList,
 }: {
   channels: Channel[]
   // ADR-076: the sidebar's Archived section (absent/empty → no section) and its Restore verb.
@@ -261,6 +276,8 @@ export function Workspace({
   // de render-scan as omite (canAccount falso → AccountSettings não monta → tema não é necessário).
   theme?: Theme
   onThemeChange?: (theme: Theme) => void
+  // The language row of "Your account" (app-side, like the theme). Optional for the same reason.
+  language?: LanguageState
   // ADR-073 dec. 6 (app-side, como o tema): o aviso de permissão de notificações na lista de
   // conversas. App o liga só enquanto deve aparecer; o harness o omite.
   notificationsPrompt?: { onEnable: () => void; onDismiss: () => void }
@@ -299,6 +316,12 @@ export function Workspace({
   onCloseThread?: () => void
   onSendThread?: (body: ComposeResult, mentions: UserId[], command?: ComposerCommand) => void
   onSendThreadAttachment?: (file: File) => void
+  // The window is below the width breakpoint and the shell is a stack:
+  // one screen at a time — the list, the conversation, the thread. App reads the width; the
+  // harness mounts both.
+  narrow?: boolean
+  // The conversation screen's back where there is no history stack (the harness): back to the list.
+  onBackToList?: () => void
 }) {
   const [composing, setComposing] = useState(false)
   // Compose intent seeded by the per-section "+" (Track U/U3, F3): the ChannelList "+" sets which
@@ -368,31 +391,217 @@ export function Workspace({
         ].join(` ${GLYPH.dot} `)
       : undefined
 
-  return (
-    <div className="workspace">
-      <aside className="sidebar">
+  // ── The narrow stack. The screen in front follows the selection and the
+  // open thread; the covered screens stay mounted (their scroll survives) but leave the tab order and
+  // the accessibility tree.
+  const threadOpen = Boolean(threadRoot && onCloseThread && onSendThread)
+  const threadInFront = threadOpen && threadRoot?.channelId === selectedChannelId
+  const searchOpen = narrow && search?.open === true
+  const screen: Screen | undefined = !narrow
+    ? undefined
+    : selectedChannelId === undefined
+      ? searchOpen
+        ? 'search'
+        : 'list'
+      : threadInFront
+        ? 'thread'
+        : 'chat'
+  // "Nova conversa" on a narrow window is a full screen over the others (new-conversation.md §11).
+  const composeScreen = narrow && composing && canCompose
+  const stackProps = (of: Screen) =>
+    screen !== undefined && (screen !== of || composeScreen) ? { 'data-stack-covered': '', inert: true } : {}
+  const backToList = useStackBack(() => onBackToList?.())
+  const backFromThread = useStackBack(() => onCloseThread?.())
+  const backFromSearch = useStackBack(() => search?.onClear())
+  const chatBackRef = useRef<HTMLButtonElement>(null)
+  const threadBackRef = useRef<HTMLButtonElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  useStackFocus(screen, searchOpen, { search: searchInputRef, chat: chatBackRef, thread: threadBackRef })
+  // On a narrow window each open dialog takes a history entry, and the system's back closes it. "Nova
+  // conversa" is a full screen of its own there (PLANO-MOBILE M6) and keeps the same entry (ADR-106 dec. 11);
+  // the other dialogs stay dialogs until their screens.
+  // N2: while its send is in flight (up to the cap) the screen refuses the system's back.
+  const composeLocked = useRef(false)
+  useStackDialog('compose', composeScreen, () => setComposing(false), () => composeLocked.current)
+  useStackDialog('account', narrow && accountOpen && canAccount, () => setAccountOpen(false))
+  useStackDialog('profile', narrow && openProfile !== null && Boolean(onLoadUserProfile), () => setOpenProfile(null))
+  useStackDialog('group', narrow && managing?.kind === 'group' && Boolean(onCloseManage), () => onCloseManage?.())
+  useStackDialog('agent-form', narrow && Boolean(agentForm?.form), () => {
+    if (agentForm?.form) agentForm.close(agentForm.form.id)
+  })
+
+  // The message's action sheet (§23.8): which message, from which screen, and where it was opened from. The
+  // message is read fresh from what is on screen, so a message that goes away (or a wide window) closes it.
+  const [sheet, setSheet] = useState<{ id: MessageId; where: 'chat' | 'thread'; origin: ActionsOrigin } | null>(null)
+  const closeSheet = (): void => setSheet(null)
+  const sheetPanel = useRef<HTMLDivElement | null>(null)
+  const sheetMessage = !sheet
+    ? undefined
+    : (sheet.where === 'chat' ? messages : threadRoot ? [threadRoot, ...(threadMessages ?? [])] : []).find((m) => m.id === sheet.id)
+  // In the thread: no reply nor thread (§29 item 1), and the root stays while it has replies on screen, the
+  // ThreadPanel's gate (ADR-075 dec. 3).
+  const rootWithReplies = sheetMessage !== undefined && sheetMessage.id === threadRoot?.id && (threadMessages?.length ?? 0) > 0
+  const sheetWired =
+    sheet?.where === 'chat'
+      ? { onReact, onReply, onOpenThread, onEdit, onDelete }
+      : { onReact, onEdit, onDelete: rootWithReplies ? undefined : onDelete }
+  const sheetOpen = narrow && sheetMessage !== undefined
+  useStackDialog('actions', sheetOpen, closeSheet)
+  useEffect(() => {
+    if (sheet && !sheetOpen) setSheet(null)
+  }, [sheet, sheetOpen])
+  useLayoutEffect(() => (sheetOpen && sheet ? holdRow(sheet.origin.row, sheetPanel.current) : undefined), [sheetOpen, sheet])
+  // The image viewer (§25.2, §23.5 item 2): on a narrow window a screen of the stack, so the system's back
+  // closes it (PLANO-MOBILE §0.14 V4); on a wide one an overlay with no history entry (F3 a).
+  const [image, setImage] = useState<ImageView | null>(null)
+  const closeImage = (): void => setImage(null)
+  useStackDialog('image', narrow && image !== null, closeImage)
+  const openActions = (where: 'chat' | 'thread') =>
+    narrow ? (m: Message, origin: ActionsOrigin) => setSheet({ id: m.id, where, origin }) : undefined
+
+  // Editing from the bottom composer (§23.7 item 2, §23.8 item 5; PLANO-MOBILE §0.15 E1 to E3): which message,
+  // from which screen, in which conversation. The message is read fresh from what is on screen; it going away,
+  // another conversation, the thread closing or a wide window cancels the edit (and the composer gives the
+  // draft back). An entry of the stack: the system's back cancels it. Reply and edit never coexist.
+  const [edit, setEdit] = useState<{ id: MessageId; where: 'chat' | 'thread'; channel?: ChannelId } | null>(null)
+  const editMessage = !edit
+    ? undefined
+    : (edit.where === 'chat' ? messages : threadRoot ? [threadRoot, ...(threadMessages ?? [])] : []).find((m) => m.id === edit.id)
+  const editBody = editMessage?.body.kind === 'text' ? editMessage.body : undefined
+  const editOpen =
+    narrow && edit !== null && editBody !== undefined && edit.channel === selectedChannelId && (edit.where === 'chat' || threadInFront)
+  useEffect(() => {
+    if (edit && !editOpen) setEdit(null)
+  }, [edit, editOpen])
+  useStackDialog('edit', editOpen, () => setEdit(null))
+  const startEdit = (where: 'chat' | 'thread') => (m: Message): void => {
+    if (where === 'chat' && replyTarget) onCancelReply?.()
+    setEdit({ id: m.id, where, channel: selectedChannelId })
+  }
+  const replyFromSheet = (m: Message): void => {
+    setEdit(null)
+    onReply?.(m)
+  }
+  // The link sheet (§23.7 item 3): the composer hands its request up and the sheet mounts here, a direct child
+  // of the `.workspace`. An entry of the stack, like the action sheet.
+  const [link, setLink] = useState<{ request: LinkRequest; where: 'chat' | 'thread' } | null>(null)
+  const linkOpen = narrow && link !== null && (link.where === 'chat' || threadInFront)
+  useEffect(() => {
+    if (link && !linkOpen) setLink(null)
+  }, [link, linkOpen])
+  useStackDialog('link', linkOpen, () => setLink(null))
+  // The ↑/↓ history (§25.6), in any width: the conversation's in its composer, the thread's in the thread's.
+  const chatHistory = useMemo(() => historyOf(messages), [messages])
+  const threadHistory = useMemo(() => historyOf(threadMessages ?? []), [threadMessages])
+  const composerMode = (where: 'chat' | 'thread'): ComposerModeProps => ({
+    narrow,
+    conversation: selectedChannelId,
+    history: where === 'chat' ? chatHistory : threadHistory,
+    ...(narrow && { onOpenLink: (request: LinkRequest) => setLink({ request, where }) }),
+    ...(editOpen &&
+      edit?.where === where &&
+      editMessage &&
+      editBody && {
+        editTarget: { key: edit.id, html: textBodyHTML(editBody) },
+        onSaveEdit: (body: ComposeResult) => {
+          onEdit?.(editMessage, body)
+          setEdit(null)
+        },
+        onCancelEdit: () => setEdit(null),
+      }),
+  })
+  const chatComposer = composerMode('chat')
+  const threadComposer = composerMode('thread')
+
+  // Off `connected`, a thin strip under the list's, the conversation's and the thread's
+  // header; on a narrow window it replaces the sidebar's connection line.
+  const connectionStrip =
+    narrow && connection !== 'connected' ? (
+      <p className={`connection-strip connection-strip--${connection}`} role="status">
+        {connectionLabel()[connection]}
+      </p>
+    ) : null
+  // The account banners, in the conversation and, on a narrow window, in the list too.
+  const banners = (
+    <>
+      {newAccesses && onDismissAccess && <NewAccessBanner accesses={newAccesses} onDismiss={onDismissAccess} />}
+      {onReset && !accountOpen && (
+        <ResetAccessBanner present={attentionNeeded ?? false} status={resetStatus} onReset={onReset} onSignOut={onSignOut} />
+      )}
+    </>
+  )
+  // The block before the header's heading: the group's numbered block or, in a DM with an agent,
+  // the agent's avatar as a 30 block.
+  const headerLeading = headerGroup ? (
+    <GroupBlock count={groupCount(headerGroup.participants)} agent={groupAgents > 0} size="header" />
+  ) : headerAgent ? (
+    <span className="channel-header__agent">
+      <AgentAvatar color={headerAgent.color} />
+    </span>
+  ) : null
+  const headerSubtitle: ReactNode =
+    headerAgent?.operatorName !== undefined ? (
+      <span data-agent-operator="">{t('agent.operatedBy', { name: headerAgent.operatorName })}</span>
+    ) : groupLine !== undefined ? (
+      <span data-group-count="">{groupLine}</span>
+    ) : current?.topic && !headerGroup ? (
+      current.topic
+    ) : undefined
+
+  const shell = (
+    <div className="workspace" data-stack={screen}>
+      <aside className="sidebar" {...stackProps('list')}>
         <div className="sidebar__brand">
           <span className="sidebar__brand-tile" aria-hidden="true">
             {APP_NAME[0]}
           </span>
           <div className="sidebar__brand-text">
             <h1 className="sidebar__brand-name">{APP_NAME}</h1>
-            {connection !== 'connected' && (
+            {!narrow && connection !== 'connected' && (
               <p className={`connection connection--${connection}`} role="status">
                 {connectionLabel()[connection]}
               </p>
             )}
           </div>
+          {/* On a narrow window "Nova conversa" sits on the top (the sections have no "+"). */}
+          {narrow && canCompose && (
+            <button
+              type="button"
+              className="sidebar__compose"
+              aria-label={t('newConversation.title')}
+              title={t('newConversation.title')}
+              onClick={() => {
+                setComposeMode('channel')
+                setComposing(true)
+              }}
+            >
+              <Plus size={20} />
+            </button>
+          )}
         </div>
-        {search && (
-          <SearchField
-            query={search.query}
-            onQuery={search.onQuery}
-            scoped={search.scoped}
-            onToggleScope={search.onToggleScope}
-            onClear={search.onClear}
-            onSubmit={search.active && search.hits[0] ? () => search.onPick(search.hits[0]!) : undefined}
-          />
+        {narrow && connectionStrip}
+        {narrow && banners}
+        {search && narrow ? (
+          // "buscar" on the narrow list (§23.2 item 3): a button that opens the full-screen search.
+          <div className="search">
+            <button type="button" className="search__field search__open" aria-label={t('search.field')} onClick={search.onOpen}>
+              <span className="search__icon">
+                <Search />
+              </span>
+              {t('search.placeholder')}
+            </button>
+          </div>
+        ) : (
+          search && (
+            <SearchField
+              query={search.query}
+              onQuery={search.onQuery}
+              scoped={search.scoped}
+              onToggleScope={search.onToggleScope}
+              onClear={search.onClear}
+              onSubmit={search.active && search.hits[0] ? () => search.onPick(search.hits[0]!) : undefined}
+            />
+          )
         )}
         <ChannelList
           channels={channels}
@@ -403,7 +612,7 @@ export function Workspace({
           presenceOf={presenceOf}
           notificationsPrompt={notificationsPrompt}
           results={
-            search?.active ? (
+            search?.active && !narrow ? (
               <SearchResults
                 hits={search.hits}
                 searched={search.searched}
@@ -426,7 +635,7 @@ export function Workspace({
           }
         />
         {/* Partial coverage (§8 item 8): fixed under the list, outside its scroll, with the results. */}
-        {search?.active && search.partial && (
+        {search?.active && search.partial && !narrow && (
           <p className="sidebar__coverage">{t('search.partial')}</p>
         )}
         {canAccount && (
@@ -446,14 +655,72 @@ export function Workspace({
           </button>
         )}
       </aside>
-      <main className="main">
+      {narrow && search && (
+        // The full-screen search (§23.5 item 3): back and the field on top, the connection strip, the hint
+        // without text, the results with a query, partial coverage in a footer outside the scroll. It stays
+        // mounted under the conversation, so the query, the results and the scroll survive the way back.
+        <section className="search-screen" aria-label={t('search.field')} {...stackProps('search')}>
+          <ScreenHeader className="search-screen__header" onBack={backFromSearch}>
+            <SearchField
+              query={search.query}
+              onQuery={search.onQuery}
+              scoped={false}
+              onClear={search.onClear}
+              onSubmit={search.active && search.hits[0] ? () => search.onPick(search.hits[0]!) : undefined}
+              narrow
+              onShortcut={search.onOpen}
+              inputRef={searchInputRef}
+            />
+          </ScreenHeader>
+          {connectionStrip}
+          <div className="search-screen__body">
+            {search.query.length === 0 && <p className="search__hint search-screen__hint">{t('search.hint')}</p>}
+            {search.active && (
+              <SearchResults
+                hits={search.hits}
+                searched={search.searched}
+                preparing={search.preparing}
+                channels={channels}
+                selected={search.selected}
+                failed={search.failed}
+                onPick={search.onPick}
+              />
+            )}
+          </div>
+          {search.active && search.partial && <p className="sidebar__coverage">{t('search.partial')}</p>}
+        </section>
+      )}
+      <main className="main" {...stackProps('chat')}>
+        {narrow ? (
+          // The screen header — back, the kind's heading, and only a group's "⋯" (a
+          // channel's management is not part of the narrow shell).
+          <ScreenHeader
+            className="channel-screen-header"
+            onBack={backToList}
+            backRef={chatBackRef}
+            leading={headerLeading}
+            title={current ? <ChannelLabel channel={current} hint={t('shell.privateHint')} lockSize={14} /> : ''}
+            titleClassName={groupAlone ? 'channel-header__name--alone' : undefined}
+            subtitle={headerSubtitle}
+            action={
+              headerGroup && onManageChannel ? (
+                <button
+                  type="button"
+                  className="ui-screen-header__action"
+                  onClick={() => onManageChannel(headerGroup)}
+                  aria-label={manageLabel(headerGroup)}
+                  title={manageLabel(headerGroup)}
+                >
+                  <More size={20} />
+                </button>
+              ) : undefined
+            }
+          />
+        ) : (
         <header className="channel-header">
-          {headerGroup && (
-            <GroupBlock count={groupCount(headerGroup.participants)} agent={groupAgents > 0} size="header" />
-          )}
+          {headerLeading}
           <div className="channel-header__heading">
             <h2 className={groupAlone ? 'channel-header__name channel-header__name--alone' : 'channel-header__name'}>
-              {headerAgent && <AgentAvatar color={headerAgent.color} size="gestao" />}
               {current ? <ChannelLabel channel={current} hint={t('shell.privateHint')} lockSize={14} /> : t('shell.selectChannel')}
             </h2>
             {headerAgent?.operatorName !== undefined && (
@@ -483,17 +750,9 @@ export function Workspace({
             </button>
           )}
         </header>
-        {newAccesses && onDismissAccess && (
-          <NewAccessBanner accesses={newAccesses} onDismiss={onDismissAccess} />
         )}
-        {onReset && !accountOpen && (
-          <ResetAccessBanner
-            present={attentionNeeded ?? false}
-            status={resetStatus}
-            onReset={onReset}
-            onSignOut={onSignOut}
-          />
-        )}
+        {connectionStrip}
+        {banners}
         {current && panels && panels.length > 0 && (
           <PinnedPanelSlot
             // One per conversation: its remembered state is read when it mounts. Prefixed: the Timeline,
@@ -525,6 +784,9 @@ export function Workspace({
           highlight={highlight}
           onHighlightEnd={onHighlightEnd}
           selfId={currentUser?.id}
+          onOpenActions={openActions('chat')}
+          held={sheet?.where === 'chat' ? sheet.id : undefined}
+          editingBelow={editOpen && edit?.where === 'chat' ? edit.id : undefined}
         />
         {current && (
           <Composer
@@ -538,11 +800,31 @@ export function Workspace({
             // A conversation with an empty name (a group or DM with nobody else) takes the generic
             // placeholder, never "Mensagem para Só você" (PLANO-CONVERSAS §0.3.5 item 4).
             placeholder={current.name ? t('composer.placeholderFor', { name: bareName(current) }) : t('composer.placeholder')}
+            {...chatComposer}
           />
         )}
       </main>
       {threadRoot && onCloseThread && onSendThread && (
         <ThreadPanel
+          covered={screen !== undefined && screen !== 'thread'}
+          header={
+            narrow ? (
+              // "Thread" over the channel's name, back in place of the close.
+              <ScreenHeader
+                className="thread-screen-header"
+                onBack={backFromThread}
+                backRef={threadBackRef}
+                title={t('thread.title')}
+                subtitle={current ? <ChannelLabel channel={current} hint={t('shell.privateHint')} /> : undefined}
+                action={
+                  threadUnread?.unread ? (
+                    <span className="unread-dot" role="img" aria-label={t('thread.unreadReplies')} />
+                  ) : undefined
+                }
+              />
+            ) : undefined
+          }
+          strip={connectionStrip}
           root={threadRoot}
           channel={current}
           messages={threadMessages ?? []}
@@ -562,6 +844,10 @@ export function Workspace({
           highlight={highlight}
           onHighlightEnd={onHighlightEnd}
           selfId={currentUser?.id}
+          onOpenActions={openActions('thread')}
+          held={sheet?.where === 'thread' ? sheet.id : undefined}
+          editingBelow={editOpen && edit?.where === 'thread' ? edit.id : undefined}
+          composer={threadComposer}
         />
       )}
       {managing?.kind === 'group' && onCloseManage && onLeaveChannel && onConvertToChannel && (
@@ -614,6 +900,10 @@ export function Workspace({
           initialMode={composeMode}
           presenceOf={presenceOf}
           onClose={() => setComposing(false)}
+          narrow={narrow}
+          onLockChange={(on) => {
+            composeLocked.current = on
+          }}
         />
       )}
       {canAccount && (
@@ -642,6 +932,7 @@ export function Workspace({
           onSignOut={onSignOut!}
           theme={theme!}
           onThemeChange={onThemeChange!}
+          language={language!}
           onClose={() => setAccountOpen(false)}
         />
       )}
@@ -673,14 +964,50 @@ export function Workspace({
           onClose={agentForm.close}
         />
       )}
+      {sheet && sheetOpen && sheetMessage && (
+        // Keyed on the message: another message's sheet starts on its menu, not on a pending question.
+        <MessageActionsSheet
+          key={sheet.id}
+          message={sheetMessage}
+          actions={actionsOf(sheetMessage, sheetWired)}
+          onReact={onReact}
+          onReply={replyFromSheet}
+          onOpenThread={onOpenThread}
+          onEditMessage={startEdit(sheet.where)}
+          onDelete={onDelete}
+          onClose={closeSheet}
+          returnFocus={sheet.origin.returnFocus}
+          panelRef={sheetPanel}
+        />
+      )}
+      {image && <ImageViewer image={image} narrow={narrow} onClose={closeImage} />}
+      {linkOpen && link && <LinkSheet request={link.request} onClose={() => setLink(null)} />}
     </div>
   )
+  // Thumbnails in the timeline and in the thread open the viewer through this (§25.2; §23.12, thread).
+  return <OpenImageContext.Provider value={setImage}>{shell}</OpenImageContext.Provider>
 }
 
-// The shell's narrow signal for the panel's default (manifest §17.2 item 6, "no celular, recolhido").
-// styles.css has no width breakpoint; its only device query is the coarse pointer of the touch floor
-// (PLANO §0.2), reused here rather than inventing a width.
-const isNarrow = (): boolean => typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true
+// The held row (§23.8 item 7, PLANO-MOBILE R3): its scroller moves it to sit just above the sheet (a row taller
+// than the room shows its top). A conversation too short to scroll that far, or a row near the end, gets the
+// missing room as bottom padding on the scroller while the row is held — a measured length, not a scale value —
+// and the inline style the scroller had comes back on release, so nothing is left behind.
+const SCROLLERS = '.timeline, .thread-panel__root, .thread-panel__replies'
+function holdRow(row: HTMLElement, panel: HTMLElement | null): (() => void) | undefined {
+  const scroller = row.closest<HTMLElement>(SCROLLERS)
+  if (!scroller || !panel) return undefined
+  const inline = scroller.style.paddingBottom
+  const box = row.getBoundingClientRect()
+  const view = scroller.getBoundingClientRect()
+  const floor = Math.min(panel.getBoundingClientRect().top, view.bottom)
+  const target = scroller.scrollTop + (box.height > floor - view.top ? box.top - view.top : box.bottom - floor)
+  const room = target - (scroller.scrollHeight - scroller.clientHeight)
+  if (room > 0) scroller.style.paddingBottom = `calc(${getComputedStyle(scroller).paddingBottom} + ${room}px)`
+  scroller.scrollTop = target
+  return () => {
+    scroller.style.paddingBottom = inline
+  }
+}
 
 // The pinned panel with its local preference (panel-pref.ts), mounted once the conversation's preference
 // first resolves so the first render already shows the remembered state; from then on it stays mounted (a
@@ -697,7 +1024,8 @@ function PinnedPanelSlot({
   usersById: Record<string, User>
 }) {
   const pref = usePanelPref(account, channel, panels.map((p) => p.agent))
-  const [narrow] = useState(isNarrow)
+  // Collapsed by default on a coarse pointer or in a narrow window; read once, on mount.
+  const [narrow] = useState(isCoarseOrNarrow)
   if (account !== undefined && !pref.ready) return null
   return (
     <PinnedPanel
@@ -709,4 +1037,43 @@ function PinnedPanelSlot({
       onPrefChange={pref.save}
     />
   )
+}
+
+type Screen = 'list' | 'search' | 'chat' | 'thread'
+
+// The stack's focus: a screen pushed takes the focus on its back (the search, on its field); a screen
+// popped gives it back to the control that opened it. A width change moves nothing.
+function useStackFocus(
+  screen: Screen | undefined,
+  searchOpen: boolean,
+  targets: Record<'search' | 'chat' | 'thread', { current: HTMLElement | null }>,
+): void {
+  const base = searchOpen ? 1 : 0
+  const depth = screen === 'thread' ? base + 2 : screen === 'chat' ? base + 1 : screen === 'search' ? 1 : 0
+  const lastFocus = useRef<HTMLElement | null>(null)
+  const openers = useRef<(HTMLElement | null)[]>([])
+  const prev = useRef({ depth, screen, narrow: screen !== undefined })
+  useEffect(() => {
+    const onFocus = (e: FocusEvent): void => {
+      lastFocus.current = e.target instanceof HTMLElement ? e.target : null
+    }
+    document.addEventListener('focusin', onFocus)
+    return () => document.removeEventListener('focusin', onFocus)
+  }, [])
+  useLayoutEffect(() => {
+    const narrow = screen !== undefined
+    const was = prev.current
+    prev.current = { depth, screen, narrow }
+    // ⌘K from a conversation trades it for the search at the same depth: that is a push too.
+    const pushed = depth > was.depth || (depth === was.depth && screen === 'search' && was.screen !== 'search')
+    if (!narrow || !was.narrow || (!pushed && depth === was.depth)) return
+    if (pushed) {
+      openers.current[was.depth + 1] = lastFocus.current
+      for (let d = was.depth + 2; d <= depth; d++) openers.current[d] = null
+      if (screen === 'search' || screen === 'chat' || screen === 'thread') targets[screen].current?.focus()
+    } else {
+      const opener = openers.current[depth + 1]
+      if (opener?.isConnected) opener.focus()
+    }
+  }, [screen, depth, targets])
 }

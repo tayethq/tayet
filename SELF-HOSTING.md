@@ -24,7 +24,7 @@ Two rules for whoever runs the commands, person or agent:
 - **The first administrator signs in with a password** generated during installation.
 - **No outgoing email.** Tayet does not send invitations; you pass the instructions to the person yourself.
 - **No federation.** The server does not talk to other Matrix servers.
-- **The product interface and the sign-in pages are in Brazilian Portuguese only.**
+- **The product interface and the sign-in pages are in English and Brazilian Portuguese.**
 - **Tested with Chromium only.** Other browsers are untested.
 - **One server, one Compose stack.** There is no high-availability setup.
 
@@ -186,18 +186,20 @@ Expected: `200`, then a JSON object whose `base_url` is `https://matrix.<domain>
 
 ## 9. First sign-in **[human]**
 
-1. Open `https://chat.<domain>` and choose **Continuar com sua conta**.
-2. On the sign-in page choose **Continuar com a conta da empresa**.
+The interface follows your browser's language, English or Brazilian Portuguese. The labels in steps 9 and 10 are the English ones.
+
+1. Open `https://chat.<domain>` and choose **Continue with your account**.
+2. On the sign-in page choose **Continue with your company account**.
 3. Email: the value of `BOOTSTRAP_ADMIN_EMAIL`. Password: the content of `secrets/bootstrap-admin.password`.
 
 You land in the app, in the channel `#all`. You are the administrator of the organization.
 
 ## 10. First invitation **[human]**
 
-1. Open **Sua conta**, then **Organização**, then **Pessoas**, and choose **Convidar pessoa**.
-2. Fill in the person's name and the email of their Google account, and choose the type: **Da organização** joins `#all`; **Convidado** sees only the channels you add.
-3. When the dialog shows **Convite pronto**, choose **Copiar instruções** and send them to the person yourself. Tayet does not send email.
-4. The person opens `https://chat.<domain>` and chooses **Continuar com Google**, with that Google account.
+1. Open **Your account**, then **Organization**, then **People**, and choose **Invite person**.
+2. Fill in the person's name and the email of their Google account, and choose the type: **Member** joins `#all`; **Guest** sees only the channels you add.
+3. When the dialog shows **Invite ready**, choose **Copy instructions** and send them to the person yourself. Tayet does not send email.
+4. The person opens `https://chat.<domain>` and chooses **Continue with Google**, with that Google account.
 
 ## 11. Back up
 

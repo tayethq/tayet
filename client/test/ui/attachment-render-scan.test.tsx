@@ -5,6 +5,9 @@ import { Workspace } from '../../src/ui/components/Workspace'
 import { MediaProvider } from '../../src/ui/MediaContext'
 import type { Channel, Message, User, ChannelId, UserId, MessageId, MediaRef } from '../../src/acl'
 import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
+import { saveFile } from '../../src/ui/save-file'
+
+vi.mock('../../src/ui/save-file', () => ({ saveFile: vi.fn() }))
 
 // PLANO-FASE-1-UPLOAD §5.2 (commit 4): the render-scan over the RECEIVED attachment bubble — a new
 // P1 surface. Image and file bodies must render via the resolved per-session URL, never the raw
@@ -77,11 +80,15 @@ describe('received attachment render-scan (P1 on screen)', () => {
       mine: false,
       mentionsMe: false,
     }
-    const { container } = renderWith([file])
+    const { container, resolve } = renderWith([file])
+    // Fetched on the click, never on render (PLANO-MOBILE §0.14 V2 b).
+    expect(resolve).not.toHaveBeenCalled()
+    fireEvent.click(container.querySelector('a.message__file')!)
     await waitFor(() => {
       const link = container.querySelector('a.message__file') as HTMLAnchorElement | null
       expect(link?.getAttribute('href')).toBe('blob:tayet/resolved')
     })
+    expect(saveFile).toHaveBeenCalledWith('blob:tayet/resolved', 'report.pdf')
     expect(container.textContent).toContain('report.pdf')
     expect(findProtocolLeaksInText(container.innerHTML)).toEqual([])
   })

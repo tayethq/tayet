@@ -45,6 +45,9 @@ export const NEW_CONVERSATION = {
   createChannel: 'Criar canal',
   startConversation: 'Abrir conversa',
   cancel: 'Cancelar',
+  // The ✕ of the narrow screen's header (new-conversation.md §11.1 item 1).
+  close: 'Fechar nova conversa',
+  dm: 'Mensagem direta',
   // The ✕ of a picked person's chip (NewConversationDialog PersonChip; ADR-094, PR-4).
   remove: (name: string) => `Remover ${name}`,
 } as const
@@ -119,6 +122,29 @@ export const TIMELINE = {
   reactOpen: 'Reagir',
   mentionsYou: 'menção a você', // the mention block under a row that mentions the viewer (Timeline.tsx:442)
   fileLink: (name: string) => `📎 ${name}`,
+  loadOlder: 'Carregar mensagens anteriores',
+  failed: 'Não enviado',
+  retry: 'Tentar de novo',
+  copyText: 'Copiar texto',
+  copied: 'Copiado',
+  actionsSheet: 'Ações da mensagem',
+  moreActions: 'Mais ações',
+  cancel: 'Cancelar',
+} as const
+
+// The image viewer and the file states (workspace.md §25.2, §23.3 items 12 and 13; PLANO-MOBILE §0.14). Fonte:
+// ImageViewer.tsx (dialog, header, toggle, states), Timeline.tsx ImageBody (thumbnail) and FileBody (states).
+export const VIEWER = {
+  open: (name: string) => `Abrir imagem ${name}`,
+  dialog: (name: string) => `Imagem ${name}`,
+  actualSize: 'Ver no tamanho real',
+  fit: 'Ajustar à janela',
+  loading: 'Carregando…',
+  failed: 'Não foi possível carregar a imagem',
+  download: 'Baixar',
+  close: 'Fechar',
+  downloading: 'Baixando…',
+  downloadFailed: 'Não foi possível baixar',
 } as const
 
 // The approval card (ADR-091, Proposto). Fonte: Timeline.tsx ApprovalCard (group name, footer lines);
@@ -189,6 +215,9 @@ export const COMPOSER = {
   save: 'Salvar',
   replyingTo: 'Respondendo a',
   cancelReply: 'Cancelar resposta',
+  editing: 'Editando mensagem',
+  cancelEdit: 'Cancelar edição',
+  commands: 'Comandos',
 } as const
 
 export const LINK_DIALOG = {
@@ -196,6 +225,8 @@ export const LINK_DIALOG = {
   text: 'Texto',
   url: 'URL',
   insert: 'Inserir',
+  cancel: 'Cancelar',
+  invalid: 'URL inválida — use http, https ou mailto',
 } as const
 
 // The thread panel. Fonte: ThreadPanel.tsx:54 (aside), :58 (close), :81 (replies log).
@@ -345,5 +376,33 @@ export const AGENTS = {
     malva: 'Malva',
     ardosia: 'Ardósia',
     grafite: 'Grafite',
+  },
+} as const
+
+// The language row of "Sua conta" (manifesto account-access.md §14), and the English names the language
+// spec drives once the app is in English. Fonte: AccountSettings.tsx (row, select, subtitle),
+// Workspace.tsx (account footer), BootMessage.tsx (sign-in and access-ended screens), SearchField.tsx
+// (field, scope chip). `en` mirrors src/ui/i18n/en.ts the way the rest of this file mirrors pt-BR.ts.
+export const LANGUAGE = {
+  pt: {
+    control: 'Idioma',
+    auto: 'Automático',
+    portuguese: 'Português',
+    everywhere: 'Em todos os seus aparelhos',
+  },
+  en: {
+    signInTitle: 'Sign in to Tayet',
+    account: 'Your account',
+    close: 'Close',
+    control: 'Language',
+    auto: 'Automatic',
+    portuguese: 'Português',
+    device: (language: string) => `This device's language: ${language}`,
+    english: 'English',
+    signOut: 'Sign out of this browser',
+    ended: 'Your access has ended',
+    signInAgain: 'Sign in again',
+    searchField: 'Search messages',
+    scoped: 'here',
   },
 } as const

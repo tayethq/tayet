@@ -58,6 +58,8 @@ function fakeAcl() {
     updateMyProfile: async () => {},
     setAvatar: async () => { throw new Error('avatar verb not used in this test') },
     removeAvatar: async () => { throw new Error('avatar verb not used in this test') },
+    getAccountPreferences: async () => ({}),
+    setAccountPreferences: async () => {},
     getThreadUnread: async () => ({ unread: false }),
     searchMessages: async () => [],
     getMessage: async () => undefined,

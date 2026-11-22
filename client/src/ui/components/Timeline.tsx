@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type AnimationEvent, type CSSProperties } from 'react'
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type AnimationEvent, type CSSProperties } from 'react'
 import { flushSync } from 'react-dom'
 import type { AgentColor, Message, MessageBody, MessageId, Presence, RichDoc, User, UserId } from '@tayet/client'
 import { QuickReact, Reactions } from './Reactions'
@@ -6,10 +6,14 @@ import { RichText } from './RichText'
 import { Avatar, Button, Sweep, type ButtonVariant } from '../primitives'
 import { AgentAvatar } from './AgentAvatar'
 import { resolveAuthor, initialsOf } from '../author'
-import { Reply, Thread, Edit, Trash } from '../icons'
-import { useMedia } from '../MediaContext'
+import { Reply, Thread, Edit, Trash, Copy, Check, More } from '../icons'
+import { useMedia, useLazyMedia } from '../MediaContext'
+import { saveFile } from '../save-file'
+import { OpenImageContext } from './ImageViewer'
 import { RichComposer } from '../composer/RichComposer'
 import { richDocToHTML, escapeToParagraph } from '../composer/rich-to-html'
+import { copyTextOf } from '../composer/copy-text'
+import { useLongPress } from '../long-press'
 import type { ComposeResult } from '../compose'
 import { t, GLYPH, getLocale } from '../i18n'
 
@@ -140,12 +144,15 @@ export interface QuotedPreview {
 // carries width/height and the CSS fits it by aspect ratio (--image-ratio), and the pending state
 // is a box of the same shape — so the timeline does not grow when the image loads. Without
 // dimensions the Timeline re-anchors to the bottom when the row grows (see Timeline).
-function ImageBody({ body }: { body: Extract<MessageBody, { kind: 'image' }> }) {
+// The ready thumbnail is a button that opens the viewer (manifest workspace.md §25.2 item 1, §23.3 item 13),
+// named by the image's alt (PLANO-MOBILE §0.14 V5); only the ready one opens it. On the narrow window the
+// CSS draws it, and its waiting box, at 4:3 up to 320 wide (§23.10).
+function ImageBody({ body, onOpen }: { body: Extract<MessageBody, { kind: 'image' }>; onOpen?: (thumb: HTMLElement) => void }) {
   const media = useMedia(body.media, 'thumbnail')
   const sized = body.width !== undefined && body.height !== undefined && body.width > 0 && body.height > 0
   const ratioStyle = sized ? ({ '--image-ratio': body.width! / body.height! } as CSSProperties) : undefined
   if (media.status === 'ready' && media.url) {
-    return (
+    const img = (
       <img
         className={sized ? 'message__image message__image--sized' : 'message__image'}
         src={media.url}
@@ -155,6 +162,18 @@ function ImageBody({ body }: { body: Extract<MessageBody, { kind: 'image' }> }) 
         style={ratioStyle}
       />
     )
+    if (!onOpen) return img
+    return (
+      <button
+        type="button"
+        className={sized ? 'message__thumb message__thumb--sized' : 'message__thumb'}
+        style={ratioStyle}
+        aria-label={body.alt ? t('viewer.open', { name: body.alt }) : t('viewer.openUnnamed')}
+        onClick={(e) => onOpen(e.currentTarget)}
+      >
+        {img}
+      </button>
+    )
   }
   if (sized && media.status !== 'failed') {
     return (
@@ -162,38 +181,66 @@ function ImageBody({ body }: { body: Extract<MessageBody, { kind: 'image' }> }) 
     )
   }
   return (
-    <span className="message__body">
+    <span className={media.status === 'failed' ? 'message__body message__image-failed' : 'message__body message__image-wait'}>
       {GLYPH.image} {body.alt ?? t('timeline.image')}
       {media.status === 'failed' && (
-        <button type="button" className="message__retry" onClick={media.retry}>
+        <Button variant="danger" size="gestao" className="message__retry" onClick={media.retry}>
           {t('timeline.retry')}
-        </button>
+        </Button>
       )}
     </span>
   )
 }
 
-// File body: resolves to a downloadable object URL. Waiting and failure are distinct on screen —
-// a neutral "downloading" indicator vs. a failure line with a retry.
+// File body (PLANO-MOBILE §0.14 V2 b, V3 a; manifest workspace.md §23.3 item 12): nothing is fetched on render.
+// The click or the tap starts the download; when it lands the product saves it under the file's name and the
+// link is ready, so a second click saves at once, without fetching again, while the row is mounted. Waiting
+// and failure are distinct on screen — a neutral "downloading" indicator vs. a failure line with a retry. The
+// focus that was on the link (or the retry) follows to the link, or to the retry on a failure.
 function FileBody({ body }: { body: Extract<MessageBody, { kind: 'file' }> }) {
-  const media = useMedia(body.media)
-  if (media.status === 'ready' && media.url) {
+  const media = useLazyMedia(body.media, (url) => saveFile(url, body.name))
+  const linkRef = useRef<HTMLAnchorElement>(null)
+  const failRef = useRef<HTMLSpanElement>(null)
+  const focused = useRef(false)
+  useEffect(() => {
+    if (!focused.current || media.status === 'loading') return
+    focused.current = false
+    if (media.status === 'failed') failRef.current?.querySelector('button')?.focus()
+    else linkRef.current?.focus()
+  }, [media.status])
+  const start = (el: HTMLElement): void => {
+    focused.current = document.activeElement === el
+    media.start()
+  }
+  if (media.status === 'idle' || (media.status === 'ready' && media.url)) {
     return (
-      <a className="message__file" href={media.url} download={body.name}>
+      <a
+        className="message__file"
+        ref={linkRef}
+        href={media.url ?? '#'}
+        download={media.url ? body.name : undefined}
+        onClick={(e) => {
+          if (media.url) return
+          e.preventDefault()
+          start(e.currentTarget)
+        }}
+      >
         {GLYPH.file} {body.name}
       </a>
     )
   }
   return (
-    <span className="message__body">
-      {GLYPH.file} {body.name}{' '}
+    <span className={`message__body message__file-state message__file-state--${media.status}`}>
+      <span className="message__file-name">
+        {GLYPH.file} {body.name}
+      </span>{' '}
       {media.status === 'failed' ? (
-        <>
+        <span className="message__file-status" ref={failRef}>
           <span className="message__status message__status--failed">{t('timeline.downloadFailed')}</span>
-          <button type="button" className="message__retry" onClick={media.retry}>
+          <Button variant="danger" size="gestao" className="message__retry" onClick={(e) => start(e.currentTarget)}>
             {t('timeline.retry')}
-          </button>
-        </>
+          </Button>
+        </span>
       ) : (
         <span className="message__status">
           <span className="message__spinner" aria-hidden="true" />
@@ -453,8 +500,11 @@ function MessageBodyView({
   onAnswer,
   command,
   formReply,
+  onOpenImage,
 }: {
   body: MessageBody
+  // Opens the viewer from an image's ready thumbnail (§25.2); absent, the thumbnail is not a button.
+  onOpenImage?: (thumb: HTMLElement) => void
   usersById?: Record<string, User>
   selfId?: UserId
   onAnswer?: (option: string) => void
@@ -487,7 +537,7 @@ function MessageBodyView({
     case 'approval':
       return <ApprovalCard body={body} usersById={usersById} selfId={selfId} onAnswer={onAnswer} formReply={formReply} />
     case 'image':
-      return <ImageBody body={body} />
+      return <ImageBody body={body} onOpen={onOpenImage} />
     case 'file':
       return <FileBody body={body} />
     case 'unsupported':
@@ -520,6 +570,52 @@ function richWithoutPrefix(doc: RichDoc, prefix: string): RichDoc | undefined {
   return [{ t: 'p', children: remaining ? [{ t: 'text', text: remaining }, ...inline] : inline }, ...blocks]
 }
 
+// What a message offers by the handlers its surface wires: the wide action bar and the action sheet read the
+// same (manifest workspace.md §23.8 item 2, "com as condições do desktop"). Reply, thread and react need a real
+// target, so never on a pending message; only main-timeline messages reply or open a thread. Delete (ADR-075):
+// own, sent, and not a thread root with replies (without a tombstone they would be orphaned); any body kind
+// but a card (ADR-091, manifest §17.1). A failed message never reached the server — redacting it would 404
+// and the UI swallows it; a local discard verb is a trigger (§8.52). Copy: the copy rule (§25.1). Edit (ADR-051,
+// ADR-093 dec. 13): own, settled, a text body and not a command message — the wide bar's pencil and the sheet's
+// "Editar mensagem" (PLANO-MOBILE §0.15 E1) read it here.
+export interface MessageActions {
+  react: boolean
+  reply: boolean
+  thread: boolean
+  copy?: string
+  edit: boolean
+  delete: boolean
+}
+export function actionsOf(
+  m: Message,
+  wired: { onReact?: unknown; onReply?: unknown; onOpenThread?: unknown; onEdit?: unknown; onDelete?: unknown },
+): MessageActions {
+  const settled = m.status !== 'pending'
+  const root = m.threadParent === undefined
+  return {
+    react: !!wired.onReact && settled,
+    reply: !!wired.onReply && root && settled,
+    thread: !!wired.onOpenThread && root && settled,
+    copy: copyTextOf(m),
+    edit: !!wired.onEdit && m.mine === true && m.body.kind === 'text' && m.status !== 'pending' && m.command === undefined,
+    delete:
+      !!wired.onDelete &&
+      m.body.kind !== 'approval' &&
+      m.mine === true &&
+      (m.status === undefined || m.status === 'sent') &&
+      !(m.threadSummary && m.threadSummary.replyCount > 0),
+  }
+}
+export const hasActions = (a: MessageActions): boolean =>
+  a.react || a.reply || a.thread || a.copy !== undefined || a.edit || a.delete
+
+// Where an action sheet was opened from: the row (held over the scrim) and the "Mais ações" button that gets
+// the focus back when the sheet closes.
+export interface ActionsOrigin {
+  row: HTMLElement
+  returnFocus: HTMLElement | null
+}
+
 // One rendered message. Author is resolved to a clean display name via the members map; if unknown
 // we show a neutral label — NEVER the author's opaque id (P1). message.id lives only in the React
 // key. Send status (ADR-010) renders as a dimmed 'pending' body or a muted 'failed' body with Retry.
@@ -547,6 +643,9 @@ export function MessageRow({
   onHighlightEnd,
   selfId,
   onAnswer,
+  onOpenActions,
+  held = false,
+  editingBelow = false,
 }: {
   message: Message
   usersById: Record<string, User>
@@ -595,28 +694,47 @@ export function MessageRow({
   selfId?: UserId
   // Answer an approval card with one of its options (ADR-091 dec. 14) — absent, its buttons stay disabled.
   onAnswer?: (message: Message, option: string) => void
+  // The narrow window only (N7 b): the long press and "Mais ações" open the action sheet (§23.8).
+  onOpenActions?: (message: Message, origin: ActionsOrigin) => void
+  // This row is held over the sheet's scrim (§23.8 item 7): a flag in the DOM, never an id (P1).
+  held?: boolean
+  // This row is being edited in the bottom composer (§23.7 item 2): a flag in the DOM, never an id (P1).
+  editingBelow?: boolean
 }) {
   const [editing, setEditing] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const cancelDeleteRef = useRef<HTMLButtonElement>(null)
+  // "Copiar texto" (§25.1): after a copy that worked, "Copiado" stands in for the button for COPIED_MS.
+  const [copied, setCopied] = useState(false)
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const copyOpenRef = useRef<HTMLButtonElement>(null)
+  const refocusCopy = useRef(false)
+  useEffect(() => () => clearTimeout(copiedTimer.current), [])
+  // The button comes back where the keyboard left it, so a keyboard copy does not drop the focus.
+  useEffect(() => {
+    if (!copied && refocusCopy.current) {
+      refocusCopy.current = false
+      copyOpenRef.current?.focus()
+    }
+  }, [copied])
   // Foto do autor (ADR-041 PR-2): resolve o avatar opaco do autor → URL só no group-start (uma
   // continuação passa undefined → useMedia é no-op). O Avatar cai pro monograma sem foto. P1: o
   // mr_*/mxc fica aqui+ACL, nunca no DOM (render-scan prova).
   const authorAvatar = useMedia(isGroupStart ? usersById[m.author]?.avatar : undefined, 'thumbnail').url
   // Only a settled, own, text message is editable (rich caption on media is out of scope, §8).
   // ADR-093 (Proposto), PLANO-AGENTES §0.3.24 item 7: a command message offers no edit (delete stays).
-  const canEdit =
-    !!onEdit && m.mine === true && m.body.kind === 'text' && m.status !== 'pending' && m.command === undefined
-  // ADR-075: own, sent, and not a thread root with replies (without a tombstone they would be
-  // orphaned). Any body kind. A failed message never reached the server — redacting it would 404 and
-  // the UI swallows it; a local discard verb is a trigger (§8.52).
-  // ADR-091: a card's line offers neither Edit nor Delete (manifest workspace.md §17.1).
-  const canDelete =
-    !!onDelete &&
-    m.body.kind !== 'approval' &&
-    m.mine === true &&
-    (m.status === undefined || m.status === 'sent') &&
-    !(m.threadSummary && m.threadSummary.replyCount > 0)
+  // ADR-075 and ADR-091: see actionsOf. A card's line offers neither Edit nor Delete (§17.1).
+  const actions = actionsOf(m, { onReact, onReply, onOpenThread, onEdit, onDelete })
+  const canEdit = actions.edit
+  const canDelete = actions.delete
+  // The action sheet (§23.8): a row with no action opens nothing.
+  const rowRefLocal = useRef<HTMLElement | null>(null)
+  const moreRef = useRef<HTMLButtonElement>(null)
+  const sheetable = onOpenActions !== undefined && hasActions(actions) && !editing
+  const openActions = (): void => {
+    if (rowRefLocal.current) onOpenActions?.(m, { row: rowRefLocal.current, returnFocus: moreRef.current })
+  }
+  const press = useLongPress(sheetable, openActions)
   // The confirmation opens on the safe choice: focus lands on "Cancelar", which also keeps the bar
   // shown (focus-within) and lets Esc reach the confirmation's key handler.
   useEffect(() => {
@@ -634,6 +752,14 @@ export function MessageRow({
   const authorLabel = m.mine === true ? t('timeline.you') : author
   // ADR-086: an agent's avatar is the mark (glyph + colour + blue indicator), never the monogram.
   const authorAgent = resolved.agentColor
+  // The image viewer (§25.2): author and time from the message, the name from the image's alt (V5).
+  const openImage = useContext(OpenImageContext)
+  const body = m.body
+  const onOpenImage =
+    openImage && body.kind === 'image'
+      ? (thumb: HTMLElement) =>
+          openImage({ media: body.media, name: body.alt, author: authorLabel, time: timeOf(m.sentAt), returnFocus: thumb })
+      : undefined
   // Only the row's own highlight animation ends it — not a spinner or a reaction inside the row.
   const endHighlight = (e: AnimationEvent<HTMLElement>): void => {
     if (e.target === e.currentTarget && HIGHLIGHT_ANIMATIONS.has(e.animationName)) onHighlightEnd?.()
@@ -695,6 +821,7 @@ export function MessageRow({
         onAnswer={onAnswer ? (option) => onAnswer(m, option) : undefined}
         command={m.command}
         formReply={m.formReply}
+        onOpenImage={onOpenImage}
       />
     )
 
@@ -775,25 +902,57 @@ export function MessageRow({
 
   // Never on a pending message: a reaction needs a real target, like reply and thread below.
   const reactOpenBlock =
-    onReact && m.status !== 'pending' ? (
+    onReact && actions.react ? (
       <QuickReact className="message__react-open" onPick={(emoji) => onReact(m, emoji)} />
     ) : null
 
   // Reply affordance: main timeline only and never on a pending message — the target needs a REAL
   // event id (PLANO-FASE-1-REPLY §6); the ACL still fails loud if called. Mirrors the thread affordance.
   const replyOpenBlock =
-    onReply && m.threadParent === undefined && m.status !== 'pending' ? (
+    onReply && actions.reply ? (
       <button type="button" className="message__reply-open" onClick={() => onReply(m)} title={t('timeline.reply')} aria-label={t('timeline.reply')}>
         <Reply />
       </button>
     ) : null
   // Only main-timeline messages open a thread (a thread reply has a threadParent).
   const threadOpenBlock =
-    onOpenThread && m.threadParent === undefined && m.status !== 'pending' ? (
+    onOpenThread && actions.thread ? (
       <button type="button" className="message__thread-open" onClick={() => onOpenThread(m)} title={t('timeline.replyInThread')} aria-label={t('timeline.replyInThread')}>
         <Thread />
       </button>
     ) : null
+
+  // "Copiar texto" (manifest workspace.md §25.1 items 1, 2 and 5): after "Responder na thread", before
+  // "Editar"; only where the copy rule gives the message a text. A copy that worked swaps the button for
+  // the check and "Copiado" (role="status"); a refused one changes nothing on screen (N8 a) and leaves
+  // nothing raw on the console.
+  const copyText = actions.copy
+  const copy = (): void => {
+    if (copyText === undefined) return
+    const button = copyOpenRef.current
+    const done = (): void => {
+      refocusCopy.current = button !== null && document.activeElement === button
+      setCopied(true)
+      clearTimeout(copiedTimer.current)
+      copiedTimer.current = setTimeout(() => setCopied(false), COPIED_MS)
+    }
+    try {
+      navigator.clipboard?.writeText(copyText).then(done, () => {})
+    } catch {
+      // A clipboard that throws before the promise is a refusal too (N8 a).
+    }
+  }
+  const copyBlock =
+    copyText === undefined ? null : copied ? (
+      <span className="message__copied" role="status">
+        <Check />
+        {t('timeline.copied')}
+      </span>
+    ) : (
+      <button type="button" className="message__copy-open" ref={copyOpenRef} onClick={copy} title={t('timeline.copyText')} aria-label={t('timeline.copyText')}>
+        <Copy />
+      </button>
+    )
 
   // Thread summary (ADR-066): under a main-timeline root that has replies — "N replies", when the
   // latest one was sent, and the unread marker: a dot without a number named "Unread replies"
@@ -815,8 +974,9 @@ export function MessageRow({
     ) : null
 
   // Action bar (OG-6, manifest workspace.md §11 item 4): the per-message affordances in one card
-  // revealed on hover and focus — React · Reply · Thread, then Edit · Delete on one's own. Touch
-  // fallback is deferred to Fase 3 with OG-5.
+  // revealed on hover and focus — React · Reply · Thread · Copy, then Edit · Delete on one's own. Below the
+  // width breakpoint the bar does not exist (T6, §29 item 3): touch, the keyboard and the pointer reach the
+  // same actions through the sheet (the long press and "Mais ações" below; M3b).
   // While a delete is being confirmed (ADR-075 dec. 4) the bar holds only the question and its two
   // answers, in the edit mode's inline idiom; it stays shown without hover. Esc cancels.
   const actionsBlock =
@@ -847,25 +1007,42 @@ export function MessageRow({
           {t('timeline.cancel')}
         </button>
       </span>
-    ) : reactOpenBlock || editOpenBlock || deleteOpenBlock || replyOpenBlock || threadOpenBlock ? (
-      <span className="message__actions">
+    ) : reactOpenBlock || editOpenBlock || deleteOpenBlock || replyOpenBlock || threadOpenBlock || copyBlock ? (
+      // While "Copiado" shows, the bar stays shown without hover: the button it replaced may have held the focus.
+      <span className={copied ? 'message__actions message__actions--copied' : 'message__actions'}>
         {reactOpenBlock}
         {replyOpenBlock}
         {threadOpenBlock}
+        {copyBlock}
         {editOpenBlock}
         {deleteOpenBlock}
       </span>
     ) : null
 
+  // "Mais ações" (§23.8 item 8, §29 item 3): on the narrow window, shown under keyboard or screen-reader focus
+  // and, with a fine pointer, on hover (styles.narrow.css); it opens the same sheet.
+  const moreBlock = sheetable ? (
+    <button type="button" className="message__more" ref={moreRef} onClick={openActions} title={t('timeline.moreActions')} aria-label={t('timeline.moreActions')}>
+      <More size={20} />
+    </button>
+  ) : null
+  const setRow = (el: HTMLElement | null): void => {
+    rowRefLocal.current = el
+    rowRef?.(el)
+  }
+
   // Flat layout (ThreadPanel and any caller that supplies no group context) — unchanged.
   if (!grouped) {
     return (
       <article
-        ref={rowRef}
+        ref={setRow}
         className={className}
         aria-busy={m.status === 'pending' ? 'true' : undefined}
         data-highlight={highlighted ? 'true' : undefined}
+        data-held={held ? 'true' : undefined}
+        data-editing={editingBelow ? 'true' : undefined}
         onAnimationEnd={highlighted ? endHighlight : undefined}
+        {...press}
       >
         {authorAgent !== undefined && <AgentAvatar color={authorAgent} size="gestao" />}
         <span className="message__author">{authorLabel}</span>
@@ -877,6 +1054,7 @@ export function MessageRow({
         {reactionsBlock}
         {threadSummaryBlock}
         {actionsBlock}
+        {moreBlock}
       </article>
     )
   }
@@ -885,11 +1063,14 @@ export function MessageRow({
   // carries the avatar + author header; continuations carry only a muted timestamp in the gutter.
   return (
     <article
-        ref={rowRef}
+        ref={setRow}
         className={className}
         aria-busy={m.status === 'pending' ? 'true' : undefined}
         data-highlight={highlighted ? 'true' : undefined}
+        data-held={held ? 'true' : undefined}
+        data-editing={editingBelow ? 'true' : undefined}
         onAnimationEnd={highlighted ? endHighlight : undefined}
+        {...press}
       >
       <span className="message__avatar">
         {isGroupStart ? (
@@ -938,10 +1119,14 @@ export function MessageRow({
         {reactionsBlock}
         {threadSummaryBlock}
         {actionsBlock}
+        {moreBlock}
       </div>
     </article>
   )
 }
+
+// How long "Copiado" stands in for the copy button (§25.1 item 2, "cerca de 1,5 s"): a component constant.
+export const COPIED_MS = 1500
 
 // The keyframes that end a row's highlight (styles.css): the pulse, or under reduced motion the fade
 // that follows the solid hold.
@@ -970,6 +1155,9 @@ export function Timeline({
   onHighlightEnd,
   selfId,
   onAnswer,
+  onOpenActions,
+  held,
+  editingBelow,
 }: {
   messages: Message[]
   usersById: Record<string, User>
@@ -1000,6 +1188,11 @@ export function Timeline({
   // The row a jump reached (§8 item 9): scrolled to the centre and highlighted.
   highlight?: { id: MessageId; seq: number }
   onHighlightEnd?: () => void
+  // The action sheet (§23.8), on the narrow window only, and the row it holds over its scrim.
+  onOpenActions?: (message: Message, origin: ActionsOrigin) => void
+  held?: MessageId
+  // The message in the bottom composer's edit (narrow), marked on its row.
+  editingBelow?: MessageId
 }) {
   // Rendered rows by message id, for the quoted preview's scroll-to-target. Kept in memory only —
   // ids never reach a DOM attribute (the render-scan sweeps innerHTML).
@@ -1026,7 +1219,7 @@ export function Timeline({
   }
   const anchor = (): void => {
     const el = scrollerRef.current
-    if (!el || !atBottom.current) return
+    if (!el || !atBottom.current || held !== undefined) return
     el.scrollTop = el.scrollHeight
     lastTop.current = el.scrollTop
   }
@@ -1054,6 +1247,17 @@ export function Timeline({
     ro.observe(el)
     for (const child of Array.from(el.children)) ro.observe(child)
   }, [messages])
+
+  // While a row is held over the sheet the Workspace scrolls it into place and the anchoring waits (§23.8
+  // item 7, R3). On release the reader's place at the bottom comes back as it was before the hold.
+  useLayoutEffect(() => {
+    if (held === undefined) return
+    const wasAtBottom = atBottom.current
+    return () => {
+      atBottom.current = wasAtBottom
+      anchorRef.current()
+    }
+  }, [held])
 
   // A jump reached a row: centre it and let go of the bottom, so neither the anchoring nor a row that
   // grows afterwards pulls the reader away from it.
@@ -1146,6 +1350,9 @@ export function Timeline({
                 onHighlightEnd={onHighlightEnd}
                 selfId={selfId}
                 onAnswer={onAnswer}
+                onOpenActions={onOpenActions}
+                held={held === m.id}
+                editingBelow={editingBelow === m.id}
                 rowRef={(el) => {
                   if (el) rowsById.current.set(m.id, el)
                   else rowsById.current.delete(m.id)

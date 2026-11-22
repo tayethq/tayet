@@ -17,7 +17,8 @@ import { channelRow, dmWith, mainComposer, messages, row, send, startDm, threadP
 // else's root (#224) counts "2 replies" on both and its unread marker clears for zoe once she opens
 // it. In a public channel of the pair (never #all) zoe mentions yan through the picker: the message
 // carries the NAME and nothing shaped like an id. Whether yan PERCEIVES the mention is not asserted
-// here (F1: notifications.spec). The DOM is scanned for protocol ids (P1) at every step.
+// here (F1: notifications.spec). The DOM is scanned for protocol ids (P1) at every step. Last, the ↑/↓ history in
+// the composer (workspace.md §25.6, issue tayethq/tayet #2): zoe's own messages come back, newest first.
 
 // Display names as the MAS imported them from the Dex `name` claim (see conversation.spec.ts).
 const YAN_NAME = 'yan'
@@ -224,6 +225,32 @@ test('compose: formatting, edit, reply, reactions, thread and mention between tw
         expect(findProtocolLeaksInText(await r.innerHTML())).toEqual([])
       }
       await expectNoProtocolLeak(pageA, pageB)
+    })
+
+    await test.step('7. ↑/↓ history (§25.6): ↑ on an empty composer brings zoe’s own messages, newest first; ↓ and Esc empty it', async () => {
+      const second = `de novo ${ts}`
+      const composer = mainComposer(pageB)
+      await send(pageB, second)
+      // A pending message is not in the history (§25.6): wait until it is sent.
+      await expect(row(pageB, second)).not.toHaveAttribute('aria-busy', 'true', { timeout: 30_000 })
+      await composer.click()
+      await pageB.keyboard.press('ArrowUp')
+      await expect(composer).toHaveText(second)
+      await pageB.keyboard.press('ArrowUp')
+      // The mention comes back as its text (H2 a), with no picker over it.
+      await expect(composer).toHaveText(`@${YAN_NAME}${mentionText}`)
+      await expect(pageB.getByRole('listbox', { name: COMPOSER.mention })).toHaveCount(0)
+      await pageB.keyboard.press('ArrowDown')
+      await expect(composer).toHaveText(second)
+      await pageB.keyboard.press('ArrowDown')
+      await expect(composer).toHaveText('')
+      await pageB.keyboard.press('ArrowUp')
+      await pageB.keyboard.press('Escape')
+      await expect(composer).toHaveText('')
+      // Sent again, it is a new message, not an edit.
+      await pageB.keyboard.press('ArrowUp')
+      await pageB.keyboard.press('Enter')
+      await expect(messages(pageB).locator('article').filter({ hasText: second })).toHaveCount(2, { timeout: 60_000 })
     })
 
     console.log(`[e2e] console A: ${JSON.stringify(consoleA.observed())}`)

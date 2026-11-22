@@ -284,6 +284,13 @@ export type DataExportPart =
       incomplete: Array<{ channel: Channel; gaps: number }>
     }
 
+// ── Account preferences ──────────────────────────────────────────────────────────────────
+// The person's interface preferences, kept in their account so they hold on every device. `language` is
+// opaque to the ACL: the UI writes and validates it; absent means Automatic.
+export interface AccountPreferences {
+  language?: string
+}
+
 // ── The single public surface ────────────────────────────────────────────────────────────
 export interface Acl {
   // Outbound (SDK→domain)
@@ -345,6 +352,17 @@ export interface Acl {
   // (limpos/opacos); o mxc nunca cruza. Verbos de mídia dedicados (não o patch — generalização espera pronomes).
   setAvatar(file: File): Promise<MediaRef>
   removeAvatar(): Promise<void>
+
+  // Account preferences, read straight from the server (never from the synced cache, which can lag a
+  // recent write right after a reload). Without `fresh`, an account whose synced cache does not show
+  // the preferences at all resolves {} with no request; `fresh: true` always asks the server. An
+  // account that never chose anything resolves {}. Any other failure rejects.
+  getAccountPreferences(opts?: { fresh?: boolean }): Promise<AccountPreferences>
+  // Patch by key presence: `language` absent leaves it; '' removes it (Automatic). Unknown fields
+  // already stored are kept, read straight from the server when the synced cache shows the
+  // preferences; with none in the cache the patch is written alone. Resolves when the server confirms
+  // the write; failure rejects.
+  setAccountPreferences(patch: { language?: string }): Promise<void>
 
   // Per-thread unread (ADR-067; closes the deferred per-thread badge from PLANO-FASE-1-TRADUTORES §1.5).
   // A boolean derived by the ACL from the user's READ RECEIPTS, with the same rule in encrypted and

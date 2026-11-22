@@ -30,7 +30,22 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    // The desktop suite. The narrow specs belong to the phone project only.
+    { name: 'chromium', testIgnore: /\.narrow\.spec\.ts$/, use: { ...devices['Desktop Chrome'] } },
+    // A phone-sized Chromium with touch, running only the narrow specs (no WebKit, no second full suite).
+    {
+      name: 'phone',
+      testMatch: /\.narrow\.spec\.ts$/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+        isMobile: true,
+        deviceScaleFactor: 3,
+      },
+    },
+  ],
   webServer: {
     command: `npm run preview -- --port ${SPA_PORT} --strictPort`,
     url: `http://localhost:${SPA_PORT}`,

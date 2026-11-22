@@ -7,6 +7,7 @@ import { MediaProvider } from '../../src/ui/MediaContext'
 import type { DeviceId, MediaRef, MyProfile, Timestamp } from '../../src/acl'
 import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
 import { noExport } from '../support/data-export-fake'
+import { idleLanguage } from '../support/language-fake'
 
 // P1 gate (espelha test/ui/render-scan): monta a superfície de conta ABERTA (agora um Dialog, ADR-038)
 // e escaneia o DOM renderizado por shapes de protocolo. AccountSettings é o PRIMEIRO chrome de
@@ -30,7 +31,7 @@ describe('DOM render-scan — AccountSettings (P1 na tela)', () => {
 
   it('main mostra resumo; a sub-tela renderiza a lista limpa e NÃO vaza shape de protocolo', () => {
     const { container, getByRole } = render(
-      <AccountSettings open accesses={accesses} displayName="Alice Stone" avatarUrl="https://media.local/resolved/thumb.png" onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={() => {}} onSignOut={() => {}} theme="light" onThemeChange={() => {}} onClose={() => {}} />,
+      <AccountSettings open accesses={accesses} displayName="Alice Stone" avatarUrl="https://media.local/resolved/thumb.png" onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={() => {}} onSignOut={() => {}} theme="light" onThemeChange={() => {}} language={idleLanguage} onClose={() => {}} />,
     )
 
     // ── view 'main' ──
@@ -89,7 +90,7 @@ describe('DOM render-scan — AccountSettings (P1 na tela)', () => {
   it('device sem display_name → "Acesso desconhecido", e o device_id cru NÃO vaza no DOM', () => {
     const nameless: KnownAccess[] = [{ id: did('LEAKCANARY00'), current: false }] // friendlyName ausente (não em branco)
     const { container, getByRole } = render(
-      <AccountSettings open accesses={nameless} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={() => {}} onSignOut={() => {}} theme="light" onThemeChange={() => {}} onClose={() => {}} />,
+      <AccountSettings open accesses={nameless} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={() => {}} onSignOut={() => {}} theme="light" onThemeChange={() => {}} language={idleLanguage} onClose={() => {}} />,
     )
 
     // O id não vaza na main (antes de navegar).
@@ -106,7 +107,7 @@ describe('DOM render-scan — AccountSettings (P1 na tela)', () => {
 
   it('sem acessos: main tem a entry-row (0 acessos); sub-tela tem o reset sempre-disponível', () => {
     const { container, getByRole } = render(
-      <AccountSettings open accesses={[]} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={() => {}} onSignOut={() => {}} theme="light" onThemeChange={() => {}} onClose={() => {}} />,
+      <AccountSettings open accesses={[]} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={() => {}} onSignOut={() => {}} theme="light" onThemeChange={() => {}} language={idleLanguage} onClose={() => {}} />,
     )
 
     // ── view 'main' ──
@@ -131,7 +132,7 @@ describe('DOM render-scan — AccountSettings (P1 na tela)', () => {
   })
   const renderAccount = (accesses: KnownAccess[], onLoadProfile: () => Promise<MyProfile>) =>
     render(
-      <AccountSettings open accesses={accesses} displayName="Alice Stone" onLoadProfile={onLoadProfile} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={() => {}} onSignOut={() => {}} theme="light" onThemeChange={() => {}} onClose={() => {}} />,
+      <AccountSettings open accesses={accesses} displayName="Alice Stone" onLoadProfile={onLoadProfile} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={() => {}} onSignOut={() => {}} theme="light" onThemeChange={() => {}} language={idleLanguage} onClose={() => {}} />,
     )
 
   it('cargo presente: a linha aparece sob o nome', async () => {
@@ -210,7 +211,7 @@ describe('DOM render-scan — AccountSettings (P1 na tela)', () => {
   // DOM da view profile — o leak-scan P1 roda agora nas QUATRO views (main/access/confirm/profile).
   it('entry-row "Editar perfil" → view profile renderiza fullName + "Gerenciado…", sem vazar protocolo', async () => {
     const { container, getByRole, getByText } = render(
-      <AccountSettings open accesses={[]} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={() => {}} onSignOut={() => {}} theme="light" onThemeChange={() => {}} onClose={() => {}} />,
+      <AccountSettings open accesses={[]} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={() => {}} onSignOut={() => {}} theme="light" onThemeChange={() => {}} language={idleLanguage} onClose={() => {}} />,
     )
 
     // ── view 'main' ── a entry-row de perfil existe junto da de acessos.
@@ -246,7 +247,7 @@ describe('DOM render-scan — AccountSettings (P1 na tela)', () => {
           onReset={() => {}}
           onSignOut={() => {}}
           theme="light"
-          onThemeChange={() => {}}
+          onThemeChange={() => {}} language={idleLanguage}
           onClose={() => {}}
         />
       </MediaProvider>,
@@ -287,7 +288,7 @@ describe('DOM render-scan — AccountSettings (P1 na tela)', () => {
         onReset={() => {}}
         onSignOut={() => {}}
         theme="light"
-        onThemeChange={() => {}}
+        onThemeChange={() => {}} language={idleLanguage}
         onClose={() => {}}
       />,
     )
@@ -312,7 +313,7 @@ describe('DOM render-scan — AccountSettings (P1 na tela)', () => {
   // Prova-a, não a presume.
   it('view profile SEM org: a seção continua (Nome + copy); Cargo e Email ausentes', async () => {
     const { container, getByRole, getByText } = render(
-      <AccountSettings open accesses={[]} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={() => {}} onSignOut={() => {}} theme="light" onThemeChange={() => {}} onClose={() => {}} />,
+      <AccountSettings open accesses={[]} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={() => {}} onSignOut={() => {}} theme="light" onThemeChange={() => {}} language={idleLanguage} onClose={() => {}} />,
     )
 
     fireEvent.click(getByRole('button', { name: /^Editar$/ }))

@@ -13,6 +13,7 @@ import { beginLogin, isCallback, isErrorCallback, completeLogin, scrubCallback }
 import { BootMessage, type BootPhase } from './BootMessage'
 import { createTabLock, WAIT_COPY_DELAY_MS, type TabLock } from '../tab-lock'
 import { watchSearchState } from '../search-state'
+import { reconcileLanguage } from '../language'
 
 // Controlador de boot. Trilha 1: connect-como-estado (issue #1). Fatia 2a: detecta o callback OIDC,
 // inicia o login no no-session, mostra os beats. Fatia 2b: logout (ADR-034) — signOut na ACL (para o
@@ -31,6 +32,8 @@ export interface BootProps {
   renderReady?: (acl: Acl, onSignOut: () => void) => ReactNode
   // ADR-065: o lock de aba. Seam como o makeAcl; o default é o navigator.locks do browser.
   tabLock?: TabLock
+  // Page reload, for the language reconciliation after connecting. A seam like makeAcl.
+  reload?: () => void
 }
 
 const defaultMakeAcl = (
@@ -39,6 +42,8 @@ const defaultMakeAcl = (
   onSessionRenewed: (s: OpaqueSession) => void,
   onSessionLost: () => void,
 ): Acl => createAcl({ mode: 'lenient', telemetry, serverUrl, onSessionRenewed, onSessionLost })
+
+const defaultReload = (): void => window.location.reload()
 
 export function Boot({
   serverUrl,
@@ -50,6 +55,7 @@ export function Boot({
   resolve = resolveBootSession,
   renderReady = (acl, onSignOut) => <App acl={acl} onSignOut={onSignOut} />,
   tabLock,
+  reload = defaultReload,
 }: BootProps) {
   // ADR-031 addendum Out/2026: a volta do provedor nasce no D4 — o primeiro paint do callback já é
   // `preparing`, sem "Conectando…" entre a página do provedor e o beat.
@@ -92,6 +98,9 @@ export function Boot({
       watchSearchState(acl)
       try {
         await acl.connect(session)
+        // The account's language against this device's copy. A reload keeps the beat on screen and
+        // the tab lock held; the unload lets go of both, as when this tab yields to another.
+        if (await reconcileLanguage(acl, reload)) return
         sessionLostRef.current = false // re-armado: a nova sessão pode perder de novo (ADR-035 D3)
         setExitFrom(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? null : beat)
         setPhase('ready')
@@ -112,7 +121,7 @@ export function Boot({
         else setPhase('failed')
       }
     },
-    [ensureAcl, lock, settle],
+    [ensureAcl, lock, settle, reload],
   )
 
   const run = useCallback(async () => {

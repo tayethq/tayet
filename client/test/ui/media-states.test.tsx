@@ -6,6 +6,9 @@ import { MediaProvider } from '../../src/ui/MediaContext'
 import type { MediaRef, MediaVariant, Message, MessageId, ResolvedMedia, User, UserId, ChannelId } from '../../src/acl'
 import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
 import { copy } from '../support/copy'
+import { saveFile } from '../../src/ui/save-file'
+
+vi.mock('../../src/ui/save-file', () => ({ saveFile: vi.fn() }))
 
 // PLANO-RELEASE-PUBLICA §8.21 (dogfood 2.1; ADR-007 §3 debt): media waiting and media failure are
 // DISTINCT on screen. useMedia exposes 'loading' | 'ready' | 'failed' + retry(); FileBody shows a
@@ -62,47 +65,94 @@ function expectNeutral(container: HTMLElement): void {
   expect(findProtocolLeaksInText(container.innerHTML)).toEqual([])
 }
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.mocked(saveFile).mockClear()
+})
 
-describe('media states — file (useMedia loading/ready/failed + retry)', () => {
-  it('pending resolver → waiting indicator, no link', () => {
+// PLANO-MOBILE §0.14 V2 b (owner, 20/Nov/2026): the file is no longer fetched when it shows up. Nothing
+// resolves on render; the click starts the download, which the product saves under the file's name when it
+// lands, and the link is then ready: a second click saves at once, without fetching again.
+describe('media states — file (download on click: idle/loading/ready/failed + retry)', () => {
+  const link = (view: ReturnType<typeof mount>) => view.getByRole('link', { name: `📎 relatorio.pdf` })
+
+  it('nothing resolves on render: the link is at rest, no waiting line', () => {
     const r = deferredResolver()
-    const { container, queryByRole, getByText } = mount(r.fn, fileMsg)
-    expect(getByText(copy.timeline.downloading)).toBeTruthy()
-    expect(container.textContent).toContain('relatorio.pdf')
-    expect(queryByRole('link')).toBeNull()
-    expect(queryByRole('button', { name: copy.timeline.retry })).toBeNull()
-    expectNeutral(container)
+    const view = mount(r.fn, fileMsg)
+    expect(r.fn).not.toHaveBeenCalled()
+    expect(link(view).hasAttribute('download')).toBe(false)
+    expect(view.queryByText(copy.timeline.downloading)).toBeNull()
+    expectNeutral(view.container)
   })
 
-  it('rejection → failure line with retry; retry resolves → the link appears', async () => {
+  it('the click starts the download → waiting indicator, no link', () => {
     const r = deferredResolver()
-    const { container, getByText, getByRole, queryByText } = mount(r.fn, fileMsg)
+    const view = mount(r.fn, fileMsg)
+    fireEvent.click(link(view))
+    expect(r.fn).toHaveBeenCalledTimes(1)
+    expect(r.fn).toHaveBeenCalledWith(REF, undefined) // the full file, never the thumbnail
+    expect(view.getByText(copy.timeline.downloading)).toBeTruthy()
+    expect(view.container.textContent).toContain('relatorio.pdf')
+    expect(view.queryByRole('link')).toBeNull()
+    expect(view.queryByRole('button', { name: copy.timeline.retry })).toBeNull()
+    expectNeutral(view.container)
+  })
+
+  it('rejection → failure line with retry; retry resolves → saved, and the link is ready', async () => {
+    const r = deferredResolver()
+    const view = mount(r.fn, fileMsg)
+    fireEvent.click(link(view))
     await act(async () => r.calls[0]!.reject(new Error('media fetch failed')))
 
-    expect(getByText(copy.timeline.downloadFailed)).toBeTruthy()
-    expect(queryByText(copy.timeline.downloading)).toBeNull()
-    expectNeutral(container) // the rejection reason never reaches the screen
+    expect(view.getByText(copy.timeline.downloadFailed)).toBeTruthy()
+    expect(view.queryByText(copy.timeline.downloading)).toBeNull()
+    expect(saveFile).not.toHaveBeenCalled()
+    expectNeutral(view.container) // the rejection reason never reaches the screen
 
-    fireEvent.click(getByRole('button', { name: copy.timeline.retry }))
+    fireEvent.click(view.getByRole('button', { name: copy.timeline.retry }))
     expect(r.fn).toHaveBeenCalledTimes(2)
-    expect(getByText(copy.timeline.downloading)).toBeTruthy() // back to waiting while the retry is in flight
+    expect(view.getByText(copy.timeline.downloading)).toBeTruthy() // back to waiting while the retry is in flight
 
     const release = vi.fn()
     await act(async () => r.calls[1]!.resolve({ url: 'blob:tayet/file', release }))
-    const link = await waitFor(() => getByRole('link'))
-    expect(link.getAttribute('href')).toBe('blob:tayet/file')
-    expect(link.getAttribute('download')).toBe('relatorio.pdf')
-    expect(queryByText(copy.timeline.downloadFailed)).toBeNull()
-    expectNeutral(container)
+    const ready = await waitFor(() => link(view))
+    expect(ready.getAttribute('href')).toBe('blob:tayet/file')
+    expect(ready.getAttribute('download')).toBe('relatorio.pdf')
+    expect(saveFile).toHaveBeenCalledTimes(1)
+    expect(saveFile).toHaveBeenCalledWith('blob:tayet/file', 'relatorio.pdf')
+    expect(view.queryByText(copy.timeline.downloadFailed)).toBeNull()
+    expectNeutral(view.container)
+  })
+
+  it('a second click saves through the ready link, without fetching again', async () => {
+    const resolve = vi.fn(async () => ({ url: 'blob:tayet/file', release: () => {} }))
+    const view = mount(resolve, fileMsg)
+    fireEvent.click(link(view))
+    await waitFor(() => expect(link(view).getAttribute('href')).toBe('blob:tayet/file'))
+    // The ready link is the native download: the click is not taken over (no preventDefault).
+    const second = new MouseEvent('click', { bubbles: true, cancelable: true })
+    link(view).addEventListener('click', (e) => e.preventDefault(), { once: true }) // jsdom does not navigate
+    link(view).dispatchEvent(second)
+    expect(resolve).toHaveBeenCalledTimes(1)
+    expect(saveFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('the focus on the link follows to the ready link', async () => {
+    const r = deferredResolver()
+    const view = mount(r.fn, fileMsg)
+    link(view).focus()
+    fireEvent.click(link(view))
+    await act(async () => r.calls[0]!.resolve({ url: 'blob:tayet/file', release: () => {} }))
+    await waitFor(() => expect(document.activeElement).toBe(link(view)))
   })
 
   it('release() of the object URL still runs on unmount (ADR-009)', async () => {
     const release = vi.fn()
-    const { getByRole, unmount } = mount(async () => ({ url: 'blob:tayet/file', release }), fileMsg)
-    await waitFor(() => getByRole('link'))
+    const view = mount(async () => ({ url: 'blob:tayet/file', release }), fileMsg)
+    fireEvent.click(link(view))
+    await waitFor(() => expect(link(view).getAttribute('href')).toBe('blob:tayet/file'))
     expect(release).not.toHaveBeenCalled()
-    unmount()
+    view.unmount()
     expect(release).toHaveBeenCalledTimes(1)
   })
 })

@@ -7,6 +7,7 @@ import { App } from '../../src/ui/App'
 import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
 import type { Acl, DomainEvent, Device, UserId } from '../../src/acl'
 import { noExport } from '../support/data-export-fake'
+import { idleLanguage } from '../support/language-fake'
 
 afterEach(cleanup)
 
@@ -62,7 +63,7 @@ describe('estados do reset (ADR-082)', () => {
     const onReset = vi.fn()
     const onSignOut = vi.fn()
     const account = (status: 'idle' | 'pending' | 'done' | 'notDone') => (
-      <AccountSettings open accesses={[]} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={onReset} resetStatus={status} onSignOut={onSignOut} theme="light" onThemeChange={() => {}} onClose={() => {}} />
+      <AccountSettings open accesses={[]} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={onReset} resetStatus={status} onSignOut={onSignOut} theme="light" onThemeChange={() => {}} language={idleLanguage} onClose={() => {}} />
     )
     const { getByRole, queryByRole, rerender, baseElement } = render(account('idle'))
     fireEvent.click(getByRole('button', { name: /Acessos à sua conta/i }))
@@ -101,7 +102,7 @@ describe('AccountSettings (ADR-019 §3.4 — always available)', () => {
   it('renders the always-available reset action and (via confirm) calls onReset; render-scan green', () => {
     const onReset = vi.fn()
     const { container, getByRole } = render(
-      <AccountSettings open accesses={[]} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={onReset} onSignOut={() => {}} theme="light" onThemeChange={() => {}} onClose={() => {}} />,
+      <AccountSettings open accesses={[]} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={onReset} onSignOut={() => {}} theme="light" onThemeChange={() => {}} language={idleLanguage} onClose={() => {}} />,
     )
     expect(container.textContent ?? '').toContain('Sua conta')
     // A lista + reset vivem na sub-tela drill-in (addendum F4 ao ADR-038): navega antes de clicar.
@@ -116,7 +117,7 @@ describe('AccountSettings (ADR-019 §3.4 — always available)', () => {
   it('the confirmation gates the reset: the box opens it without resetting, Cancel backs out, only the danger resets', () => {
     const onReset = vi.fn()
     const { container, getByRole, queryByRole } = render(
-      <AccountSettings open accesses={[]} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={onReset} onSignOut={() => {}} theme="light" onThemeChange={() => {}} onClose={() => {}} />,
+      <AccountSettings open accesses={[]} onLoadProfile={async () => ({ fullName: 'Alice Stone' })} onSaveProfile={async () => {}} onSaveAvatar={async () => {}} onClearAvatar={async () => {}} onExportData={noExport} onReset={onReset} onSignOut={() => {}} theme="light" onThemeChange={() => {}} language={idleLanguage} onClose={() => {}} />,
     )
     fireEvent.click(getByRole('button', { name: /Acessos à sua conta/i }))
 
@@ -162,6 +163,8 @@ function fakeAcl(
     updateMyProfile: async () => {},
     setAvatar: async () => { throw new Error('avatar verb not used in this test') },
     removeAvatar: async () => { throw new Error('avatar verb not used in this test') },
+    getAccountPreferences: async () => ({}),
+    setAccountPreferences: async () => {},
     getThreadUnread: async () => ({ unread: false }),
     searchMessages: async () => [],
     getMessage: async () => undefined,

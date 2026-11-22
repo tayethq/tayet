@@ -24,8 +24,11 @@ import {
   PANEL,
   COMMANDS,
   FORMS,
+  LANGUAGE,
+  VIEWER,
 } from '../e2e/support/labels'
 import { APP_NAME, GLYPH } from '../src/ui/i18n'
+import { en } from '../src/ui/i18n/en'
 
 // e2e/support/labels.ts mirrors the catalog (ADR-080 D5). The E2E tier never imports src/ (ADR-060
 // D4), so the names stay literal there and this test — which may — pins each one to its catalog value.
@@ -150,6 +153,8 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
       createChannel: copy.newConversation.createChannel,
       startConversation: copy.newConversation.startConversation,
       cancel: copy.newConversation.cancel,
+      close: copy.newConversation.close,
+      dm: copy.newConversation.dm,
     })
     expect(MANAGE.open('#board')).toBe(fill(copy.channel.manageNamed, { name: '#board' }))
     expect(MANAGE.role('Ana')).toBe(fill(copy.channel.roleFor, { name: 'Ana' }))
@@ -196,7 +201,28 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
       reactOpen: copy.timeline.reactOpen,
       mentionsYou: copy.timeline.mentionsYou,
       repliedMessage: copy.timeline.repliedMessage,
+      loadOlder: copy.timeline.loadOlder,
+      failed: copy.timeline.failed,
+      retry: copy.timeline.retry,
+      copyText: copy.timeline.copyText,
+      copied: copy.timeline.copied,
+      actionsSheet: copy.timeline.actionsSheet,
+      moreActions: copy.timeline.moreActions,
+      cancel: copy.timeline.cancel,
       unreadReplies: copy.timeline.unreadReplies,
+    })
+    expect(VIEWER.open('a.png')).toBe(fill(copy.viewer.open, { name: 'a.png' }))
+    expect(VIEWER.dialog('a.png')).toBe(fill(copy.viewer.label, { name: 'a.png' }))
+    const { open: _o, dialog: _d, ...viewer } = VIEWER
+    expect(viewer).toEqual({
+      actualSize: copy.viewer.actualSize,
+      fit: copy.viewer.fit,
+      loading: copy.viewer.loading,
+      failed: copy.viewer.failed,
+      download: copy.viewer.download,
+      close: copy.dialog.close,
+      downloading: copy.timeline.downloading,
+      downloadFailed: copy.timeline.downloadFailed,
     })
     expect(APPROVAL.answered('Ana', '09:05')).toBe(fill(copy.approval.answered, { name: 'Ana', time: '09:05' }))
     expect(APPROVAL.needs(2)).toBe(fill(copy.approval.needs, { n: 2 }))
@@ -242,12 +268,17 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
       save: copy.composer.editSave,
       replyingTo: copy.composer.replyingTo,
       cancelReply: copy.composer.cancelReply,
+      editing: copy.composer.editing,
+      cancelEdit: copy.composer.cancelEdit,
+      commands: copy.composer.commands,
     })
     expect(LINK_DIALOG).toEqual({
       dialog: copy.composer.linkInsert,
       text: copy.composer.linkText,
       url: copy.composer.linkUrl,
       insert: copy.composer.linkInsertAction,
+      cancel: copy.composer.linkCancel,
+      invalid: copy.composer.linkInvalid,
     })
   })
 
@@ -302,5 +333,31 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
       presenceOnline: copy.profile.presenceOnline,
       presenceOffline: copy.profile.presenceOffline,
     })
+  })
+
+  it('language row, in pt-BR and in English', () => {
+    expect(LANGUAGE.pt).toEqual({
+      control: copy.account.language,
+      auto: copy.account.languageAuto,
+      portuguese: copy.account.languagePt,
+      everywhere: copy.account.languageEverywhere,
+    })
+    expect(LANGUAGE.en.device(en.account.languageEn)).toBe(fill(en.account.languageDevice, { language: en.account.languageEn }))
+    const { device: _d, ...english } = LANGUAGE.en
+    expect(english).toEqual({
+      signInTitle: en.boot.signInTitle,
+      account: en.shell.account,
+      close: en.dialog.close,
+      control: en.account.language,
+      auto: en.account.languageAuto,
+      portuguese: en.account.languagePt,
+      english: en.account.languageEn,
+      signOut: en.account.signOut,
+      ended: en.boot.endedTitle,
+      signInAgain: en.boot.signInAgain,
+      searchField: en.search.field,
+      scoped: en.search.scoped,
+    })
+    expect(en.account.title).toBe(en.shell.account)
   })
 })

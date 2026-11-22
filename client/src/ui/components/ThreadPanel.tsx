@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
+import type { ReactNode } from 'react'
 import type { AgentCommand, Channel, Message, MessageId, ThreadUnread, User, UserId } from '@tayet/client'
 import type { ComposeResult } from '../compose'
-import type { ComposerCommand } from '../composer/RichComposer'
-import { MessageRow, initialsOf } from './Timeline'
+import type { ComposerCommand, ComposerModeProps } from '../composer/RichComposer'
+import { MessageRow, initialsOf, type ActionsOrigin } from './Timeline'
 import { resolveAuthor } from '../author'
 import { Composer } from './Composer'
 import { ChannelLabel } from './ChannelLabel'
@@ -33,6 +34,13 @@ export function ThreadPanel({
   onHighlightEnd,
   selfId,
   onAnswer,
+  header,
+  strip,
+  covered = false,
+  onOpenActions,
+  held,
+  editingBelow,
+  composer,
 }: {
   root: Message
   // The thread's channel, the header's subtitle (manifest workspace.md §11 item 9).
@@ -63,6 +71,18 @@ export function ThreadPanel({
   // Answer an approval card (ADR-091 dec. 14) — on the root and among the replies alike: the root follows
   // its own message's updates (useChat), so its card shows the send like any row (§18 item 7).
   onAnswer?: (message: Message, option: string) => void
+  // The narrow stack: the screen header in place of the panel's, the
+  // connection strip under it, and whether another screen covers this one (out of the tab order and
+  // the accessibility tree, still mounted).
+  header?: ReactNode
+  strip?: ReactNode
+  covered?: boolean
+  // The action sheet (§23.8 item 9, §29 item 1), on the narrow window only, and the row it holds.
+  onOpenActions?: (message: Message, origin: ActionsOrigin) => void
+  held?: MessageId
+  // The narrow composer's edit (marked on its row) and the composer's mode props (PLANO-MOBILE §0.15).
+  editingBelow?: MessageId
+  composer?: ComposerModeProps
 }) {
   const rowsById = useRef(new Map<string, HTMLElement>())
   useEffect(() => {
@@ -70,7 +90,12 @@ export function ThreadPanel({
   }, [highlight])
 
   return (
-    <aside className="thread-panel" aria-label={t('thread.title')}>
+    <aside
+      className="thread-panel"
+      aria-label={t('thread.title')}
+      {...(covered ? { 'data-stack-covered': '', inert: true } : {})}
+    >
+      {header ?? (
       <header className="thread-panel__header">
         <div className="thread-panel__heading">
           <h3 className="thread-panel__title">{t('thread.title')}</h3>
@@ -85,6 +110,8 @@ export function ThreadPanel({
           {GLYPH.close}
         </button>
       </header>
+      )}
+      {strip}
 
       <div className="thread-panel__root">
         <div className="message__group">
@@ -102,6 +129,9 @@ export function ThreadPanel({
             onDelete={messages.length === 0 ? onDelete : undefined}
             onOpenProfile={onOpenProfile}
             onAnswer={onAnswer}
+            onOpenActions={onOpenActions}
+            held={held === root.id}
+            editingBelow={editingBelow === root.id}
           />
         </div>
       </div>
@@ -148,6 +178,9 @@ export function ThreadPanel({
                     onOpenProfile={onOpenProfile}
                     highlighted={highlight?.id === m.id}
                     onHighlightEnd={onHighlightEnd}
+                    onOpenActions={onOpenActions}
+                    held={held === m.id}
+                    editingBelow={editingBelow === m.id}
                     rowRef={(el) => {
                       if (el) rowsById.current.set(m.id, el)
                       else rowsById.current.delete(m.id)
@@ -167,6 +200,7 @@ export function ThreadPanel({
         commands={commands}
         disabled={disabled}
         variant="compact"
+        {...composer}
       />
     </aside>
   )

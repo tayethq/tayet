@@ -281,3 +281,103 @@ staticPasswords:
     username: "yuri"
     userID: "tayet-yuri-0052"
     hash: "$2y$12$.ctHpJqcLgPwn1GOSrshdexFIxHuwqr5SkW9rbeKIb0YOIL9/cq4."
+  # zak: only for login.narrow.spec.ts (phone project), password zakpass123, hash by the recipe above.
+  - email: "zak@tayet.local"
+    username: "zak"
+    userID: "tayet-zak-0053"
+    hash: "$2y$12$t1KYG005/fQLlf6p6ZpCbuo8Q1VerNegT0bD5i3Dl/ch3Dla9EpXC"
+  # lev and mae: the pair of workspace.narrow.spec.ts only (phone project), passwords levpass123 and
+  # maepass123, hashes by the recipe above (`htpasswd -nbBC 12`).
+  - email: "lev@tayet.local"
+    username: "lev"
+    userID: "tayet-lev-0054"
+    hash: "$2y$12$syAqRDVjYgCijNA5/I0PG.JVCUWlgvShfHYnIJEHVBxrkshr5ZBOu"
+  - email: "mae@tayet.local"
+    username: "mae"
+    userID: "tayet-mae-0055"
+    hash: "$2y$12$UTq.qxnqhloPnCaYcYdbDOgkluiAUy0/8Zply6MxSbUngrmLnSmsG"
+  # lin: only for language.spec.ts (the English spec), password linpass123, hash by the recipe above.
+  - email: "lin@tayet.local"
+    username: "lin"
+    userID: "tayet-lin-0056"
+    hash: "$2y$12$PuaZdJYYyVZN8tO66DzCqOyti4Z7nxAKnW85GS4aj/ODJpI3pOBdu"
+  # nel and oli: the pair of timeline.narrow.spec.ts only (phone project), passwords nelpass123 and
+  # olipass123, hashes by the recipe above (`htpasswd -nbBC 12`).
+  - email: "nel@tayet.local"
+    username: "nel"
+    userID: "tayet-nel-0057"
+    hash: "$2y$12$ErpZoGb1hpy3xY3I0rGvauKKFDktsjkJ6H0K4gexrhUXLXYQxSM06"
+  - email: "oli@tayet.local"
+    username: "oli"
+    userID: "tayet-oli-0058"
+    hash: "$2y$12$zH4B/DkhJsaASXbNAHAh8OtFq9fAihBB.M8c9YO6T/sr52lKkcusu"
+  # pat and ros: the pair of copy-text.spec.ts only (desktop project), passwords patpass123 and
+  # rospass123, hashes by the recipe above.
+  - email: "pat@tayet.local"
+    username: "pat"
+    userID: "tayet-pat-0059"
+    hash: "$2y$12$MepF0Ys2RHEvTv7/BTgnGejNqJoAAkCyMCgaZ2uU2rMjC/gIp9LJ2"
+  - email: "ros@tayet.local"
+    username: "ros"
+    userID: "tayet-ros-0060"
+    hash: "$2y$12$NqFS0aEEzaCtYteUPxTVhOxsAJfbATFWxL5tMDlb4CLpPXF1/QDlO"
+  # ted and ula: the pair of actions.narrow.spec.ts only (phone project), passwords tedpass123 and
+  # ulapass123, hashes by the recipe above.
+  - email: "ted@tayet.local"
+    username: "ted"
+    userID: "tayet-ted-0061"
+    hash: "$2y$12$hftdGjHU7LVVnGUY/dQ6vOL3E2rszajjo9jB13UV5R1wQTYYq233y"
+  - email: "ula@tayet.local"
+    username: "ula"
+    userID: "tayet-ula-0062"
+    hash: "$2y$12$RsLgd/NvQmurpR2dZZCoquPym7DcKH5/9KQbivcj63307QHMhzNNG"
+  # gil and hugo: the pair of viewer.spec.ts only (desktop project), passwords gilpass123 and hugopass123,
+  # hashes by the recipe above.
+  - email: "gil@tayet.local"
+    username: "gil"
+    userID: "tayet-gil-0063"
+    hash: "$2y$12$wdDheckz8.Mq8HxJ70bvleJFfWnzyTPuIqehCRVr4rLaT5fAAxAXy"
+  - email: "hugo@tayet.local"
+    username: "hugo"
+    userID: "tayet-hugo-0064"
+    hash: "$2y$12$aS/P4vnmjGy1tuUq.Bmdlu3natalPN2CcgY/R9nlVKG8ki7KnAwyW"
+  # dan and eva: the pair of media.narrow.spec.ts only (phone project), passwords danpass123 and evapass123,
+  # hashes by the recipe above.
+  - email: "dan@tayet.local"
+    username: "dan"
+    userID: "tayet-dan-0065"
+    hash: "$2y$12$xcpin3vgB/p1fYjxnuhOO.GYSg6fS5JyNa5MYZ8Vukd2pPIqC8noW"
+  - email: "eva@tayet.local"
+    username: "eva"
+    userID: "tayet-eva-0066"
+    hash: "$2y$12$mJS0FmpeiCTURcIfjrZo8Ohyyim/n7LVutppBuh9o6tFd2gScAhBu"
+  # ivy and joe: the pair of composer.narrow.spec.ts only (phone project), passwords ivypass123 and joepass123,
+  # hashes by the recipe above.
+  - email: "ivy@tayet.local"
+    username: "ivy"
+    userID: "tayet-ivy-0067"
+    hash: "$2y$12$JxQNTS8wjsbOULMmDQga1.4STk.099jNpGEhTHCa2f9X9NQykbr/y"
+  - email: "joe@tayet.local"
+    username: "joe"
+    userID: "tayet-joe-0068"
+    hash: "$2y$12$gFEcHmnAdJ8JogF2a9lPcugZ/15BeoViIM4I9hxPk0M5Wbn8hLRKq"
+  # kit and lou: the pair of search.narrow.spec.ts only (phone project), passwords kitpass123 and loupass123,
+  # hashes by the recipe above.
+  - email: "kit@tayet.local"
+    username: "kit"
+    userID: "tayet-kit-0069"
+    hash: "$2y$12$2Az2D9C.DJxXVZGTk6IsnOklm/vmb2krObDBnS/GNmSVQsLRZda8S"
+  - email: "lou@tayet.local"
+    username: "lou"
+    userID: "tayet-lou-0070"
+    hash: "$2y$12$4KwREdYCzMBHoDxfc/FXHeAG7wUlWty0JTIlpi7vIWtzjl10BAsSC"
+  # max and ned: the pair of compose.narrow.spec.ts only (phone project), passwords maxpass123 and nedpass123,
+  # hashes by the recipe above.
+  - email: "max@tayet.local"
+    username: "max"
+    userID: "tayet-max-0071"
+    hash: "$2y$12$5egqWrnGeVWInO0GbF3I.e8SBkzqTXV1p7ZRyL1X9AIrZ2mfOt7AG"
+  - email: "ned@tayet.local"
+    username: "ned"
+    userID: "tayet-ned-0072"
+    hash: "$2y$12$nZ1NiFvk7NHAXGjdOYUKK.DzaMgwSoZfMyNXs4vtIjMy.GnR8RJF2"

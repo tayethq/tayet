@@ -9,6 +9,7 @@ import { MediaProvider } from '../../src/ui/MediaContext'
 import type { Channel, ChannelId, ConnectionState } from '../../src/acl'
 import { copy, fill } from '../support/copy'
 import { noExport } from '../support/data-export-fake'
+import { idleLanguage } from '../support/language-fake'
 
 // Manifest workspace.md §13 on screen: the brand block, the connection line only off `connected`, the
 // unread dot and mention pill, the row's cut and the self footer as one button.
@@ -196,6 +197,7 @@ describe('self footer (workspace.md §13 item 6)', () => {
       onSaveAvatar: async () => {},
       onClearAvatar: async () => {},
       onExportData: noExport,
+      language: idleLanguage,
     })
     const footer = getByRole('button', { name: copy.shell.account })
     expect(footer.classList.contains('sidebar__footer')).toBe(true)

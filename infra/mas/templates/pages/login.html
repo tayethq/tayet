@@ -5,8 +5,10 @@ Copyright 2021-2024 The Matrix.org Foundation C.I.C.
 SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 Please see LICENSE files in the repository root for full details.
 
-Modified by Tayet (first on 2026-11-03, last on 2026-11-15): the choice of sign-in provider. The copy is
-literal. The password form stays behind `features.password_login` (on only in the dev stack); the
+Modified by Tayet (first on 2026-11-03, last on 2026-11-20): the choice of sign-in provider. The copy is
+literal, in pt-BR or English by `tayet_lang` (base.html). In English, the house provider's default
+name, "a conta da empresa" from the deploy template, shows as "your company account"; any other name
+shows as written. The password form stays behind `features.password_login` (on only in the dev stack); the
 names `csrf`/`username`/`password` are the contract of the headless sign-in the tests use
 (client/test/support/mint-oidc.ts and escrow/test/support/mint-oidc.ts).
 The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and infra/mas/NOTICE.md.
@@ -115,17 +117,19 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
 {% endblock tayet_style %}
 
 {% block tayet_content %}
+  {% set pt = tayet_lang == "pt-BR" %}
   <div class="mas-page">
     <main class="mas-card">
       <div class="mas-wordmark"><span class="mas-wordmark__dot" aria-hidden="true"></span>tayet</div>
 
       <div class="mas-heading">
-        <h1>Entre no Tayet</h1>
+        <h1>{% if pt %}Entre no Tayet{% else %}Sign in to Tayet{% endif %}</h1>
         {% if next and next.kind == "link_upstream" %}
           {% set name = provider.human_name or (provider.issuer | simplify_url(keep_path=True)) or provider.id %}
-          <p>Entre para vincular {{ name }}.</p>
+          {% set name = "your company account" if (not pt and provider.human_name == "a conta da empresa") else name %}
+          <p>{% if pt %}Entre para vincular {{ name }}.{% else %}Sign in to link {{ name }}.{% endif %}</p>
         {% else %}
-          <p>Escolha como você entra.</p>
+          <p>{% if pt %}Escolha como você entra.{% else %}Choose how you sign in.{% endif %}</p>
         {% endif %}
       </div>
 
@@ -140,16 +144,16 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
 
         {% if features.password_login %}
           <div class="mas-field mas-stack">
-            {% call(f) field.field(label="Usuário", name="username", form_state=form) %}
+            {% call(f) field.field(label=("Usuário" if pt else "Username"), name="username", form_state=form) %}
               <input {{ field.attributes(f) }} type="text" autocomplete="username" autocorrect="off" autocapitalize="off" required />
             {% endcall %}
-            {% call(f) field.field(label="Senha", name="password", form_state=form) %}
+            {% call(f) field.field(label=("Senha" if pt else "Password"), name="password", form_state=form) %}
               <input {{ field.attributes(f) }} type="password" autocomplete="password" required />
             {% endcall %}
           </div>
-          <button type="submit" class="mas-button">Continuar</button>
+          <button type="submit" class="mas-button">{% if pt %}Continuar{% else %}Continue{% endif %}</button>
           {% if features.account_recovery %}
-            <a class="mas-link" href="{{ '/recover' | prefix_url }}">Esqueci a senha</a>
+            <a class="mas-link" href="{{ '/recover' | prefix_url }}">{% if pt %}Esqueci a senha{% else %}Forgot password{% endif %}</a>
           {% endif %}
           {% if providers %}
             <hr class="mas-separator" />
@@ -160,25 +164,26 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
           {% set params = next["params"] | default({}) | to_params(prefix="?") %}
           {% for provider in providers %}
             {% set name = provider.human_name or (provider.issuer | simplify_url(keep_path=True)) or provider.id %}
+            {% set name = "your company account" if (not pt and provider.human_name == "a conta da empresa") else name %}
             <a class="mas-button" href="{{ ('/upstream/authorize/' ~ provider.id ~ params) | prefix_url }}">
               {{- logo(provider.brand_name) -}}
-              Continuar com {{ name }}
+              {% if pt %}Continuar com {{ name }}{% else %}Continue with {{ name }}{% endif %}
             </a>
           {% endfor %}
         {% endif %}
 
         {% if not providers and not features.password_login %}
-          <p class="mas-meta">Nenhuma forma de entrar está disponível.</p>
+          <p class="mas-meta">{% if pt %}Nenhuma forma de entrar está disponível.{% else %}No way to sign in is available.{% endif %}</p>
         {% endif %}
       </form>
 
       {% if (not next or next.kind != "link_upstream") and features.password_registration %}
         {% set params = next["params"] | default({}) | to_params(prefix="?") %}
-        <a class="mas-link" href="{{ ('/register' ~ params) | prefix_url }}">Criar conta</a>
+        <a class="mas-link" href="{{ ('/register' ~ params) | prefix_url }}">{% if pt %}Criar conta{% else %}Create account{% endif %}</a>
       {% endif %}
 
       {% if providers %}
-        <p class="mas-meta">Você vai até o provedor e volta para o Tayet automaticamente.</p>
+        <p class="mas-meta">{% if pt %}Você vai até o provedor e volta para o Tayet automaticamente.{% else %}You'll go to the provider and come back to Tayet automatically.{% endif %}</p>
       {% endif %}
     </main>
   </div>

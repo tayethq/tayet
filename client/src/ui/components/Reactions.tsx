@@ -5,8 +5,8 @@ import { t } from '../i18n'
 
 // Minimal reactions UI (manifest workspace.md §11 items 2–3): existing aggregates as toggle chips
 // (highlighted when mine) plus the quick picker. Emoji keys are exact (no normalization) — matching
-// the ACL.
-const QUICK = ['👍', '🎉', '❤️']
+// the ACL. The same three are the action sheet's reactions on the narrow window (§23.8 item 2).
+export const QUICK = ['👍', '🎉', '❤️']
 
 // What a popover can be clipped by: the scrollers that hold a message row.
 const CLIP = '.timeline, .thread-panel__root, .thread-panel__replies'

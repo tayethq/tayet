@@ -83,6 +83,9 @@ export const tokens = {
       "row-height": "var(--density-cotidiano-row-height)",
       "row-padding": "var(--density-cotidiano-row-padding)"
     },
+    "estreito": {
+      "row-height": "var(--density-estreito-row-height)"
+    },
     "gestao": {
       "avatar": "var(--density-gestao-avatar)",
       "row-height": "var(--density-gestao-row-height)",
@@ -106,6 +109,7 @@ export const tokens = {
     "size": {
       "body": "var(--font-size-body)",
       "display": "var(--font-size-display)",
+      "field": "var(--font-size-field)",
       "meta": "var(--font-size-meta)",
       "mono": "var(--font-size-mono)",
       "title": "var(--font-size-title)",

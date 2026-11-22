@@ -94,7 +94,7 @@ SYNAPSE_IMAGE="ghcr.io/element-hq/synapse@sha256:e98ab72138d90fa8b8876c6421fe78a
 # Imagem do agente (node:22-bookworm-slim) — MESMO digest dos serviços escrow e agent do
 # compose.yaml. Usada no `build` (npm ci das deps do agente DENTRO da imagem de runtime: deps
 # Linux-nativas, sem depender do Node do host) e nos shells efêmeros sobre o volume do agente.
-AGENT_IMAGE="node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752"
+AGENT_IMAGE="node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee"
 # AGENT_VOLUME ("<projeto>_agentdata") deriva do nome do projeto, resolvido com o domínio (abaixo).
 
 # Variante A (§0.3): a config principal + a seção de secrets, mescladas via `--config`
@@ -639,7 +639,6 @@ cmd_build() {
     npx -y npm@12.2.1 ci && \
     VITE_SERVER_URL="https://matrix.$TAYET_DOMAIN" \
     VITE_OIDC_CLIENT_ID=000000000000000000000TAYET \
-    VITE_SSO_LABEL="sua conta" \
     VITE_ESCROW_URL=/escrow \
     npm run build )
   install_agent_deps

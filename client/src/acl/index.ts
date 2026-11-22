@@ -76,6 +76,7 @@ export type {
   ResolvedMedia,
   DataExportOptions, // ADR-096: input of exportMyData; consumed by the export dialog (PLANO-EXPORT-DADOS §0.3.6).
   DataExportPart, // ADR-096: one part of exportMyData's output, synthetic identifiers only.
+  AccountPreferences, // The account's interface preferences (language), the shape of getAccountPreferences.
   AclMode,
   ConceptKind,
   AclTelemetry,

@@ -73,6 +73,10 @@
       "body": { "$value": "15px" },
       "ui": { "$value": "14px" },
       "title": { "$value": "16px" },
+      "field": {
+        "$value": "16px",
+        "$description": "Field text with a coarse pointer or a narrow window: below 16px a phone browser zooms in on focus."
+      },
       "display": { "$value": "22px" },
       "meta": { "$value": "12px" },
       "mono": { "$value": "13px" }

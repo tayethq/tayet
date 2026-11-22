@@ -1,23 +1,71 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Acl, MessageId } from '@tayet/client'
 import { useChat } from './useChat'
 import { useTheme } from './useTheme'
+import { useLanguage } from './useLanguage'
 import { useNotificationsPrompt } from './useNotificationsPrompt'
 import { useSearch } from './useSearch'
 import { useAgentForm } from './useAgentForm'
 import { Workspace } from './components/Workspace'
 import { MediaProvider } from './MediaContext'
+import { useNarrowWindow } from './narrow'
+import { StackProvider, useStackPopTo, useStackScreens } from './stack'
 
 // App = state (useChat) + presentation (Workspace). The ACL instance is injected; the UI never
 // constructs protocol concepts and imports only the @tayet/client barrel (ADR-007).
 export function App({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
-  const chat = useChat(acl)
-  const { theme, setTheme } = useTheme()
-  const notifications = useNotificationsPrompt()
-  const search = useSearch(acl, chat.selectedId)
-  const agentForm = useAgentForm(acl)
+  return (
+    <StackProvider>
+      <Shell acl={acl} onSignOut={onSignOut} />
+    </StackProvider>
+  )
+}
+
+function Shell({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
+  // Below the width breakpoint the shell is a stack, kept in step with the browser history.
+  const narrow = useNarrowWindow()
+  const chat = useChat(acl, { narrow })
+  const search = useSearch(acl, chat.selectedId, narrow)
   // The hit last opened stays selected while the results are on screen (manifest workspace.md §8 item 9).
   const [picked, setPicked] = useState<MessageId | undefined>(undefined)
+  const clearSearch = (): void => {
+    setPicked(undefined)
+    search.clear()
+  }
+  // The narrow window's full-screen search (PLANO-MOBILE M6 B1 to B3): a screen between the list and the
+  // conversation. Going back from it clears the query; narrowing with a query open opens it with the query;
+  // widening keeps the query in the column.
+  const [searchOpen, setSearchOpen] = useState(false)
+  const wasNarrow = useRef(narrow)
+  useEffect(() => {
+    if (narrow && !wasNarrow.current) setSearchOpen(search.active)
+    if (!narrow) setSearchOpen(false)
+    wasNarrow.current = narrow
+  }, [narrow, search.active])
+  useStackScreens({
+    narrow,
+    search: searchOpen,
+    chat: chat.selectedId !== undefined,
+    thread: chat.threadRoot !== undefined && chat.threadRoot.channelId === chat.selectedId,
+    onPopSearch: () => {
+      setSearchOpen(false)
+      clearSearch()
+      chat.dismissJump()
+    },
+    onPopChat: chat.deselect,
+    onPopThread: chat.closeThread,
+  })
+  // B2: a jump that fails on the narrow window comes back to the search by itself, through the history;
+  // the failure line shows on its hit.
+  const popTo = useStackPopTo()
+  const jumpFailed = chat.jump?.failed === true
+  useEffect(() => {
+    if (narrow && searchOpen && jumpFailed) popTo('search')
+  }, [narrow, searchOpen, jumpFailed, popTo])
+  const { theme, setTheme } = useTheme()
+  const language = useLanguage(acl)
+  const notifications = useNotificationsPrompt()
+  const agentForm = useAgentForm(acl)
   return (
     <MediaProvider resolve={(ref, variant) => acl.resolveMedia(ref, variant)}>
       <Workspace
@@ -91,6 +139,7 @@ export function App({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
         onSignOut={onSignOut}
         theme={theme}
         onThemeChange={setTheme}
+        language={language}
         notificationsPrompt={
           notifications.prompt ? { onEnable: notifications.enable, onDismiss: notifications.dismiss } : undefined
         }
@@ -103,10 +152,7 @@ export function App({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
           onQuery: search.setQuery,
           scoped: search.scoped,
           onToggleScope: search.toggleScope,
-          onClear: () => {
-            setPicked(undefined)
-            search.clear()
-          },
+          onClear: clearSearch,
           active: search.active,
           hits: search.hits,
           searched: search.searched,
@@ -118,11 +164,19 @@ export function App({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
             setPicked(hit.message.id)
             chat.jumpTo(hit)
           },
+          open: searchOpen,
+          // ⌘K from a conversation trades it for the search (the order is list, search, conversation).
+          onOpen: () => {
+            if (chat.selectedId !== undefined) chat.deselect()
+            setSearchOpen(true)
+          },
         }}
         jump={chat.jump}
         agentForm={agentForm}
         highlight={chat.highlight}
         onHighlightEnd={chat.clearHighlight}
+        narrow={narrow}
+        onBackToList={chat.deselect}
       />
     </MediaProvider>
   )

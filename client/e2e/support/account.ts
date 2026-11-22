@@ -2,7 +2,7 @@ import { expect, type Locator, type Page } from '@playwright/test'
 import { MAS_URL } from '../../test/support/stack-env'
 import type { E2eUser } from '../fixtures/users'
 import { ACCOUNT, APP, PROFILE, PROFILE_EDITOR, SESSION } from './labels'
-import { leaveAppForLogin, loginThroughDex, onApp } from './login'
+import { leaveAppForLogin, loginThroughDex, MAS_LABELS, onApp, type MasLanguage } from './login'
 import { title } from './workspace'
 
 // The account's own session gestures, as the user does them.
@@ -17,10 +17,11 @@ export async function signOutHere(page: Page): Promise<void> {
 
 // Back in after a sign-out. The MAS browser session survives the sign-out (D1 revokes the OAuth
 // session, not the browser one), so the MAS may send the browser straight back, show the consent, or
-// ask for the Dex — all three are handled.
-export async function signInAgain(page: Page, user: E2eUser): Promise<void> {
+// ask for the Dex — all three are handled. `masLanguage`: the language of the MAS pages (support/login.ts).
+export async function signInAgain(page: Page, user: E2eUser, masLanguage: MasLanguage = 'pt-BR'): Promise<void> {
+  const mas = MAS_LABELS[masLanguage]
   await leaveAppForLogin(page, page.getByRole('button', { name: SESSION.signInAgain }))
-  const dex = page.getByRole('link', { name: 'Continuar com a conta da empresa (local)' })
+  const dex = page.getByRole('link', { name: mas.continueWith('a conta da empresa (local)') })
   for (;;) {
     await page.waitForURL(
       (u) => onApp(u.href) || /\/login$/.test(u.pathname) || /\/consent\//.test(u.pathname) || /\/upstream\/link\//.test(u.pathname),
@@ -28,11 +29,11 @@ export async function signInAgain(page: Page, user: E2eUser): Promise<void> {
     const url = new URL(page.url())
     if (onApp(url.href)) break
     if (/\/login$/.test(url.pathname) && (await dex.isVisible())) {
-      await loginThroughDex(page, user)
+      await loginThroughDex(page, user, { masLanguage })
       break
     }
-    if (/\/consent\//.test(url.pathname)) await page.getByRole('button', { name: 'Continuar', exact: true }).click()
-    else if (/\/upstream\/link\//.test(url.pathname)) await page.getByRole('button', { name: 'Create Account' }).click()
+    if (/\/consent\//.test(url.pathname)) await page.getByRole('button', { name: mas.continue, exact: true }).click()
+    else if (/\/upstream\/link\//.test(url.pathname)) await page.getByRole('button', { name: mas.createAccount }).click()
   }
   await expect(title(page)).toBeVisible()
 }
@@ -42,8 +43,8 @@ export async function signInAgain(page: Page, user: E2eUser): Promise<void> {
 // leave {app, MAS} — the Dex is the credential step — and the password field must never show. The
 // MAS consent page ("Continuar", the Tayet template) is acceptable; the MAS login page is not (it is the credential ask).
 // Fails loudly instead of logging in: a re-login that asks for the password is the finding, never a
-// step to get past.
-export async function signInAgainSilently(page: Page): Promise<string[]> {
+// step to get past. `masLanguage`: the language of the MAS pages (support/login.ts).
+export async function signInAgainSilently(page: Page, masLanguage: MasLanguage = 'pt-BR'): Promise<string[]> {
   const visited: string[] = []
   const record = (frame: { url(): string }) => {
     if (frame === page.mainFrame()) visited.push(frame.url())
@@ -59,7 +60,7 @@ export async function signInAgainSilently(page: Page): Promise<string[]> {
       expect(url.origin, `re-login left the app and the MAS: ${url.href}`).toBe(MAS_URL)
       expect(url.pathname, `re-login asked for credentials: ${url.href}`).not.toMatch(/\/login$/)
       expect(await password.count(), `password field on ${url.href}`).toBe(0)
-      await page.getByRole('button', { name: 'Continuar', exact: true }).click()
+      await page.getByRole('button', { name: MAS_LABELS[masLanguage].continue, exact: true }).click()
     }
     await expect(title(page)).toBeVisible()
   } finally {

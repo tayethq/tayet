@@ -332,10 +332,21 @@ describe('the panel in the shell (Workspace)', () => {
     second.unmount()
     localStorage.clear()
 
-    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(pointer: coarse)', addEventListener() {}, removeEventListener() {} }))
-    const narrow = render(shell({ panels: [P_A, P_B] }))
-    await waitFor(() => expect(narrow.container.querySelector('.pinned-panel')).not.toBeNull())
-    expect(expanded(narrow.container)).toEqual([])
+    // A media list is a disjunction: it matches when any of its comma-separated queries does.
+    const device = (truths: string[]) => (q: string) => ({
+      matches: q.split(',').some((part) => truths.includes(part.trim())),
+      addEventListener() {},
+      removeEventListener() {},
+    })
+    // Coarse pointer in a wide window, then a fine pointer in a narrow window: both start collapsed.
+    for (const truths of [['(pointer: coarse)'], ['(width < 728px)']]) {
+      vi.stubGlobal('matchMedia', device(truths))
+      const narrow = render(shell({ panels: [P_A, P_B] }))
+      await waitFor(() => expect(narrow.container.querySelector('.pinned-panel')).not.toBeNull())
+      expect(expanded(narrow.container), truths[0]).toEqual([])
+      narrow.unmount()
+      localStorage.clear()
+    }
   })
 })
 

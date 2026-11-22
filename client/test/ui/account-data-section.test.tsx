@@ -5,6 +5,7 @@ import type { ComponentProps } from 'react'
 import { AccountSettings } from '../../src/ui/components/AccountSettings'
 import { ptBR } from '../../src/ui/i18n/pt-BR'
 import { noExport } from '../support/data-export-fake'
+import { idleLanguage } from '../support/language-fake'
 
 // "Seus dados" in "Sua conta" (manifesto account-access.md §12.1 item 1; ADR-096 dec. 9): every person
 // sees the section, member or guest; for the admin it sits before "Organização". The entry opens the
@@ -28,7 +29,7 @@ describe('"Seus dados" in "Sua conta" (account-access.md §12.1 item 1)', () => 
         onReset={() => {}}
         onSignOut={() => {}}
         theme="light"
-        onThemeChange={() => {}}
+        onThemeChange={() => {}} language={idleLanguage}
         onClose={() => {}}
         {...props}
       />,

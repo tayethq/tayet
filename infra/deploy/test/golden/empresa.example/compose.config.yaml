@@ -12,7 +12,7 @@ services:
       AGENT_STORAGE_KEY: fake-agent-storage-00000000000000
       AGENT_STORE_DIR: /data
       AGENT_TOKEN_FILE: /secrets/token
-    image: node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752
+    image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
     networks:
       default: null
     stop_grace_period: 15s
@@ -127,7 +127,7 @@ services:
       ESCROW_PORT: "8090"
       ESCROW_SERVER_NAME: empresa.example
       ESCROW_STORE_DIR: /data
-    image: node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752
+    image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
     networks:
       default: null
     stop_grace_period: 10s

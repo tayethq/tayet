@@ -35,11 +35,14 @@ const NON_UI_ATTR = /^(className|class|key|id|role|type|name|href|src|rel|target
 const PT = /[ãõçáéíóúâêôà]|\b(de|do|da|dos|das|não|nao|para|com|uma|um|em|no|na|nos|nas|sua|seu|suas|seus|você|voce|conversa|conversas|mensagem|mensagens|canal|canais|buscar|busque|nada|aqui|este|esta|isto|ainda|sem|abrir|fechar|salvar|cancelar|entrar|sair|conta|aparelho|acesso|acessos|pessoas|pessoa|novo|nova|nome|tudo|pronto|deixando|privado|público|arquivar|arquivados|resultado|resultados|limpar|enviar|responder|resposta|respostas|ontem|hoje|agora|carregando|tentar|novamente|perfil|editar|tema|claro|escuro|aparência|sobre|recado|cargo|membros|membro|adicionar|remover|convidar|configurações|carregado|dispositivo|mostrando|preparando|abrindo|foi|possível|encontrado|já|também|ou|ao|pelo|pela|seja|são|está|estão|vez|vezes|dia|dias|minutos|horas|semana)\b/i
 const EN = /\b(the|to|of|and|your|you|message|messages|channel|channels|new|yet|reply|replies|last|load|older|connected|connecting|manage|members|member|add|remove|invite|save|cancel|close|open|send|edit|delete|archive|archived|unarchive|search|sign|out|settings|account|profile|loading|failed|retry|try|again|please|this|that|with|from|for|is|are|was|be|not|can't|cannot|don't|could|will|now|contacts|available|replies|today|yesterday|ago|days|day|minutes|hours|people|person|name|theme|light|dark|system|appearance|about|private|public|threads|start|conversation|conversations|direct|create|copy|copied|file|image|upload|download|attach|attachment|error|unknown|unread|mention|mentions|more|less|show|hide|back|next|done|ok|yes|nothing|found|recent|online|offline|away|busy|status|leave|join|joined|left|everyone|only|my|all|other|others|someone|typing)\b/i
 
-function lang(s: string): Lang {
+// `notPt`: words that do not count as Portuguese for this call. English copy passes "no", "do" and
+// "com", which are English words too ("No messages yet.").
+export function lang(s: string, { notPt = [] }: { notPt?: readonly string[] } = {}): Lang {
   // A template's quoted literals count as its text — except a t() key, which is not copy.
   const t = s.replace(/\$\{[^}]*\}/g, (m) => ' ' + (m.replace(/\bt\('[^']*'/g, 't(').match(/'[^']*'/g) || []).join(' ') + ' ')
   if (!/[A-Za-zÀ-ÖØ-öø-ÿ]{2,}/.test(t)) return 'neutra'
-  const pt = PT.test(t)
+  const forPt = notPt.length ? t.replace(new RegExp(`\\b(${notPt.join('|')})\\b`, 'gi'), ' ') : t
+  const pt = PT.test(forPt)
   const en = EN.test(t)
   if (pt && en) return 'misto'
   if (pt) return 'pt'

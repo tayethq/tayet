@@ -23,7 +23,9 @@ import { ProfileEditor } from './ProfileEditor'
 import type { ResetStatus } from './ResetAccessBanner'
 import { relativeTimeOf } from './Timeline'
 import { type Theme } from '../theme'
-import { t, GLYPH } from '../i18n'
+import type { LanguageChoice, LanguageState } from '../useLanguage'
+import { Chevron } from '../icons'
+import { t, GLYPH, getLocale } from '../i18n'
 
 // Superfície de conta (ADR-019 §3.4) + lista PROATIVA de acessos conhecidos (ADR-018) + ação de
 // logout deste navegador (ADR-031 D7 / ADR-034), agora montada como Dialog aberto pela engrenagem do
@@ -76,6 +78,55 @@ const themeOptions = (): ReadonlyArray<{ value: Theme; label: string }> => [
   { value: 'dark', label: t('account.themeDark') },
 ]
 
+const languageOptions = (): ReadonlyArray<{ value: LanguageChoice; label: string }> => [
+  { value: 'auto', label: t('account.languageAuto') },
+  { value: 'pt-BR', label: t('account.languagePt') },
+  { value: 'en', label: t('account.languageEn') },
+]
+
+// Under the language row: the failure, else where the choice holds. On Automatic it names the
+// language the page is in, which is the one Automatic gave this device.
+function languageSubtitle(language: LanguageState): string {
+  if (language.status === 'failed') return t('account.languageFailed')
+  if (language.choice !== 'auto') return t('account.languageEverywhere')
+  const applied = getLocale() === 'en' ? t('account.languageEn') : t('account.languagePt')
+  return t('account.languageDevice', { language: applied })
+}
+
+// The language row sits in the appearance block, with no divider between the two. The control is the
+// system's own select, laid transparent over the closed field (value and chevron), so the list that
+// opens is the system's.
+function LanguageRow({ language }: { language: LanguageState }) {
+  const saving = language.status === 'saving'
+  return (
+    <section className="account-settings__language" data-status={language.status}>
+      <div className="account-settings__language-text">
+        <h3 className="account-settings__language-title">{t('account.language')}</h3>
+        <p className="account-settings__language-subtitle">{languageSubtitle(language)}</p>
+      </div>
+      <span className="account-settings__language-control">
+        <span className="account-settings__language-value" aria-hidden="true">
+          {languageOptions().find((o) => o.value === language.shown)?.label}
+        </span>
+        <Chevron />
+        <select
+          className="account-settings__language-select"
+          aria-label={t('account.language')}
+          value={language.shown}
+          disabled={saving}
+          onChange={(e) => language.onChange(e.target.value as LanguageChoice)}
+        >
+          {languageOptions().map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </span>
+    </section>
+  )
+}
+
 export function AccountSettings({
   open,
   accesses,
@@ -101,6 +152,7 @@ export function AccountSettings({
   onSignOut,
   theme,
   onThemeChange,
+  language,
   onClose,
 }: {
   open: boolean
@@ -138,6 +190,7 @@ export function AccountSettings({
   onSignOut: () => void
   theme: Theme
   onThemeChange: (theme: Theme) => void
+  language: LanguageState
   onClose: () => void
 }) {
   const [view, setView] = useState<
@@ -191,6 +244,7 @@ export function AccountSettings({
   const handleClose = () => {
     setView('main')
     setPeopleFilter('')
+    language.onDismissFailure()
     onClose()
   }
 
@@ -509,6 +563,7 @@ export function AccountSettings({
             onChange={onThemeChange}
           />
         </section>
+        <LanguageRow language={language} />
         <hr className="account-settings__divider" />
         <section className="account-settings__access-section">
           <h3 className="account-settings__section-title">{t('account.accessSection')}</h3>

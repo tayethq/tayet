@@ -20,7 +20,7 @@ afterEach(cleanup)
 describe('notifications prompt in the channel list (ADR-073 dec. 6)', () => {
   it('absent without the prop', () => {
     mount()
-    expect(screen.queryByText('Receba avisos de mensagens diretas e menções')).toBeNull()
+    expect(screen.queryByText('Receba avisos de mensagens diretas, menções e pedidos de aprovação')).toBeNull()
   })
 
   it('renders as a status before the first section and hands both clicks back', () => {
@@ -29,7 +29,7 @@ describe('notifications prompt in the channel list (ADR-073 dec. 6)', () => {
     mount({ onEnable, onDismiss })
     const nav = screen.getByRole('navigation', { name: copy.list.nav })
     const notice = within(nav).getByRole('status')
-    expect(notice.textContent).toContain('Receba avisos de mensagens diretas e menções')
+    expect(notice.textContent).toContain('Receba avisos de mensagens diretas, menções e pedidos de aprovação')
     expect(nav.firstElementChild).toBe(notice)
     within(notice).getByRole('button', { name: 'Ativar notificações' }).click()
     within(notice).getByRole('button', { name: 'Dispensar' }).click()
@@ -45,7 +45,7 @@ describe('notifications prompt in the channel list (ADR-073 dec. 6)', () => {
     // Text and button share the column; the dismiss is its sibling, outside it.
     const column = enable.parentElement as HTMLElement
     expect(column.parentElement).toBe(notice)
-    expect(column.textContent).toContain('Receba avisos de mensagens diretas e menções')
+    expect(column.textContent).toContain('Receba avisos de mensagens diretas, menções e pedidos de aprovação')
     expect(column.contains(dismiss)).toBe(false)
     expect(dismiss.parentElement).toBe(notice)
     expect(enable.dataset.variant).toBe('fill')

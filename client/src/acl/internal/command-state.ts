@@ -26,7 +26,7 @@ export interface CommandPorts {
   detach(work: Promise<unknown>): void
 }
 
-const collator = new Intl.Collator('pt-BR')
+const collator = new Intl.Collator(undefined)
 
 export class CommandAggregator extends AnchoredAggregator<AgentCommand> {
   constructor(ports: CommandPorts) {
@@ -54,7 +54,7 @@ function flatCommands(latest: LatestWrite[], ports: CommandPorts, roomId: string
       out.push({ command: { agent: brandUserId(w.sender), ...c }, agentName })
     }
   }
-  // By the command's name (code order: names are lower ASCII), then by the agent's name (pt-BR), then by the
+  // By the command's name (code order: names are lower ASCII), then by the agent's name (runtime locale), then by the
   // agent itself so two agents with the same name keep a stable order.
   out.sort(
     (a, b) =>

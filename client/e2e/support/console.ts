@@ -203,6 +203,11 @@ export class ForbiddenLines {
   }
 }
 
+// The custody signals (client/src/acl/internal/custody.ts): the ACL reports a loss of custody coverage through
+// its telemetry, which the app writes as a console warning (main.tsx). The ledger counts them per signal and
+// prints the count at expectClean; it never fails on them (PLANO-MOBILE, M6 N3: the gate is the owner's).
+const CUSTODY_SIGNAL = /io\.tayet\.custody\.[a-z-]+/
+
 const NETWORK = /^Failed to load resource: the server responded with a status of (\d{3})/
 
 const resource = (url: string): string => {
@@ -222,6 +227,8 @@ export class ConsoleLedger {
   // #247 (§8.62): the pages whose wipe timed out, with their label — expectClean attaches the probe.
   private readonly wipeTimedOut = new Map<string, Page>()
   readonly unexpected: string[] = []
+  // Custody signals seen on the watched pages, by name (N3: counted and printed, never a failure).
+  private readonly custodySignals = new Map<string, number>()
 
   constructor(
     private readonly label: string,
@@ -239,6 +246,8 @@ export class ConsoleLedger {
   watch(page: Page, pageLabel: string): void {
     installWipeProbe(page)
     page.on('console', (msg) => {
+      const custody = msg.type() === 'warning' ? CUSTODY_SIGNAL.exec(msg.text())?.[0] : undefined
+      if (custody) this.custodySignals.set(custody, (this.custodySignals.get(custody) ?? 0) + 1)
       if (isForbiddenLine(msg.text())) {
         this.unexpected.push(`[${pageLabel}] forbidden: ${msg.text()}`)
         if (msg.text().startsWith(WIPE_TIMED_OUT)) this.wipeTimedOut.set(pageLabel, page)
@@ -274,7 +283,19 @@ export class ConsoleLedger {
     return Object.fromEntries([...this.counts, ...this.messageCounts])
   }
 
+  /** The custody signals seen, one line per signal, in the format the CI log is grepped for. */
+  custodyLines(): string[] {
+    const spec = test.info().file.replace(/^.*\/e2e\//, '')
+    return [...this.custodySignals].map(([signal, n]) => `CUSTODY_SIGNAL spec=${spec} label=${this.label} signal=${signal} n=${n}`)
+  }
+
   expectClean(): void {
+    // N3: the custody count goes to the log and to the test before any expectation can stop it; never a failure.
+    const custody = this.custodyLines()
+    if (custody.length > 0) {
+      for (const line of custody) console.log(line)
+      test.info().attachments.push({ name: 'custody-signals', contentType: 'text/plain', body: Buffer.from(custody.join('\n')) })
+    }
     // A wipe timeout carries the probe's account of the rust store (who closed it, when, from where).
     const probes = [...this.wipeTimedOut].map(([pageLabel, page]) => `[${pageLabel}] ${dumpWipeProbe(page)}`)
     for (const body of probes) test.info().attachments.push({ name: 'wipe-probe', contentType: 'text/plain', body: Buffer.from(body) })

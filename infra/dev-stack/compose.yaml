@@ -86,7 +86,7 @@ services:
     # NÃO substitui o spawnEscrow do gate (efêmero por-run, mundo virgem do C2) — coexistem.
     # node:22-bookworm-slim — strip-types nativo exige Node >=22.6. Pinado por digest
     # (índice multi-arch), resolvido com `docker buildx imagetools inspect node:22-bookworm-slim`.
-    image: node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752  # node:22-bookworm-slim
+    image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee  # node:22-bookworm-slim
     depends_on:
       mas:
         condition: service_started
@@ -143,7 +143,7 @@ services:
     # prebuilds N-API multi-plataforma (S2.3) — o install de macOS serve o container
     # Linux. O dev-stack.sh só sobe este serviço DEPOIS de mintar o token do cofre
     # (fase 2 do up) e avisa/skipa quando agent/node_modules não existe (caso CI).
-    image: node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752  # node:22-bookworm-slim
+    image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee  # node:22-bookworm-slim
     depends_on:
       synapse:
         condition: service_healthy

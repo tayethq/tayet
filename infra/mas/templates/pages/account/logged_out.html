@@ -5,8 +5,8 @@ Copyright 2025 New Vector Ltd.
 SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 Please see LICENSE files in the repository root for full details.
 
-Modified by Tayet (first on 2026-11-04, last on 2026-11-15): the signed-out page in pt-BR. The copy is
-literal. One button only, the stock `logout.button`, which ends this browser session of MAS. The
+Modified by Tayet (first on 2026-11-04, last on 2026-11-20): the signed-out page. The copy is literal,
+in pt-BR or English by `tayet_lang` (base.html). One button only, the stock `logout.button`, which ends this browser session of MAS. The
 `.mas-*` rules are a copy of the ones in pages/login.html.
 The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and infra/mas/NOTICE.md.
 -#}
@@ -88,20 +88,26 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
 {% endblock tayet_style %}
 
 {% block tayet_content %}
+  {% set pt = tayet_lang == "pt-BR" %}
   <div class="mas-page">
     <main class="mas-card">
       <div class="mas-wordmark"><span class="mas-wordmark__dot" aria-hidden="true"></span>tayet</div>
 
       <div class="mas-heading">
+        {% if pt %}
         <h1>Você saiu do Tayet</h1>
         <p>Este navegador ainda lembra sua conta. Em um computador compartilhado, saia dele também.</p>
+        {% else %}
+        <h1>You signed out of Tayet</h1>
+        <p>This browser still remembers your account. On a shared computer, sign out of it too.</p>
+        {% endif %}
       </div>
 
       {% call logout.button(csrf_token=csrf_token, post_logout_action=post_logout_action|default({})) %}
-        <button type="submit" class="mas-button">Sair deste navegador</button>
+        <button type="submit" class="mas-button">{% if pt %}Sair deste navegador{% else %}Sign out of this browser{% endif %}</button>
       {% endcall %}
 
-      <p class="mas-meta">Depois, entre de novo para voltar ao Tayet.</p>
+      <p class="mas-meta">{% if pt %}Depois, entre de novo para voltar ao Tayet.{% else %}Then sign in again to get back to Tayet.{% endif %}</p>
     </main>
   </div>
 {% endblock tayet_content %}

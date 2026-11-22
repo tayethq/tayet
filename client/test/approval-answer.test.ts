@@ -72,6 +72,8 @@ function harness(opts: { closedCard?: boolean } = {}) {
     getMyMembership: () => 'join',
     findEventById: (id: string) => (id === CARD_ID ? card : id === TEXT_ID ? text : undefined),
     getThread: () => undefined,
+    getThreads: () => [],
+    getEventForTxnId: () => undefined,
     getLiveTimeline: () => ({ getEvents: () => [text, card, ...echoes], getPaginationToken: () => null }),
     relations: { getChildEventsForEvent: () => undefined },
     hasEncryptionStateEvent: () => false,

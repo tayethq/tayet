@@ -15,6 +15,7 @@ import {
   MatrixEvent,
   MatrixEventEvent,
   Preset,
+  ReceiptType,
   ThreadEvent,
   UserEvent,
   type User as SdkUser,
@@ -72,6 +73,7 @@ import type {
   PersonInvite,
   DataExportOptions,
   DataExportPart,
+  AccountPreferences,
 } from '../types'
 import { runDataExport, EXPORT_PAGE_SIZE } from './data-export'
 import type { OpaqueSession } from '../session'
@@ -137,6 +139,7 @@ import {
 // ADR-074 dec. 4 + addendum 2026-10-28: the fields of search.state, as the gateway keeps the last one.
 type SearchStateFields = Omit<Extract<DomainEvent, { t: 'search.state' }>, 't'>
 import { NOTE_KEY, PROFILE_KEY, PRONOUNS_KEY, readOrgFields, readProfile, writeProfile } from './profile'
+import { PREFERENCES_KEY, readPreferences, writePreferences } from './preferences'
 import { roleOf, roleToPowerLevel } from '@tayet/shared/internal'
 import { mimetypeToMsgtype } from '@tayet/shared/internal'
 import { encryptAttachment, type EncryptedFile } from '@tayet/shared/internal/attachment-crypto'
@@ -559,6 +562,12 @@ export class MatrixGateway {
   // MyMembership re-fires 'invite' during initial sync. Cleared on settle (success AND failure),
   // so a transient join failure can be retried by a later fire.
   private readonly joiningInvites = new Set<string>()
+  // Room ids entered by autoJoinInvite whose own join event still owes its private read receipt. The
+  // server keeps the invite's push action and, once it consolidates an action that came after the join,
+  // the invite stays in the unread count until the first read; a private receipt on the join event closes
+  // that. An entry leaves this set when its receipt goes, so one entry gets at most one receipt. Cleared
+  // on disconnect.
+  private readonly entryReceiptsOwed = new Set<string>()
 
   // ── Encrypted inbound pipeline (PLANO-FASE-2 §4.3) ────────────────────────────────────────
   // True once the FIRST sync has PREPARED (set at the end of connect). Decryption settles
@@ -1489,6 +1498,10 @@ export class MatrixGateway {
         if (id && this.live) this.pendingDecrypt.add(id)
         return
       }
+      // Our own attachment echo, as in onTimeline: the local-ref bubble emitted by the send stays
+      // authoritative for the session and settles via message.status only.
+      const ownTxn = event.getTxnId()
+      if (ownTxn && this.localEchoTxns.has(ownTxn)) return
       // ADR-091: an answer to a card in a thread lives in the thread's timeline; it folds the same.
       if (this.routeFolded(event, thread.room)) return
       const ctx = this.ctx(thread.room)
@@ -1847,6 +1860,7 @@ export class MatrixGateway {
       if (prevMembership !== 'join' && membership === 'join') {
         if (this.groupOpenings.size > 0 || this.openedGroupRooms.has(room.roomId)) this.holdGroupRoom(room.roomId)
         else this.emit({ t: 'channel.added', channel: roomToChannel(room, this.ctx(room)) })
+        this.sendEntryReceipt(room)
       } else if (prevMembership === 'join' && (membership === 'leave' || membership === 'ban')) {
         this.emit({ t: 'channel.removed', channelId: brandChannelId(room.roomId) })
       } else if (membership === 'invite' && prevMembership !== 'invite') {
@@ -2174,6 +2188,7 @@ export class MatrixGateway {
     this.ownSendsAwaitingEcho.clear()
     this.readTargets.clear()
     this.pendingReadTarget.clear()
+    this.entryReceiptsOwed.clear()
     this.acknowledgedDevices.clear()
     this.notifiedDevices.clear()
     this.ackServerRead = undefined
@@ -3121,10 +3136,15 @@ export class MatrixGateway {
       // listener reclassifies after the fact). On a non-direct (channel) invite this is skipped and
       // the room correctly stays a non-DM.
       if (direct && inviter) await this.addDirectRoom(inviter, roomId)
+      // Owed before joining: the sync may deliver the join (and the ->join transition) before joinRoom
+      // resolves. Whichever sees the join event first sends the receipt.
+      this.entryReceiptsOwed.add(roomId)
       await client.joinRoom(roomId)
+      this.sendEntryReceipt(client.getRoom(roomId))
     } catch {
       // Swallow: no error channel in AclTelemetry; the guard is cleared below so a later
       // MyMembership fire for the same invite can retry.
+      this.entryReceiptsOwed.delete(roomId)
     } finally {
       this.joiningInvites.delete(roomId)
     }
@@ -3526,6 +3546,49 @@ export class MatrixGateway {
   async removeAvatar(): Promise<void> {
     const client = this.require()
     await client.setAvatarUrl('')
+  }
+
+  // ── Account preferences ──────────────────────────────────────────────────────────────────
+  // Both verbs go straight to the account-data endpoint, like refreshAcknowledged. The read skips the
+  // synced cache: right after a reload it can come from Synapse's /sync response cache and miss a write
+  // already on the server, and the boot reads right after the reload that follows a language change.
+  // The cache only answers "has this account ever stored preferences": no key there and no `fresh`
+  // means no request, so an account that never chose anything does not pay a 404 on every boot. The
+  // write follows the same rule for the read it merges over: with no key in the cache it writes the
+  // patch alone, so an account's first choice does not pay a 404 either (what it can lose is an unknown
+  // field another device stored while the cache was behind). It uses authedRequest rather than
+  // setAccountData, which also waits for the sync echo; the caller reloads on the server's answer and
+  // has no use for the echo.
+  async getAccountPreferences(opts?: { fresh?: boolean }): Promise<AccountPreferences> {
+    const client = this.require()
+    if (!opts?.fresh && !this.hasCachedPreferences(client)) return {}
+    return readPreferences(await this.fetchPreferences(client))
+  }
+
+  async setAccountPreferences(patch: { language?: string }): Promise<void> {
+    const client = this.require()
+    const current = this.hasCachedPreferences(client) ? await this.fetchPreferences(client) : undefined
+    await client.http.authedRequest(Method.Put, this.preferencesPath(client), undefined, writePreferences(current, patch))
+  }
+
+  private hasCachedPreferences(client: MatrixClient): boolean {
+    return client.getAccountData(PREFERENCES_KEY as keyof AccountDataEvents) !== undefined
+  }
+
+  private preferencesPath(client: MatrixClient): string {
+    const userId = client.getUserId()
+    if (!userId) throw new Error('no session')
+    return `/user/${encodeURIComponent(userId)}/account_data/${encodeURIComponent(PREFERENCES_KEY)}`
+  }
+
+  // The stored content, or undefined when the account has none (M_NOT_FOUND). Other failures reject.
+  private async fetchPreferences(client: MatrixClient): Promise<unknown> {
+    try {
+      return await client.http.authedRequest(Method.Get, this.preferencesPath(client))
+    } catch (e) {
+      if (e instanceof MatrixError && e.errcode === 'M_NOT_FOUND') return undefined
+      throw e
+    }
   }
 
   async getDevices(): Promise<Device[]> {
@@ -4419,16 +4482,28 @@ export class MatrixGateway {
     if (id && this.ownSendsAwaitingEcho.delete(id)) this.sendOwnReceipt(event)
   }
 
+  // The receipt an automatic entry owes, on this session's own join event, once that event is in the
+  // room with its server id. Private: the other members never see it. A failed receipt is swallowed.
+  private sendEntryReceipt(room: Room | null | undefined): void {
+    const myUserId = this.client?.getUserId()
+    if (!room || !myUserId || !this.entryReceiptsOwed.has(room.roomId)) return
+    const entry = room.currentState.getStateEvents(EventType.RoomMember, myUserId)
+    if (!entry || entry.getContent().membership !== 'join' || !hasServerId(entry)) return
+    this.entryReceiptsOwed.delete(room.roomId)
+    const receipt = this.sendReceipt(entry, ReceiptType.ReadPrivate)
+    if (receipt) this.detach(receipt.catch(() => {}))
+  }
+
   private sendOwnReceipt(event: MatrixEvent): void {
     const receipt = this.sendReceipt(event)
     if (receipt) this.detach(receipt.catch(() => {}))
   }
 
   // #243: the one way a read receipt leaves the ACL. Never on an event without its server id (a local
-  // echo): no receipt at all, the server would answer 400.
-  private sendReceipt(event: MatrixEvent): Promise<unknown> | undefined {
+  // echo): no receipt at all, the server would answer 400. Without a type it is the public read receipt.
+  private sendReceipt(event: MatrixEvent, type?: ReceiptType): Promise<unknown> | undefined {
     if (!hasServerId(event)) return undefined
-    return this.client?.sendReadReceipt(event)
+    return type ? this.client?.sendReadReceipt(event, type) : this.client?.sendReadReceipt(event)
   }
 
   // ── Inbound: edit ──────────────────────────────────────────────────────────────────────
@@ -4663,14 +4738,18 @@ export class MatrixGateway {
   // ── Inbound: reactions ───────────────────────────────────────────────────────────────────
   // react/removeReaction take only a (stable) MessageId — no channel context — so we locate the
   // (room, real event id) by scanning rooms: a direct id match (others' messages) or a txn match
-  // (our own, whose stable id is the txn).
+  // (our own, whose stable id is the txn). The echo of an own thread reply is never in the room's
+  // timeline (#421): until its remote echo arrives it is only the room's in-flight send (the SDK's
+  // txn map), and afterwards it lives in its thread's timeline — so the txn match looks in both.
   private locate(messageId: MessageId): { room: Room; realEventId: string } | undefined {
     const target = messageIdToRaw(messageId)
     for (const room of this.require().getRooms()) {
       const direct = room.findEventById(target)
       const directId = direct?.getId()
       if (directId) return { room, realEventId: directId }
-      for (const ev of room.getLiveTimeline().getEvents()) {
+      const inFlightId = room.getEventForTxnId(target)?.getId()
+      if (inFlightId) return { room, realEventId: inFlightId }
+      for (const ev of [room.getLiveTimeline().getEvents(), ...room.getThreads().map((t) => t.timeline)].flat()) {
         const evId = ev.getId()
         if (ev.getTxnId() === target && evId) return { room, realEventId: evId }
       }

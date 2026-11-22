@@ -68,6 +68,7 @@
   --font-size-body: 15px;
   --font-size-ui: 14px;
   --font-size-title: 16px;
+  --font-size-field: 16px; /** Field text with a coarse pointer or a narrow window: below 16px a phone browser zooms in on focus. */
   --font-size-display: 22px;
   --font-size-meta: 12px;
   --font-size-mono: 13px;
@@ -93,6 +94,7 @@
   --density-gestao-row-padding: 5px 12px;
   --density-gestao-row-height: 30px;
   --density-gestao-avatar: 22px;
+  --density-estreito-row-height: 56px;
   --density-touch-floor: 44px; /** Piso de toque (mobile): área de clique mínima de elementos interativos, independente da densidade visual — gestão lê 30px mas o alvo estica pra 44. */
 }
 

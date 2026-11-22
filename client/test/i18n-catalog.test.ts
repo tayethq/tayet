@@ -39,26 +39,31 @@ describe('t()', () => {
 })
 
 describe('locale', () => {
-  it('sem override nem browser suportado: pt-BR', () => {
+  it('sem cópia nem idioma do browser que temos: en', () => {
+    vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['ja-JP'])
     vi.spyOn(navigator, 'language', 'get').mockReturnValue('ja-JP')
-    expect(resolveLocale()).toBe('pt-BR')
+    expect(resolveLocale()).toBe('en')
   })
 
-  it('tayet.locale vence; tag não suportada cai para o browser, depois pt-BR', () => {
+  it('tayet.locale vence; tag que não temos cai para o browser, depois en', () => {
     localStorage.setItem('tayet.locale', 'pt-br')
     expect(resolveLocale()).toBe('pt-BR')
-    // v0.1.0: só pt-BR existe (D7) — 'en' não é suportado ainda.
-    localStorage.setItem('tayet.locale', 'en')
+    localStorage.setItem('tayet.locale', 'fr')
+    vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['pt-PT'])
     vi.spyOn(navigator, 'language', 'get').mockReturnValue('pt-PT')
     expect(resolveLocale()).toBe('pt-BR')
   })
 
-  it('localStorage indisponível degrada para o browser / pt-BR', () => {
+  it('localStorage indisponível degrada para o browser / en', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('blocked')
     })
-    vi.spyOn(navigator, 'language', 'get').mockReturnValue('en-US')
+    vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['pt-BR'])
+    vi.spyOn(navigator, 'language', 'get').mockReturnValue('pt-BR')
     expect(resolveLocale()).toBe('pt-BR')
+    vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['ja-JP'])
+    vi.spyOn(navigator, 'language', 'get').mockReturnValue('ja-JP')
+    expect(resolveLocale()).toBe('en')
   })
 
   it('applyLocale define o lang do documento e o locale de t()', () => {

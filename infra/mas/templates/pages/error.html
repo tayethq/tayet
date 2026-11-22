@@ -5,15 +5,23 @@ Copyright 2021-2024 The Matrix.org Foundation C.I.C.
 SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 Please see LICENSE files in the repository root for full details.
 
-Modified by Tayet (first on 2026-11-04, last on 2026-11-15): the error page in pt-BR. The copy is
-literal. `render_error` does not carry the request's language and the stock template pins `lang` to
-"en": the `tayet_page` shell puts `lang="pt-BR"` on <html>, and the `lang` below only feeds
-`translator(lang)` in base.html. The `email_verified` guard arrives as the description "Subject is
-empty"; matching that text falls back to the generic message if upstream changes it. "Detalhes
-técnicos" exists only with `code`, `description` or `details`, always collapsed. The `.mas-*` rules
-are a copy of the ones in pages/login.html.
+Modified by Tayet (first on 2026-11-04, last on 2026-11-20): the error page. The copy is literal, in
+pt-BR or English. When the MAS gives the page a language, `tayet_lang` (base.html) picks one of them on
+the server and the page has no script. Some error responses carry no language (the MAS's generic and
+internal errors, the email guard and the provider callback errors among them): then the page carries
+both languages, each part with its own `lang`, pt-BR first, and a short inline script picks the one
+that matches the browser's languages, in the client's order (the first of `navigator.languages` whose
+language part is "pt" or "en"; neither, English), sets it on <html> (`lang` and `data-tayet-lang`) and
+the CSS hides the other. Without the script both stay visible. The technical details appear once in
+either case. The `email_verified` guard arrives as the description "Subject is empty"; matching that
+text falls back to the generic message if upstream changes it. "Detalhes técnicos" exists only with
+`code`, `description` or `details`, always collapsed. The `.mas-*` rules are a copy of the ones in
+pages/login.html.
 The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and infra/mas/NOTICE.md.
 -#}
+
+{# Whether the MAS gave this page a language; read before the stock fallback below #}
+{% set tayet_no_lang = not lang %}
 
 {# Sometimes we don't have the language set, so we default to english #}
 {% set lang = lang or "en" %}
@@ -115,15 +123,32 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
       }
       .mas-details__body p, .mas-details__body pre { margin: 0; }
       .mas-details__body code, .mas-details__body pre { font-family: inherit; font-size: inherit; white-space: pre-wrap; }
+      .mas-lang { display: flex; flex-direction: column; gap: var(--space-20); }
+      html[data-tayet-lang="pt-BR"] .mas-alt[lang="en"],
+      html[data-tayet-lang="en"] .mas-alt[lang="pt-BR"] { display: none; }
 {% endblock tayet_style %}
 
 {% block tayet_content %}
-  <div class="mas-page">
-    <main class="mas-card">
-      <div class="mas-wordmark"><span class="mas-wordmark__dot" aria-hidden="true"></span>tayet</div>
-
+  {% if tayet_no_lang %}
+  <script>
+    (function () {
+      var tags = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+      var chosen = "en";
+      for (var i = 0; i < tags.length; i++) {
+        var language = String(tags[i] || "").toLowerCase().split("-")[0];
+        if (language === "pt") { chosen = "pt-BR"; break; }
+        if (language === "en") { chosen = "en"; break; }
+      }
+      var root = document.documentElement;
+      root.setAttribute("lang", chosen);
+      root.setAttribute("data-tayet-lang", chosen);
+    })();
+  </script>
+  {% endif %}
+  {% set subject_empty = description == "Subject is empty" %}
+  {% macro pt_copy(subject_empty) %}
       <div class="mas-heading">
-        {% if description == "Subject is empty" %}
+        {% if subject_empty %}
           <h1>Não conseguimos confirmar seu email</h1>
           <p>O provedor informou que o email da sua conta ainda não foi confirmado. Confirme o email lá e tente entrar de novo.</p>
         {% else %}
@@ -133,10 +158,41 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
       </div>
 
       <a class="mas-button" href="{{ '/login' | prefix_url }}">Tentar de novo</a>
+  {% endmacro %}
+  {% macro en_copy(subject_empty) %}
+      <div class="mas-heading">
+        {% if subject_empty %}
+          <h1>We couldn't confirm your email</h1>
+          <p>The provider reported that your account's email hasn't been confirmed yet. Confirm it there and try signing in again.</p>
+        {% else %}
+          <h1>Couldn't sign in</h1>
+          <p>Something went wrong signing in to Tayet. Try again; if it keeps happening, talk to whoever manages your organization.</p>
+        {% endif %}
+      </div>
+
+      <a class="mas-button" href="{{ '/login' | prefix_url }}">Try again</a>
+  {% endmacro %}
+  {% set pt = tayet_lang == "pt-BR" %}
+  <div class="mas-page">
+    <main class="mas-card">
+      <div class="mas-wordmark"><span class="mas-wordmark__dot" aria-hidden="true"></span>tayet</div>
+
+      {% if tayet_no_lang %}
+      <div class="mas-lang mas-alt" lang="pt-BR">
+{{ pt_copy(subject_empty) }}
+      </div>
+      <div class="mas-lang mas-alt" lang="en">
+{{ en_copy(subject_empty) }}
+      </div>
+      {% elif pt %}
+{{ pt_copy(subject_empty) }}
+      {% else %}
+{{ en_copy(subject_empty) }}
+      {% endif %}
 
       {% if code or description or details %}
         <details class="mas-details">
-          <summary>Detalhes técnicos</summary>
+          <summary>{% if tayet_no_lang %}<span class="mas-alt" lang="pt-BR">Detalhes técnicos</span> <span class="mas-alt" lang="en">Technical details</span>{% elif pt %}Detalhes técnicos{% else %}Technical details{% endif %}</summary>
           <div class="mas-details__body">
             {% if code %}<code>{{ code }}</code>{% endif %}
             {% if description %}<p>{{ description }}</p>{% endif %}

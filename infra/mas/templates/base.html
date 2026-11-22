@@ -6,8 +6,10 @@ Copyright 2021-2024 The Matrix.org Foundation C.I.C.
 SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 Please see LICENSE files in the repository root for full details.
 
-Modified by Tayet (first on 2026-11-03, last on 2026-11-17). A page that sets `tayet_page` before
-`extends` gets the Tayet shell: pt-BR, the client's design tokens inline (`_generated/tokens.html`, a
+Modified by Tayet (first on 2026-11-03, last on 2026-11-20). A page that sets `tayet_page` before
+`extends` gets the Tayet shell: one of two languages, in `tayet_lang` (pt-BR when the browser's
+language, `lang`, starts with "pt"; English otherwise, including when `lang` is missing), the
+client's design tokens inline (`_generated/tokens.html`, a
 copy of client/src/ui/tokens/tokens.css), the font served at /fonts/, no Compound, no JS, no stock
 footer. The page's CSS goes in the `tayet_style` block. Without `tayet_page` the shell is the stock
 one, verbatim: every page Tayet does not own extends this file. Every page, Tayet's or stock, gets
@@ -17,6 +19,7 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
 -#}
 
 {% set _ = translator(lang) %}
+{% set tayet_lang = "pt-BR" if (lang is defined and lang and lang is startingwith("pt")) else "en" %}
 
 {% import "components/button.html" as button %}
 {% import "components/field.html" as field %}
@@ -28,7 +31,7 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
 {% import "components/captcha.html" as captcha %}
 
 <!DOCTYPE html>
-<html lang="{% if tayet_page is defined %}pt-BR{% else %}{{ lang }}{% endif %}">
+<html lang="{% if tayet_page is defined %}{{ tayet_lang }}{% else %}{{ lang }}{% endif %}">
   <head>
     <meta charset="utf-8">
     <title>{% block title %}{% if tayet_page is defined %}Tayet{% else %}{{ _("app.name") }}{% endif %}{% endblock title %}</title>

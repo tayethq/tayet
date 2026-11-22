@@ -15,7 +15,10 @@
 // group-conversation.spec.ts (por TRIO: a conversa em grupo é entre três) e
 // fal, ada e bea do mas-login.spec.ts (sondas, uma por página: fal nunca entra — email não verificado).
 // Os specs de agente (agent-*.spec.ts) dividem o par tai/ugo, em série (workers: 1) e com as salas do par
-// apagadas no início e no fim; yuri é só do agent-approvers.spec.ts, a terceira pessoa do cartão.
+// apagadas no início e no fim; yuri é só do agent-approvers.spec.ts, a terceira pessoa do cartão; zak belongs only to
+// login.narrow.spec.ts; lin only to language.spec.ts; nel and oli only to timeline.narrow.spec.ts; pat and ros
+// only to copy-text.spec.ts; ted and ula only to actions.narrow.spec.ts; ivy and joe only to composer.narrow.spec.ts; kit and lou only to
+// search.narrow.spec.ts; max and ned only to compose.narrow.spec.ts.
 export interface E2eUser {
   /** Login no form do Dex (password DB: o campo é o email). */
   email: string
@@ -79,3 +82,34 @@ export const WES: E2eUser = { email: 'wes@tayet.local', password: 'wespass123' }
 export const XIN: E2eUser = { email: 'xin@tayet.local', password: 'xinpass123' }
 // Terceira pessoa do agent-approvers.spec.ts (vários aprovadores), ao lado do par tai/ugo.
 export const YURI: E2eUser = { email: 'yuri@tayet.local', password: 'yuripass123' }
+// Only for login.narrow.spec.ts (phone project): the login with the return from the provider in a new tab.
+export const ZAK: E2eUser = { email: 'zak@tayet.local', password: 'zakpass123' }
+// Pair of workspace.narrow.spec.ts only (phone project): lev uses the narrow shell, mae writes to lev.
+export const LEV: E2eUser = { email: 'lev@tayet.local', password: 'levpass123' }
+export const MAE: E2eUser = { email: 'mae@tayet.local', password: 'maepass123' }
+// Only for language.spec.ts (desktop project): the device in English, the account's language changed and back.
+export const LIN: E2eUser = { email: 'lin@tayet.local', password: 'linpass123' }
+// Pair of timeline.narrow.spec.ts only (phone project): nel reads at 390×844 with touch, oli writes on a wide window.
+export const NEL: E2eUser = { email: 'nel@tayet.local', password: 'nelpass123' }
+export const OLI: E2eUser = { email: 'oli@tayet.local', password: 'olipass123' }
+// Pair of copy-text.spec.ts only (desktop project): pat copies from the wide action bar, ros writes to pat.
+export const PAT: E2eUser = { email: 'pat@tayet.local', password: 'patpass123' }
+export const ROS: E2eUser = { email: 'ros@tayet.local', password: 'rospass123' }
+// Pair of actions.narrow.spec.ts only (phone project): ted acts on messages by touch at 390×844, ula writes to ted.
+export const TED: E2eUser = { email: 'ted@tayet.local', password: 'tedpass123' }
+export const ULA: E2eUser = { email: 'ula@tayet.local', password: 'ulapass123' }
+// Pair of viewer.spec.ts only (desktop project): gil opens the image viewer and downloads, hugo sends the media.
+export const GIL: E2eUser = { email: 'gil@tayet.local', password: 'gilpass123' }
+export const HUGO: E2eUser = { email: 'hugo@tayet.local', password: 'hugopass123' }
+// Pair of media.narrow.spec.ts only (phone project): dan opens images and files by touch at 390×844, eva sends them.
+export const DAN: E2eUser = { email: 'dan@tayet.local', password: 'danpass123' }
+export const EVA: E2eUser = { email: 'eva@tayet.local', password: 'evapass123' }
+// Pair of composer.narrow.spec.ts only (phone project): ivy writes from the narrow composer at 390×844, joe writes to ivy.
+export const IVY: E2eUser = { email: 'ivy@tayet.local', password: 'ivypass123' }
+export const JOE: E2eUser = { email: 'joe@tayet.local', password: 'joepass123' }
+// Pair of search.narrow.spec.ts only (phone project): kit searches at 390×844, lou writes to kit.
+export const KIT: E2eUser = { email: 'kit@tayet.local', password: 'kitpass123' }
+export const LOU: E2eUser = { email: 'lou@tayet.local', password: 'loupass123' }
+// Pair of compose.narrow.spec.ts only (phone project): max opens "Nova conversa" at 390×844, ned is the one max picks.
+export const MAX: E2eUser = { email: 'max@tayet.local', password: 'maxpass123' }
+export const NED: E2eUser = { email: 'ned@tayet.local', password: 'nedpass123' }

@@ -19,6 +19,10 @@ export interface LiveReadDeps {
   getReplies(): readonly Message[]
   // Dec. 2: the thread receipt went out; the thread's unread is re-read.
   threadRead(channelId: ChannelId, root: MessageId): void
+  // The thread that covers the conversation on a narrow window (the stack's thread screen): with it on
+  // screen the main timeline is not in view, so its arrivals are not receipted. Absent or undefined: the
+  // timeline is in view (the wide window).
+  getThreadOnScreen?(): MessageId | undefined
 }
 
 // Injected like NotifierEnv: the unit tests drive visibility, focus and the return.
@@ -32,6 +36,9 @@ export interface LiveReadEnv {
 
 export interface LiveReader {
   handle(e: DomainEvent): void
+  // The conversation is back in front (the narrow stack's thread was closed): read it up to what the
+  // screen holds, as on the document's return.
+  resume(): void
   dispose(): void
 }
 
@@ -80,6 +87,8 @@ export function createLiveReader(deps: LiveReadDeps, env: LiveReadEnv = browserL
   let disposed = false
 
   const inView = (): boolean => env.isVisible() && env.hasFocus()
+  // The main timeline is behind the thread screen of the narrow stack.
+  const mainCovered = (): boolean => deps.getThreadOnScreen?.() !== undefined
 
   const fly = (channelId: ChannelId, scope: Scope, target: MessageId, root: MessageId | undefined): void => {
     const q = queues.get(channelId)!
@@ -130,7 +139,9 @@ export function createLiveReader(deps: LiveReadDeps, env: LiveReadEnv = browserL
     // Dec. 1–2: someone else's message, in the selected conversation, in view. An undecryptable
     // arrival counts too: it is in the conversation the person is looking at.
     if (m.mine || deps.getSelectedId() !== e.channelId || !inView()) return
-    if (m.threadParent === undefined) receipt(e.channelId, 'main', m.id)
+    if (m.threadParent === undefined) {
+      if (!mainCovered()) receipt(e.channelId, 'main', m.id)
+    }
     // Dec. 2: a reply of the thread open in the panel; a closed thread's reply stays unread (ADR-067).
     else if (m.threadParent === deps.getOpenThread()) receipt(e.channelId, `thread:${m.threadParent}`, m.id, m.threadParent)
   }
@@ -147,7 +158,7 @@ export function createLiveReader(deps: LiveReadDeps, env: LiveReadEnv = browserL
     if (disposed || !inView()) return
     const channelId = deps.getSelectedId()
     if (!channelId) return
-    const main = lastSettled(deps.getMain())
+    const main = mainCovered() ? undefined : lastSettled(deps.getMain())
     if (main && !covered(channelId, 'main', main.id)) receipt(channelId, 'main', main.id)
     const root = deps.getOpenThread()
     const reply = root === undefined ? undefined : lastSettled(deps.getReplies())
@@ -163,5 +174,5 @@ export function createLiveReader(deps: LiveReadDeps, env: LiveReadEnv = browserL
     sent.clear()
   }
 
-  return { handle, dispose }
+  return { handle, resume: onReturn, dispose }
 }

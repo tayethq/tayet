@@ -182,6 +182,8 @@ export interface ChatState {
   jump: { target: MessageId; failed: boolean } | undefined
   highlight: { id: MessageId; seq: number } | undefined
   jumpTo: (hit: SearchHit) => void
+  // Forgets a failed jump's line (the narrow search screen closing, PLANO-MOBILE M6 B1).
+  dismissJump: () => void
   clearHighlight: () => void
   // Thread sub-slice (PLANO-FASE-1-THREADS §7). Open a thread from a main-timeline message; the
   // panel shows the root + its replies and composes into the thread. All routing (threadParent,
@@ -237,6 +239,9 @@ export interface ChatState {
   startReply: (target: Message) => void
   cancelReply: () => void
   select: (id: ChannelId) => void
+  // The narrow stack's way back to the list: nothing stays selected. A failed jump keeps its line: the
+  // narrow stack comes back to the search on a failure (PLANO-MOBILE M6 B2).
+  deselect: () => void
   // The composer emits the rich ComposeResult ({ text, rich? }); the ACL owns the protocol
   // translation (ADR-012). `mentions` rides separately (the opaque UserIds the picker collected, P1).
   // `command`: the picked `/` command (ADR-093 dec. 7) → SendOpts.command.
@@ -341,7 +346,14 @@ export interface ChatState {
   exportMyData: (opts: DataExportOptions) => AsyncIterable<DataExportPart>
 }
 
-export function useChat(acl: Acl): ChatState {
+// `narrow`: the window is below the width breakpoint, where the shell is a stack. There the list
+// is a screen of its own, so the boot selects nothing, and the open thread covers the
+// conversation's timeline.
+export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {}): ChatState {
+  const narrowRef = useRef(narrow)
+  useEffect(() => {
+    narrowRef.current = narrow
+  }, [narrow])
   const [channels, setChannels] = useState<Channel[]>([])
   const [archivedChannels, setArchivedChannels] = useState<Channel[]>([])
   const [selectedId, setSelectedId] = useState<ChannelId | undefined>(undefined)
@@ -428,6 +440,29 @@ export function useChat(acl: Acl): ChatState {
     threadRootRef.current = threadRoot
     threadMessagesRef.current = threadMessages
   }, [messages, cursor, threadRoot, threadMessages])
+  // On a narrow window the open thread of the selected conversation is the screen in
+  // front, covering the conversation's timeline. Read through refs by the notifier and the live read.
+  const threadOnScreen = useCallback((): MessageId | undefined => {
+    const root = threadRootRef.current
+    return narrowRef.current && root && root.channelId === selectedRef.current ? root.id : undefined
+  }, [])
+  // The thread screen went away (back to the conversation, or the window widened): the conversation's
+  // timeline is in view again and is read up to what the screen holds.
+  const threadCovering = narrow && threadRoot !== undefined && threadRoot.channelId === selectedId
+  const wasCovering = useRef(false)
+  useEffect(() => {
+    if (wasCovering.current && !threadCovering) liveReadRef.current?.resume()
+    wasCovering.current = threadCovering
+  }, [threadCovering])
+  // Widening with the list on screen selects the first conversation, as the boot does.
+  const wasNarrow = useRef(narrow)
+  useEffect(() => {
+    if (wasNarrow.current && !narrow && selectedRef.current === undefined) {
+      const first = channelsRef.current[0]
+      if (first) setSelectedId(first.id)
+    }
+    wasNarrow.current = narrow
+  }, [narrow])
   // The jump reached its message (highlight it) or gave up (the failure line). Only the plan still in
   // force settles: a newer jump or a channel switch replaced it.
   const settleJump = useCallback((plan: JumpPlan, found: boolean) => {
@@ -505,7 +540,8 @@ export function useChat(acl: Acl): ChatState {
     void acl.getChannels().then((chs) => {
       if (!alive) return
       setChannels(chs)
-      setSelectedId((cur) => cur ?? chs[0]?.id)
+      // On a narrow window the list is on screen and nothing is selected.
+      setSelectedId((cur) => cur ?? (narrowRef.current ? undefined : chs[0]?.id))
     })
     // ADR-076 dec. 3: the archived snapshot, a read apart (getChannels stays only-active).
     void acl
@@ -609,13 +645,14 @@ export function useChat(acl: Acl): ChatState {
       getSelectedId: () => selectedRef.current,
       select: setSelectedId,
       getMembers: (id) => acl.getMembers(id).then((ms) => ms.map((m) => m.user)),
+      getThreadOnScreen: threadOnScreen,
     })
     notifierRef.current = notifier
     return () => {
       notifierRef.current = undefined
       notifier.dispose()
     }
-  }, [acl])
+  }, [acl, threadOnScreen])
 
   // ADR-100: the open conversation is read as messages arrive (and when the document comes back in
   // view). Fed by the same global subscription; reads the selection, the open thread and what the
@@ -637,13 +674,14 @@ export function useChat(acl: Acl): ChatState {
             if (threadRootRef.current?.id === root) setThreadUnread(u)
           })
           .catch(() => {}),
+      getThreadOnScreen: threadOnScreen,
     })
     liveReadRef.current = reader
     return () => {
       liveReadRef.current = undefined
       reader.dispose()
     }
-  }, [acl])
+  }, [acl, threadOnScreen])
 
   // Per-channel: load timeline + members, mark read, and apply stream deltas.
   useEffect(() => {
@@ -1022,6 +1060,7 @@ export function useChat(acl: Acl): ChatState {
     [acl, runMainJump, settleJump],
   )
   const clearHighlight = useCallback(() => setHighlight(undefined), [])
+  const dismissJump = useCallback(() => setJump((j) => (j?.failed ? undefined : j)), [])
   // A selection by the user abandons a jump in flight (and its failure line).
   const select = useCallback(
     (id: ChannelId) => {
@@ -1032,6 +1071,15 @@ export function useChat(acl: Acl): ChatState {
     [],
   )
   const closeThread = useCallback(() => {
+    setThreadRoot(undefined)
+    setThreadMessages([])
+    setThreadUnread(undefined)
+  }, [])
+  // Back to the list, nothing selected (an open thread goes with its conversation).
+  const deselect = useCallback(() => {
+    jumpPlan.current = undefined
+    setJump((j) => (j?.failed ? j : undefined))
+    setSelectedId(undefined)
     setThreadRoot(undefined)
     setThreadMessages([])
     setThreadUnread(undefined)
@@ -1329,9 +1377,11 @@ export function useChat(acl: Acl): ChatState {
     startReply,
     cancelReply,
     select,
+    deselect,
     jump,
     highlight,
     jumpTo,
+    dismissJump,
     clearHighlight,
     send,
     sendAttachment,

@@ -17,7 +17,12 @@ vi.mock('matrix-js-sdk', async (importOriginal) => {
 })
 
 // SUT importado APÓS o mock estar registrado.
-import { completeLogin, buildLoginUrl, parseSessionBlob } from '../src/acl/internal/oidc'
+import {
+  completeLogin,
+  buildLoginUrl,
+  parseSessionBlob,
+  LOGIN_STATE_COPY_MAX_AGE_MS,
+} from '../src/acl/internal/oidc'
 import { isCallback, scrubCallback, isErrorCallback } from '../src/ui/oidc'
 import { ConnectionError, type OpaqueSession } from '../src/acl'
 
@@ -60,6 +65,12 @@ describe('scrubCallback: limpa os params de callback da address-bar (P1 + higien
     scrubCallback()
     expect(window.location.search).toBe('')
     expect(window.location.pathname).toBe('/')
+  })
+
+  it('leaves the narrow stack root mark on the entry: the list, depth zero', () => {
+    setUrl('?code=abc&state=xyz')
+    scrubCallback()
+    expect(window.history.state).toEqual({ tayet: 'stack', screen: 'list', depth: 0 })
   })
 })
 
@@ -191,5 +202,140 @@ describe('parseSessionBlob: distingue blob OIDC de token legado', () => {
   it('JSON sem o discriminante kind → legado (não confunde)', () => {
     const parsed = parseSessionBlob(JSON.stringify({ accessToken: 'x' }) as OpaqueSession)
     expect(parsed.oidc).toBe(false)
+  })
+})
+
+// The SDK keeps the outbound state in sessionStorage; a return in a fresh context (new tab, installed
+// app) has none. The ACL copies it to localStorage on the way out and puts it back on return.
+describe('login state survives the trip to the provider', () => {
+  const COPY_KEY = 'tayet.login-state-copy'
+  const STATE_KEY = 'mx_oidc_state-1'
+  const okGrant = {
+    oidcClientSettings: { clientId: 'TAYET', issuer: 'https://mas.local' },
+    tokenResponse: { token_type: 'Bearer', access_token: 'at', refresh_token: 'rt' },
+    homeserverUrl: 'http://hs.local',
+    idTokenClaims: { sub: 'alice' },
+  } as never
+
+  // What the SDK's store holds when the exchange runs.
+  let seenAtExchange: string | null
+  beforeEach(() => {
+    sessionStorage.clear()
+    localStorage.clear()
+    seenAtExchange = null
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-19T12:00:00Z'))
+    // The SDK writes its state while building the URL (generateOidcAuthorizationUrl in the real one).
+    vi.mocked(generateOidcAuthorizationUrl).mockImplementation(async () => {
+      sessionStorage.setItem(STATE_KEY, 'outbound-state')
+      return 'https://mas.local/authorize?client_id=TAYET'
+    })
+    vi.mocked(completeAuthorizationCodeGrant).mockImplementation(async () => {
+      seenAtExchange = sessionStorage.getItem(STATE_KEY)
+      return okGrant
+    })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    sessionStorage.clear()
+    localStorage.clear()
+  })
+
+  const leave = () => buildLoginUrl({ serverUrl: 'http://hs.local', clientId: 'TAYET' })
+  // A fresh browsing context: sessionStorage empty, localStorage shared.
+  const returnInNewTab = () => {
+    sessionStorage.clear()
+    setUrl('?code=c&state=state-1')
+  }
+
+  it('copies only the SDK entries, stamped with the time', async () => {
+    sessionStorage.setItem('tayet.tab-yielded', '1')
+    await leave()
+    const copy = JSON.parse(localStorage.getItem(COPY_KEY) ?? 'null') as {
+      savedAt: number
+      entries: Record<string, string>
+    }
+    expect(copy.savedAt).toBe(Date.now())
+    expect(Object.keys(copy.entries)).toEqual([STATE_KEY])
+  })
+
+  it('restores a missing entry before the exchange', async () => {
+    await leave()
+    returnInNewTab()
+    await completeLogin()
+    expect(seenAtExchange).toBe('outbound-state')
+  })
+
+  it('does not overwrite an entry that exists', async () => {
+    await leave()
+    sessionStorage.setItem(STATE_KEY, 'already-here')
+    setUrl('?code=c&state=state-1')
+    await completeLogin()
+    expect(seenAtExchange).toBe('already-here')
+  })
+
+  it('restores just before the age limit', async () => {
+    await leave()
+    vi.setSystemTime(Date.now() + LOGIN_STATE_COPY_MAX_AGE_MS - 1)
+    returnInNewTab()
+    await completeLogin()
+    expect(seenAtExchange).toBe('outbound-state')
+  })
+
+  it('does not restore after 15 minutes, and drops the stale copy as it reads it', async () => {
+    expect(LOGIN_STATE_COPY_MAX_AGE_MS).toBe(15 * 60 * 1000)
+    await leave()
+    vi.setSystemTime(Date.now() + LOGIN_STATE_COPY_MAX_AGE_MS)
+    returnInNewTab()
+    const removed: string[] = []
+    const realRemove = Storage.prototype.removeItem
+    const spy = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, key: string) {
+      removed.push(key)
+      realRemove.call(this, key)
+    })
+    await completeLogin()
+    spy.mockRestore()
+    expect(seenAtExchange).toBeNull()
+    expect(removed[0]).toBe(COPY_KEY)
+    expect(localStorage.getItem(COPY_KEY)).toBeNull()
+  })
+
+  it('removes the copy after a successful return', async () => {
+    await leave()
+    returnInNewTab()
+    await completeLogin()
+    expect(localStorage.getItem(COPY_KEY)).toBeNull()
+  })
+
+  it('removes the copy after a failed return', async () => {
+    await leave()
+    returnInNewTab()
+    vi.mocked(completeAuthorizationCodeGrant).mockRejectedValue(new Error('x'))
+    await expect(completeLogin()).rejects.toThrow('OIDC login failed')
+    expect(localStorage.getItem(COPY_KEY)).toBeNull()
+  })
+
+  it('drops a copy that does not parse, and the exchange still runs', async () => {
+    localStorage.setItem(COPY_KEY, '{not json')
+    returnInNewTab()
+    await completeLogin()
+    expect(completeAuthorizationCodeGrant).toHaveBeenCalledOnce()
+    expect(localStorage.getItem(COPY_KEY)).toBeNull()
+  })
+
+  it('unavailable storage does not break the login, either way', async () => {
+    const setSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError')
+    })
+    const getSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('SecurityError')
+    })
+    vi.mocked(generateOidcAuthorizationUrl).mockResolvedValue('https://mas.local/authorize?client_id=TAYET')
+    vi.mocked(completeAuthorizationCodeGrant).mockResolvedValue(okGrant)
+    await expect(leave()).resolves.toBe('https://mas.local/authorize?client_id=TAYET')
+    setUrl('?code=c&state=state-1')
+    await expect(completeLogin()).resolves.toEqual(expect.any(String))
+    setSpy.mockRestore()
+    getSpy.mockRestore()
   })
 })

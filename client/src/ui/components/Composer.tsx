@@ -1,6 +1,6 @@
 import type { AgentColor, AgentCommand, User, UserId } from '@tayet/client'
 import type { ComposeResult } from '../compose'
-import { RichComposer, type ComposerCommand } from '../composer/RichComposer'
+import { RichComposer, type ComposerCommand, type ComposerModeProps } from '../composer/RichComposer'
 
 // Composer (ADR-051 PR-5): the WYSIWYG island IS the composer now — the flag and the whole textarea
 // path are gone. This is a thin adapter that forwards the app's props to RichComposer, keeping the
@@ -18,7 +18,8 @@ export function Composer({
   disabled,
   variant = 'full',
   placeholder,
-}: {
+  ...mode
+}: ComposerModeProps & {
   onSend: (body: ComposeResult, mentions: UserId[], command?: ComposerCommand) => void
   onSendAttachment?: (file: File) => void
   // The channel's members, for the @-mention picker (ADR-037 M2b). Optional — a mount without it
@@ -48,6 +49,7 @@ export function Composer({
       disabled={disabled}
       variant={variant}
       placeholder={placeholder}
+      {...mode}
     />
   )
 }

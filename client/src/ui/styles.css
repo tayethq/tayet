@@ -356,7 +356,7 @@ body {
 /* The text action drops the gestao row height (it sits inside the row) — but never under the touch
    floor (ADR-036 dec. 5): on a coarse pointer the primitive's 44 still applies. [data-size] beats
    .ui-button[data-size='gestao'], which comes later in the file. */
-@media not all and (pointer: coarse) {
+@media (not (pointer: coarse)) and (width >= 728px) {
   .ui-button[data-size].channel-list__restore {
     min-height: 0;
   }
@@ -690,6 +690,16 @@ body {
   font-weight: var(--font-weight-medium);
 }
 .group-block[data-size='header'] {
+  width: 30px;
+  height: 30px;
+}
+/* A DM with an agent: the agent's avatar as a block before the name, where the group has its numbered
+   block — 30 raw, the same component constant. */
+.channel-header__agent {
+  display: inline-flex;
+  flex: none;
+}
+.channel-header__agent .agent-avatar__box {
   width: 30px;
   height: 30px;
 }
@@ -1063,6 +1073,193 @@ body {
 .message__image--pending {
   background: var(--color-surface-raised);
 }
+/* The ready thumbnail is a button that opens the image viewer (workspace.md §25.2 item 1, §25.7 `[data-thumb]`):
+   the image the client already draws, in its 320×240 caps, a --space-4 step above (the waiting box too, so
+   nothing moves when it loads), the system's focus ring. A sized one takes the image's width, so the image's
+   own 100% resolves against it. */
+.message__thumb {
+  display: block;
+  max-width: 100%;
+  margin-top: var(--space-4);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: zoom-in;
+}
+.message__thumb--sized {
+  width: min(320px, 100%, calc(240px * var(--image-ratio)));
+}
+.message__thumb:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.message__image--pending {
+  margin-top: var(--space-4);
+}
+
+/* ── Image viewer (workspace.md §25.2, §25.7; the narrow screen in styles.narrow.css). A child of the
+   .workspace, absolute over the whole window (never fixed), opaque in --color-bg, above the pinned list (5)
+   and the sheet (4). 56, 32 and 16 are the export's raw component constants (§25.7). ── */
+.image-viewer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+}
+.image-viewer__header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: 56px;
+  padding: 0 var(--space-12) 0 var(--space-20);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+.image-viewer__who {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.image-viewer__author {
+  overflow: hidden;
+  font-size: var(--font-size-title);
+  font-weight: var(--font-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.image-viewer__time {
+  flex: none;
+  color: var(--color-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+}
+.image-viewer__download {
+  flex: none;
+  height: 32px;
+  padding: 0 var(--space-8);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+.image-viewer__download:hover:not(:disabled) {
+  background: var(--color-bg);
+}
+.image-viewer__download:disabled {
+  color: var(--color-muted);
+  cursor: default;
+}
+.image-viewer__close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.image-viewer__close:hover {
+  background: var(--color-bg);
+}
+.image-viewer__download:focus-visible,
+.image-viewer__close:focus-visible,
+.image-viewer__toggle:focus-visible,
+.image-viewer__retry:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+/* Fitted: the frame is a size container inside the 24 margin, and the image is capped by it — never past its
+   real size. Real size: the body scrolls and the image is drawn as it is (auto margins keep a small one
+   centred without hiding the start of a large one). */
+.image-viewer__body {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: var(--space-24);
+}
+.image-viewer__frame {
+  display: flex;
+  flex: 1;
+  align-self: stretch;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  container-type: size;
+}
+.image-viewer__toggle {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+.image-viewer__image {
+  display: block;
+  max-width: 100cqw;
+  max-height: 100cqh;
+}
+.image-viewer[data-real] .image-viewer__body {
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 0;
+  overflow: auto;
+}
+.image-viewer[data-real] .image-viewer__frame {
+  flex: none;
+  align-self: auto;
+  margin: auto;
+  container-type: normal;
+}
+.image-viewer[data-real] .image-viewer__toggle {
+  cursor: zoom-out;
+}
+.image-viewer[data-real] .image-viewer__image {
+  max-width: none;
+  max-height: none;
+}
+.image-viewer__loading {
+  color: var(--color-muted);
+  font-size: var(--font-size-ui);
+}
+.image-viewer__failed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--font-size-ui);
+}
+.image-viewer__failed-text {
+  color: var(--color-danger);
+}
+.image-viewer__failed-dot {
+  color: var(--color-muted);
+}
+.image-viewer__retry {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
 /* ADR-066: thread summary under a root (manifest workspace.md §11 items 5–6, §6.4) — accent action
    text, the latest-reply suffix muted, and the unread marker (.unread-dot, ADR-067). The button's own
    padding and a step above it give the air; the left edge sits on the body's. */
@@ -1191,16 +1388,19 @@ body {
   font-weight: var(--font-weight-medium);
   cursor: pointer;
 }
-/* Retry of a failed media download. */
-.message__retry {
+/* Retry of a failed media download: the tier's danger Button (workspace.md §23.10, `[data-retry]`), in the
+   meta size and regular weight the row drew before. With a fine pointer on a wide window it drops the row
+   height, like the banner's dismiss; elsewhere the primitive's touch floor holds. */
+.ui-button.message__retry {
   margin-left: var(--space-8);
-  background: transparent;
-  border: 1px solid var(--color-danger);
-  color: var(--color-danger);
-  border-radius: var(--radius-sm);
   padding: 0 var(--space-8);
-  cursor: pointer;
   font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-regular);
+}
+@media (not (pointer: coarse)) and (width >= 728px) {
+  .ui-button[data-size].message__retry {
+    min-height: 0;
+  }
 }
 
 .reactions {
@@ -1488,7 +1688,7 @@ body {
   width: var(--density-cotidiano-row-height);
   padding: 0;
 }
-@media (pointer: coarse) {
+@media (pointer: coarse), (width < 728px) {
   .composer--compact .ui-button.composer__send {
     width: var(--density-touch-floor);
   }
@@ -1575,7 +1775,7 @@ body {
   color: var(--color-muted);
 }
 /* PLANO-AGENTES §0.3.24 item 9: the touch floor on a row, in both modes. */
-@media (pointer: coarse) {
+@media (pointer: coarse), (width < 728px) {
   .composer__suggest-option {
     min-height: var(--density-touch-floor);
   }
@@ -1613,7 +1813,8 @@ body {
 }
 .message:hover .message__actions,
 .message:has(:focus-visible) .message__actions,
-.message__actions--confirming {
+.message__actions--confirming,
+.message__actions--copied {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
@@ -1629,7 +1830,8 @@ body {
 .message__actions .message__edit-open,
 .message__actions .message__delete-open,
 .message__actions .message__reply-open,
-.message__actions .message__thread-open {
+.message__actions .message__thread-open,
+.message__actions .message__copy-open {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1647,10 +1849,25 @@ body {
 .message__actions .message__edit-open:hover,
 .message__actions .message__delete-open:hover,
 .message__actions .message__reply-open:hover,
-.message__actions .message__thread-open:hover {
+.message__actions .message__thread-open:hover,
+.message__actions .message__copy-open:hover {
   color: var(--color-text);
   background: var(--color-bg);
   text-decoration: none;
+}
+
+/* "Copiado" in the copy button's place (manifest workspace.md §25.1 item 2, §25.7): the bar button's
+   height, the check and the word in meta, medium weight, text colour; no fill. */
+.message__copied {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 28px;
+  padding: 0 var(--space-8);
+  color: var(--color-text);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
 }
 
 /* Inline edit affordance. */
@@ -2691,7 +2908,7 @@ body {
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
 }
-@media not all and (pointer: coarse) {
+@media (not (pointer: coarse)) and (width >= 728px) {
   .ui-button[data-size].new-access-banner__dismiss {
     min-height: 0;
   }
@@ -2995,7 +3212,7 @@ body {
   border-color: var(--color-border-strong);
   background: var(--color-bg);
 }
-@media (pointer: coarse) {
+@media (pointer: coarse), (width < 728px) {
   .account-settings__access-entry {
     min-height: var(--density-touch-floor);
   }
@@ -3076,6 +3293,75 @@ body {
   margin: 0;
   font-size: var(--font-size-meta);
   color: var(--color-muted);
+}
+/* Language row: the appearance row's shape, in the same block. The closed field carries the value and
+   the chevron; the system's select lies transparent over it and takes the clicks, so the list that opens
+   is the system's. The 168px floor, the chevron and the 0.5 while saving are constants of this control. */
+.account-settings__language {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+.account-settings__language-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.account-settings__language-title {
+  margin: 0;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+.account-settings__language-subtitle {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
+  color: var(--color-muted);
+}
+.account-settings__language[data-status='failed'] .account-settings__language-subtitle {
+  color: var(--color-danger);
+}
+.account-settings__language-control {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  min-width: 168px;
+  min-height: var(--density-cotidiano-row-height);
+  padding: 0 var(--space-8) 0 var(--space-12);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font-size: var(--font-size-ui);
+}
+.account-settings__language-control svg {
+  flex: none;
+  color: var(--color-muted);
+}
+.account-settings__language-control:has(:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+.account-settings__language[data-status='saving'] .account-settings__language-control {
+  opacity: 0.5;
+}
+.account-settings__language-select {
+  position: absolute;
+  inset: -1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.account-settings__language-select:disabled {
+  cursor: default;
 }
 /* Reset voluntário: caixa descritiva (título + teaser), tom calmo — não alarme. O hover lava em
    danger pra prenunciar a consequência sem gritar antes da intenção. */
@@ -3464,7 +3750,7 @@ body {
   font-size: var(--font-size-meta);
   font-weight: var(--font-weight-medium);
 }
-@media not all and (pointer: coarse) {
+@media (not (pointer: coarse)) and (width >= 728px) {
   .ui-button[data-size].people__remove {
     min-height: 0;
   }
@@ -4271,7 +4557,7 @@ button.user-profile__chip:hover {
 
 /* Touch floor (PLANO §0.2): on coarse pointers the interactive hit area is ≥44px regardless of the
    visual density — a row may read 30–40px but the target stretches to 44. */
-@media (pointer: coarse) {
+@media (pointer: coarse), (width < 728px) {
   .channel,
   .composer__send,
   .composer__input,
@@ -4491,7 +4777,7 @@ button.user-profile__chip:hover {
   color: var(--color-accent);
 }
 /* Touch floor (PLANO §0.2): o alvo do retry estica para ≥44px em ponteiro grosso. */
-@media (pointer: coarse) {
+@media (pointer: coarse), (width < 728px) {
   .boot-message__retry {
     min-height: var(--density-touch-floor);
   }
@@ -4518,7 +4804,7 @@ button.user-profile__chip:hover {
 .boot-message__secondary:hover {
   color: var(--color-accent);
 }
-@media (pointer: coarse) {
+@media (pointer: coarse), (width < 728px) {
   .boot-message__secondary {
     min-height: var(--density-touch-floor);
   }
@@ -4538,7 +4824,7 @@ button.user-profile__chip:hover {
   border-color: var(--color-accent);
   color: var(--color-accent);
 }
-@media (pointer: coarse) {
+@media (pointer: coarse), (width < 728px) {
   .boot-message__sso {
     min-height: var(--density-touch-floor);
   }
@@ -4708,7 +4994,6 @@ button.user-profile__chip:hover {
    name. Flex contexts (chips, suggestions, picker) space it with their own gap. */
 .message__quote > .agent-avatar,
 .message > .agent-avatar,
-.channel-header__name > .agent-avatar,
 .composer__reply-label > .agent-avatar,
 .search-hit__where > .agent-avatar {
   vertical-align: middle;
@@ -4836,10 +5121,12 @@ button.user-profile__chip:hover {
   opacity: 0.5;
   cursor: default;
 }
-/* Touch floor (ADR-036 dec. 5): the control carries a ≥44 hit area on coarse pointers regardless of
-   visual density — the floor lives in the primitive, not bolted on per-surface. */
-@media (pointer: coarse) {
-  .ui-button {
+/* Touch floor (ADR-036 dec. 5): the control carries a ≥44 hit area on coarse pointers or narrow windows
+   regardless of visual density — the floor lives in the primitive, not bolted on per-surface. */
+@media (pointer: coarse), (width < 728px) {
+  /* With the size attribute too: .ui-button[data-size='gestao'] would otherwise outrank the floor. */
+  .ui-button,
+  .ui-button[data-size] {
     min-height: var(--density-touch-floor);
   }
 }
@@ -4875,6 +5162,24 @@ button.user-profile__chip:hover {
   background: var(--color-accent-wash);
   color: var(--color-accent);
   font-weight: var(--font-weight-medium);
+}
+/* Touch floor for the field and the segments, as the button has it. On a coarse pointer or a narrow
+   window the field text is 16px, so a phone browser does not zoom in on focus. Radius unchanged. Placed
+   after both base rules so it wins at the same specificity. */
+@media (pointer: coarse), (width < 728px) {
+  .ui-field__input,
+  .ui-segmented__segment {
+    min-height: var(--density-touch-floor);
+  }
+  .ui-field__input {
+    font-size: var(--font-size-field);
+  }
+}
+/* Narrow window: the field sits on the raised surface. */
+@media (width < 728px) {
+  .ui-field__input {
+    background: var(--color-surface-raised);
+  }
 }
 
 /* Dialog (composes): scrim + raised surface + header/body/footer slots. Scrim is absolute within a
@@ -4940,6 +5245,102 @@ button.user-profile__chip:hover {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-8);
+}
+
+/* BottomSheet (composes; manifest workspace.md §23.9 item 1): a scrim over the whole screen and a panel held
+   to the bottom edge at the screen's width, both absolute within the mounting chrome (never fixed). Siblings,
+   so a row can sit between them (the held message, z-index 3; styles.narrow.css). The bottom padding adds the
+   safe area; --space-8 for actions, --space-16 for a form (§23.10). */
+.ui-sheet__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: var(--color-scrim);
+}
+.ui-sheet {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-8);
+  padding-bottom: calc(var(--space-8) + env(safe-area-inset-bottom));
+  background: var(--color-surface-raised);
+  border-top: 1px solid var(--color-border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: var(--shadow-overlay);
+}
+.ui-sheet[data-padding='form'] {
+  padding: var(--space-16);
+  padding-bottom: calc(var(--space-16) + env(safe-area-inset-bottom));
+}
+
+/* ScreenHeader (composes): the narrow stack's screen bar. Back and the action
+   are touch-floor targets with a 20 raw glyph; the title (title, medium) over the subtitle
+   (meta, muted), one line each with an ellipsis; the narrow row height as the minimum. The back glyph is
+   the Chevron turned to point left. */
+.ui-screen-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: var(--density-estreito-row-height);
+  padding: var(--space-4) var(--space-4) var(--space-4) 0;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+.ui-screen-header__back,
+.ui-screen-header__action {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--density-touch-floor);
+  height: var(--density-touch-floor);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.ui-screen-header__action {
+  color: var(--color-muted);
+}
+.ui-screen-header__back:active,
+.ui-screen-header__action:active {
+  background: var(--color-bg);
+}
+.ui-screen-header__back:focus-visible,
+.ui-screen-header__action:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+.ui-screen-header__back-glyph {
+  display: inline-flex;
+  transform: rotate(90deg);
+}
+.ui-screen-header__heading {
+  flex: 1;
+  min-width: 0;
+}
+.ui-screen-header__title,
+.ui-screen-header__subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-screen-header__title {
+  margin: 0;
+  font-size: var(--font-size-title);
+  font-weight: var(--font-weight-medium);
+}
+.ui-screen-header__subtitle {
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+  line-height: var(--font-line-height-meta);
 }
 
 /* Management surface as a modal (ADR-038, Fork A): one Dialog whose body swaps between the

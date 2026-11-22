@@ -11,6 +11,9 @@ const CLIENT_PUBLIC = join(REPO, 'client', 'public')
 const BRAND_PUBLIC = join(REPO, 'design', 'brand', 'icon', 'public')
 const SITE = join(REPO, 'site')
 const ICONS = ['favicon.ico', 'icon.svg', 'apple-touch-icon.png'] as const
+// The app manifest and the icons it lists: client only (the site does not declare a manifest).
+const APP_FILES = ['site.webmanifest', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'] as const
+const CLIENT_TOKENS = join(REPO, 'client', 'src', 'ui', 'tokens', 'tokens.css')
 
 const read = (p: string) => readFileSync(p)
 const text = (p: string) => readFileSync(p, 'utf8')
@@ -31,20 +34,51 @@ function resolveRootVar(css: string, name: string): string {
 describe('brand icon: client', () => {
   const html = text(join(REPO, 'client', 'index.html'))
 
-  it('index.html links the three icons, with no theme-color or manifest in the markup', () => {
+  it('index.html links the three icons and the manifest, with no theme-color in the markup', () => {
     expect(html).toContain('<link rel="icon" href="/favicon.ico" sizes="48x48" />')
     expect(html).toContain('<link rel="icon" href="/icon.svg" type="image/svg+xml" />')
     expect(html).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png" />')
+    expect(html).toContain('<link rel="manifest" href="/site.webmanifest" />')
+    expect(html.match(/rel="manifest"/g)).toHaveLength(1)
     expect(html).not.toContain('theme-color')
-    expect(html).not.toContain('rel="manifest"')
   })
 
-  it('client/public has the three icons', () => {
-    for (const f of ICONS) expect(existsSync(join(CLIENT_PUBLIC, f)), f).toBe(true)
+  it('client/public has the three icons, the manifest and the icons it lists', () => {
+    for (const f of [...ICONS, ...APP_FILES]) expect(existsSync(join(CLIENT_PUBLIC, f)), f).toBe(true)
   })
 
-  it.skipIf(!existsSync(BRAND_PUBLIC))('client/public icons are byte-for-byte the brand source', () => {
-    for (const f of ICONS) expect(read(join(CLIENT_PUBLIC, f)).equals(read(join(BRAND_PUBLIC, f))), f).toBe(true)
+  it('every icon the manifest lists is in client/public', () => {
+    const manifest = JSON.parse(text(join(CLIENT_PUBLIC, 'site.webmanifest'))) as { icons: { src: string }[] }
+    expect(manifest.icons.length).toBeGreaterThan(0)
+    for (const { src } of manifest.icons) expect(existsSync(join(CLIENT_PUBLIC, src)), src).toBe(true)
+  })
+
+  it('the manifest installs the app at the root, standalone, named Tayet', () => {
+    const manifest = JSON.parse(text(join(CLIENT_PUBLIC, 'site.webmanifest'))) as Record<string, unknown>
+    expect(manifest).toMatchObject({
+      id: '/',
+      name: 'Tayet',
+      short_name: 'Tayet',
+      start_url: '/',
+      scope: '/',
+      display: 'standalone',
+    })
+  })
+
+  // Both manifest colors are the light theme's window floor. The manifest is served as-is, so its
+  // value is a fixed copy; this ties it to the token. Case is not part of the value.
+  it('theme_color and background_color are the light --color-bg', () => {
+    const bg = resolveRootVar(text(CLIENT_TOKENS), 'color-bg')
+    expect(bg).toMatch(/^#[0-9A-Fa-f]{6}$/)
+    const manifest = JSON.parse(text(join(CLIENT_PUBLIC, 'site.webmanifest'))) as Record<string, string>
+    expect(manifest.theme_color?.toLowerCase()).toBe(bg.toLowerCase())
+    expect(manifest.background_color?.toLowerCase()).toBe(bg.toLowerCase())
+  })
+
+  it.skipIf(!existsSync(BRAND_PUBLIC))('client/public icons and manifest are byte-for-byte the brand source', () => {
+    for (const f of [...ICONS, ...APP_FILES]) {
+      expect(read(join(CLIENT_PUBLIC, f)).equals(read(join(BRAND_PUBLIC, f))), f).toBe(true)
+    }
   })
 })
 

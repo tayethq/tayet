@@ -1,4 +1,5 @@
 import { buildLoginUrl } from '@tayet/client'
+import { STACK_ROOT } from './stack'
 
 // ── OIDC login — the APP half (ADR-032 / ADR-031). ───────────────────────────────────────────────
 // Login is app work (ADR-030): the app decides WHEN to start login and detects the return, then hands
@@ -20,9 +21,9 @@ export function isCallback(): boolean {
 // the app — this module owns the address bar (ADR-030/ADR-032), so the SDK-facing completeLogin is now
 // side-effect-free (PR-B / §8.L31). Boot calls this on success (post-exchange), on exchange failure, and
 // on the error-callback, so a reload/retry/bfcache never re-feeds a single-use code. P1: pure address
-// bar, zero protocol, zero SDK.
+// bar, zero protocol, zero SDK. The entry gets the stack's root mark (stack.tsx): the list, depth zero.
 export function scrubCallback(): void {
-  window.history.replaceState({}, '', window.location.pathname)
+  window.history.replaceState(STACK_ROOT, '', window.location.pathname)
 }
 
 // Did the OP bounce us back with a denial instead of a code? An IdP refusal / user cancel comes back as

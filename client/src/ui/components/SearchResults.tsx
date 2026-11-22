@@ -21,7 +21,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
 // older → "12 out". pt-BR short names without the trailing dot.
 export function whenOf(sentAt: number, now: number = Date.now()): string {
   const at = new Date(sentAt)
-  const time = at.toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit' })
+  const time = at.toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
   const midnight = new Date(now)
   midnight.setHours(0, 0, 0, 0)
   if (sentAt >= midnight.getTime()) return t('search.today', { time })
@@ -31,7 +31,10 @@ export function whenOf(sentAt: number, now: number = Date.now()): string {
   }
   const day = at.getDate()
   const month = at.toLocaleDateString(getLocale(), { month: 'short' }).replace('.', '')
-  return at.getFullYear() === midnight.getFullYear() ? `${day} ${month}` : `${day} ${month} ${at.getFullYear()}`
+  // The catalog orders the parts: "12 out" in pt-BR, "Oct 12" in English.
+  return at.getFullYear() === midnight.getFullYear()
+    ? t('search.dayMonth', { day, month })
+    : t('search.dayMonthYear', { day, month, year: at.getFullYear() })
 }
 
 export function resultsLabel(n: number): string {
@@ -56,7 +59,8 @@ export function SearchResults({
   selected?: MessageId
   failed?: MessageId
   onPick: (hit: ResolvedHit) => void
-  onClear: () => void
+  // Absent on the narrow screen: the field's ✕ clears there (workspace.md §23.12).
+  onClear?: () => void
 }) {
   return (
     <section className="search-results" role="region" aria-label={t('search.region')}>
@@ -70,9 +74,11 @@ export function SearchResults({
         <>
           <div className="channel-list__section-header">
             <h2 className="channel-list__section-title">{resultsLabel(hits.length)}</h2>
-            <button type="button" className="channel-list__section-add search-results__clear" onClick={onClear}>
-              {t('search.clearShort')}
-            </button>
+            {onClear && (
+              <button type="button" className="channel-list__section-add search-results__clear" onClick={onClear}>
+                {t('search.clearShort')}
+              </button>
+            )}
           </div>
           <ul>
             {hits.map((resolved) => (

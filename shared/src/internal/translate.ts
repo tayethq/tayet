@@ -1,5 +1,5 @@
 import type { Room, MatrixEvent, RoomMember, IMyDevice, Thread } from 'matrix-js-sdk'
-import { JoinRule, EventStatus, RelationType, EventType } from 'matrix-js-sdk'
+import { Direction, JoinRule, EventStatus, RelationType, EventType } from 'matrix-js-sdk'
 import { DecryptionFailureCode } from 'matrix-js-sdk/lib/crypto-api/index.js'
 import type { EncryptedFile, RoomServerUnread } from './wire-types'
 import type {
@@ -188,10 +188,10 @@ export function relationsOf(
   ctx: Ctx,
 ): { threadParent?: MessageId; replyTo?: MessageId } {
   const relates = content['m.relates_to'] as RelatesTo | undefined
-  const threadParent =
-    relates?.rel_type === 'm.thread' && relates.event_id ? brandMessageId(relates.event_id) : undefined
-  // Reply target resolved to the target's STABLE id (own target → txn, ADR-010) so the UI's
-  // by-id lookup (quoted preview) matches.
+  // Both targets resolve to the target's STABLE id (an own target → its txn) so the UI's by-id
+  // matches hold: the open thread (threadParent) and the quoted preview (replyTo).
+  const threadRaw = relates?.rel_type === 'm.thread' && relates.event_id ? relates.event_id : undefined
+  const threadParent = threadRaw ? brandMessageId(ctx.stableIdFor?.(threadRaw) ?? threadRaw) : undefined
   const replyRaw = genuineReplyTarget(content)
   const replyTo = replyRaw ? brandMessageId(ctx.stableIdFor?.(replyRaw) ?? replyRaw) : undefined
   return { threadParent, replyTo }
@@ -199,18 +199,22 @@ export function relationsOf(
 
 // ── Thread summary (ADR-066) ──────────────────────────────────────────────────────────────
 // The thread under a root, as a product summary. Source order: the SDK's Thread when the room has
-// one — it keeps `length` (confirmed + pending replies) and the latest reply live as replies arrive
-// by sync — else the server's aggregation bundled on the root (count + latest event), which is
-// present on a root from /sync AND on the raw event of a /messages page, so a paginated root gets
-// its summary without opening the thread. A Thread that exists is trusted even at zero (all replies
-// redacted → no summary). Nothing of the relation (ids, rel_type, the latest event) crosses (P1).
+// one — it keeps the latest reply live as replies arrive by sync — else the server's aggregation
+// bundled on the root (count + latest event), which is present on a root from /sync AND on the raw
+// event of a /messages page, so a paginated root gets its summary without opening the thread.
+// The count of a Thread held whole (first page fetched, nothing older to paginate) is its distinct
+// reply events, pending or confirmed: the SDK's `length` can count one reply twice when the root's
+// server aggregate (already including it) lands before the reply reaches the thread's timeline.
+// A Thread not held whole keeps `length`, which starts from the server aggregate. A Thread that
+// exists is trusted even at zero (all replies redacted → no summary). Nothing of the relation (ids,
+// rel_type, the latest event) crosses (P1).
 type BundledThread = { count?: unknown; latest_event?: { origin_server_ts?: unknown } }
 
 export function threadSummaryOf(event: MatrixEvent, ctx: Ctx): ThreadSummary | undefined {
   const realId = event.getId()
   const thread = realId ? ctx.threadFor?.(realId) : undefined
   if (thread) {
-    const count = thread.length
+    const count = heldWhole(thread) ? heldReplyCount(thread) : thread.length
     if (count <= 0) return undefined
     return { replyCount: count, latestReplyAt: ts(thread.replyToEvent?.getTs() ?? event.getTs()) }
   }
@@ -219,6 +223,15 @@ export function threadSummaryOf(event: MatrixEvent, ctx: Ctx): ThreadSummary | u
   if (count <= 0) return undefined
   const latest = bundled?.latest_event?.origin_server_ts
   return { replyCount: count, latestReplyAt: ts(typeof latest === 'number' ? latest : event.getTs()) }
+}
+
+function heldWhole(thread: Thread): boolean {
+  return thread.initialEventsFetched && thread.liveTimeline.getPaginationToken(Direction.Backward) === null
+}
+
+// A redacted reply loses its relation and drops out; a local echo is the same event once confirmed.
+function heldReplyCount(thread: Thread): number {
+  return thread.events.filter((e) => e.getId() !== thread.id && e.isRelation(RelationType.Thread)).length
 }
 
 // ── Reaction aggregation (PLANO-FASE-1-TRADUTORES §1.4) ───────────────────────────────────

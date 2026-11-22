@@ -40,6 +40,9 @@ export function createAcl(opts: AclOptions): Acl {
     // ADR-041: verbos de mídia de perfil — upload cleartext + gravação do avatar no gateway, pass-through.
     setAvatar: (file) => gateway.setAvatar(file),
     removeAvatar: () => gateway.removeAvatar(),
+    // Account preferences (language): straight server read and write — pass-through.
+    getAccountPreferences: (opts) => gateway.getAccountPreferences(opts),
+    setAccountPreferences: (patch) => gateway.setAccountPreferences(patch),
     getThreadUnread: async (id, root) => gateway.getThreadUnread(id, root),
     // ADR-074: busca no índice local e leitura pontual — pass-through.
     searchMessages: (query, opts) => gateway.searchMessages(query, opts),

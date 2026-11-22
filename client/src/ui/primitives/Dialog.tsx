@@ -29,6 +29,7 @@ export function Dialog({
   backLabel,
   onClose,
   closeLabel,
+  closeDisabled,
   footer,
   size = 'cotidiano',
   className,
@@ -45,6 +46,8 @@ export function Dialog({
   backLabel?: string
   onClose: () => void
   closeLabel?: string
+  // The × refused for now (the caller's `onClose` decides about Esc).
+  closeDisabled?: boolean
   footer?: ReactNode
   size?: Size
   // Optional surface modifier appended to the root class (e.g. the manage-modal sizing, ADR-038).
@@ -84,6 +87,7 @@ export function Dialog({
               className="ui-dialog__close"
               onClick={onClose}
               aria-label={closeLabel}
+              disabled={closeDisabled}
             >
               {GLYPH.close}
             </button>

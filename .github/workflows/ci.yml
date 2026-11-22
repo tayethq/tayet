@@ -5,12 +5,15 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   client:
     name: client (typecheck · boundary lint · tests · build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/checks
         with:
           package: client
@@ -19,7 +22,7 @@ jobs:
     name: escrow (typecheck · lint · unit · no cross-imports)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/checks
         with:
           package: escrow
@@ -28,7 +31,7 @@ jobs:
     name: agent (typecheck · lint · unit · audit · no cross-imports)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/checks
         with:
           package: agent
@@ -37,7 +40,7 @@ jobs:
     name: shared (typecheck · boundary lint · unit · no cross-imports)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/checks
         with:
           package: shared
@@ -46,7 +49,7 @@ jobs:
     name: sidecar (typecheck · lint · build · unit · audit · no cross-imports)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/checks
         with:
           package: sidecar
@@ -55,5 +58,5 @@ jobs:
     name: secret scan (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/secret-scan

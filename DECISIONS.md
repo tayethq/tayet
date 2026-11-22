@@ -95,10 +95,15 @@ The documents themselves live in the private development repository.
 - ADR-094 — Conversa em grupo: `kind: 'group'` marcado pelo state event `io.tayet.conversation` (`{ kind: 'group' }`; só o valor exato classifica), classificado em `roomToChannel` depois do mapa de DMs e antes da visibilidade; `participants?: UserId[]` só no grupo; nome e participantes derivados das pessoas em `join`/`invite`, sem a sessão, a custódia e `system`, nunca o nome da sala; dois gatilhos novos de `channel.changed`; nascimento em preset privado com participantes em PL 50; membros fixos, até 9 participantes, agente só o próprio e só na criação (só no produto); abrir o mesmo conjunto foca a sala existente; conversão em canal privado na mesma sala, irreversível no produto; atenção como DM; `openGroupConversation`/`convertToChannel`; `mpim` no sidecar com token de canal (estende ADR-026/044; toca ADR-029/045/056/057/073/087/090) (Aceito)
 - ADR-095 — Deploy parametrizado por domínio: um domínio base por deployment, cinco hosts derivados, valor persistido e imutável (Aceito)
 - ADR-096 — Export de dados: formato aberto em pasta e export por pessoa no app (Aceito)
+- ADR-097 — Mobile começa por web instalável: o mesmo client com layout estreito em pilha, instalado na tela inicial; service worker só para push; nativo com gatilho (Aceito)
 - ADR-100 — A conversa aberta é lida conforme as mensagens chegam: recibo na chegada com a conversa à vista, na thread aberta e na volta da aba (Aceito)
 - ADR-101 — Cartão de aprovação com até 25 opções e edição com botões pela camada Slack (Aceito)
 - ADR-103 — Formulários do agente: o agente abre um formulário para a pessoa que clicou ou mandou o comando (Aceito)
 - ADR-104 — Cartão de aprovação com vários aprovadores: o cartão declara quantas respostas pede (Aceito)
+- ADR-106 — Shell estreito: o login sobrevive à ida ao provedor, a pilha vale por largura e vive no histórico do navegador, e o projeto de teste de celular roda só os specs do estreito (Aceito)
+- ADR-109 — Páginas de login em duas línguas, pelo idioma do navegador (Aceito)
+- ADR-110 — Cadeia de suprimento do CI: actions por SHA, Dependabot só de actions, scan da imagem do agente no `Publish` e base `node` nova (Aceito)
+- ADR-111 — GitHub Release do agente com SBOM CycloneDX e atestado de proveniência (Proposto)
 
 ## Plans
 
@@ -130,6 +135,7 @@ The documents themselves live in the private development repository.
 - PLANO-GATES
 - PLANO-MEMBERSHIP-CANAIS
 - PLANO-MENCAO
+- PLANO-MOBILE
 - PLANO-PERFIL
 - PLANO-PERFIL-ORG
 - PLANO-PESSOAS
@@ -139,4 +145,4 @@ The documents themselves live in the private development repository.
 
 ---
 
-90 architecture decision records, 34 plans, tree 603046f2d8f1631848cc8a05f956b8cb3bfafe9a.
+95 architecture decision records, 35 plans, tree 5d1bce6f02311d13bbc75c2886cb0914fa932a0d.

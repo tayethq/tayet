@@ -7,6 +7,7 @@ import type { Person, UserId } from '../../src/acl'
 import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
 import { copy, fill } from '../support/copy'
 import { noExport } from '../support/data-export-fake'
+import { idleLanguage } from '../support/language-fake'
 
 // "Sua conta" do admin e a sub-tela "Pessoas" (manifesto account-access.md §7 item 1, §9.1). Os ids de
 // fixture têm shape de protocolo de propósito: cruzam como key e nunca chegam ao DOM.
@@ -41,7 +42,7 @@ function open(props: Partial<ComponentProps<typeof AccountSettings>> = {}) {
       onReset={() => {}}
       onSignOut={() => {}}
       theme="light"
-      onThemeChange={() => {}}
+      onThemeChange={() => {}} language={idleLanguage}
       onClose={() => {}}
       {...props}
     />

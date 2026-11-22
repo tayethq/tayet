@@ -1,0 +1,893 @@
+/* The narrow shell: below the width breakpoint the shell is a stack,
+   one screen at a time — the list, the conversation, the thread. Only rules under the width query live
+   here, one section per surface. Loaded after styles.css, so a rule here wins at the same specificity.
+   The safe areas of the device enter by env(safe-area-inset-*) (viewport-fit=cover in index.html); the
+   artboard's 47, 34 and 336px are scaffold. */
+
+/* ── Shell: one screen at a time ─────────────────────────────────────────────────────────────── */
+@media (width < 728px) {
+  .workspace,
+  .workspace:has(.thread-panel) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* The keyboard (§23.1 item 4; PLANO-MOBILE §0.15 K1): the visual viewport's height, written by
+     visual-viewport.ts, so the composer, the footers and the sheets end above it; 100dvh without it. */
+  .workspace {
+    height: var(--visual-viewport-height, 100dvh);
+  }
+  /* Every screen in the one cell. The covered ones stay laid out (their scroll survives) but are not
+     painted; `inert` (set by the Workspace) takes them out of the tab order and the accessibility tree. */
+  .workspace > .sidebar,
+  .workspace > .search-screen,
+  .workspace > .compose-screen,
+  .workspace > .main,
+  .workspace > .thread-panel {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+  .workspace > [data-stack-covered] {
+    visibility: hidden;
+  }
+  .sidebar {
+    border-right: 0;
+  }
+  .thread-panel {
+    border-left: 0;
+  }
+}
+
+/* ── Screen header: the top safe area ─────────────────────────────────────────── */
+@media (width < 728px) {
+  .ui-screen-header {
+    padding-top: calc(var(--space-4) + env(safe-area-inset-top));
+  }
+}
+
+/* ── Connection strip ─────────────────────────────────────────────────────────── */
+@media (width < 728px) {
+  .connection-strip {
+    flex: none;
+    margin: 0;
+    padding: var(--space-4) var(--space-16);
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-muted);
+    font-size: var(--font-size-meta);
+    line-height: var(--font-line-height-meta);
+    text-align: center;
+  }
+  .connection-strip--offline {
+    color: var(--color-danger);
+  }
+}
+
+/* ── List ────────────────────────────────────────────────────────────────────────────── */
+@media (width < 728px) {
+  /* Top: tile, name and "Nova conversa", on the narrow row height, under the top safe area. */
+  .sidebar__brand {
+    min-height: var(--density-estreito-row-height);
+    padding: var(--space-8) var(--space-4) var(--space-8) var(--space-12);
+    padding-top: calc(var(--space-8) + env(safe-area-inset-top));
+  }
+  .sidebar__brand-name {
+    font-size: var(--font-size-title);
+  }
+  .sidebar__compose {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: var(--density-touch-floor);
+    height: var(--density-touch-floor);
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--color-muted);
+    cursor: pointer;
+  }
+  .sidebar__compose:active {
+    background: var(--color-bg);
+  }
+  .sidebar__compose:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+  /* "buscar" (§23.2 item 3): a button the width of the list, on the touch floor, that opens the search. */
+  .search__field {
+    min-height: var(--density-touch-floor);
+  }
+  .search__open {
+    width: 100%;
+    font: inherit;
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-mono);
+    text-align: left;
+    cursor: pointer;
+  }
+  .search__open:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+  /* No "+" on the section labels: "Nova conversa" is on the top. */
+  .channel-list__section-add {
+    display: none;
+  }
+  /* A row shows --color-bg while pressed; no hover. */
+  .channel:active {
+    background: var(--color-bg);
+  }
+  /* Notifications notice: text on top, the primary button under it, the dismiss as a
+     touch target in the top right corner. */
+  .channel-list__notice {
+    margin: var(--space-8) var(--space-8) var(--space-4);
+    padding: var(--space-12) var(--space-4) var(--space-12) var(--space-12);
+  }
+  .channel-list__notice-text {
+    font-size: var(--font-size-ui);
+  }
+  .channel-list__notice-dismiss {
+    width: var(--density-touch-floor);
+    height: var(--density-touch-floor);
+    margin-top: calc(var(--space-8) * -1);
+    border-radius: var(--radius-md);
+  }
+  /* "Você": the narrow row height, over the bottom safe area. */
+  .sidebar__footer {
+    min-height: var(--density-estreito-row-height);
+    padding-bottom: calc(var(--space-8) + env(safe-area-inset-bottom));
+  }
+}
+
+/* ── Search screen (workspace.md §23.5 item 3, §23.10; PLANO-MOBILE M6 B1 to B4) ──────────────────────── */
+@media (width < 728px) {
+  .search-screen {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--color-surface);
+  }
+  /* The header: back and the field, the field on the accent border (it is the screen's focus). */
+  .search-screen__header {
+    padding-right: var(--space-12);
+  }
+  .search-screen__header .search {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+  }
+  .search-screen__header .search__field {
+    min-height: var(--density-touch-floor);
+    padding: 0 0 0 var(--space-12);
+    border-color: var(--color-accent);
+  }
+  /* The field at 16px (ADR-097 dec. 5, --font-size-field), so the phone does not zoom on focus. */
+  .search-screen__header .search__input {
+    font-size: var(--font-size-field);
+  }
+  /* ✕ "Limpar" with a touch-floor target. */
+  .search-screen__header .search__clear {
+    width: var(--density-touch-floor);
+    font-size: var(--font-size-ui);
+    height: calc(var(--density-touch-floor) - 2px);
+    border-radius: var(--radius-md);
+  }
+  .search-screen__header .search__clear:active {
+    background: var(--color-surface);
+  }
+  .search-screen__body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-4) var(--space-4) var(--space-12);
+  }
+  .search-screen__hint {
+    padding: var(--space-8) var(--space-12);
+  }
+  /* The results' list, outside the channel list here: the same reset as `.channel-list ul`. */
+  .search-screen .search-results ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .search-screen .search-results .channel-list__section-header {
+    padding: var(--space-12) var(--space-8) var(--space-4);
+  }
+  /* A hit on the narrow row height (§23.10), --color-bg while pressed and no hover (§23.1 item 6). */
+  .search-screen .search-hit {
+    min-height: var(--density-estreito-row-height);
+  }
+  .search-screen .search-hit:hover {
+    background: transparent;
+  }
+  .search-screen .search-hit--selected,
+  .search-screen .search-hit--selected:hover {
+    background: var(--color-accent-wash);
+  }
+  .search-screen .search-hit:active {
+    background: var(--color-bg);
+  }
+  /* Partial coverage: the fixed footer, above the keyboard and the bottom safe area. */
+  .search-screen .sidebar__coverage {
+    padding: var(--space-8) var(--space-16);
+    padding-bottom: calc(var(--space-8) + env(safe-area-inset-bottom));
+  }
+  :root[data-keyboard] .search-screen .sidebar__coverage {
+    padding-bottom: var(--space-8);
+  }
+}
+
+/* ── "Nova conversa" screen (new-conversation.md §11; PLANO-MOBILE M6) ───────────────────────────────── */
+@media (width < 728px) {
+  .compose-screen {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--color-surface);
+  }
+  /* Item 4: the name box and the filter like the description field — 44, 16px, raised over the surface. */
+  .compose-screen .compose-dialog__name {
+    min-height: var(--density-touch-floor);
+    background: var(--color-surface-raised);
+  }
+  .compose-screen .compose-dialog__name-input {
+    font-size: var(--font-size-field);
+  }
+  /* Item 11: the filter on the touch floor, its ✕ "Limpar" a touch-floor target. */
+  .compose-screen .compose-dialog__filter {
+    min-height: var(--density-touch-floor);
+    padding: 0 0 0 var(--space-12);
+  }
+  .compose-screen .compose-dialog__filter-input {
+    font-size: var(--font-size-field);
+  }
+  .compose-screen .compose-dialog__filter-clear {
+    width: var(--density-touch-floor);
+    height: calc(var(--density-touch-floor) - 2px);
+    border-radius: var(--radius-md);
+  }
+  /* Item 7: a row on the touch floor, --color-bg while pressed, no hover. */
+  .compose-screen .compose-dialog__picker-option {
+    min-height: var(--density-touch-floor);
+    font-size: var(--font-size-ui);
+  }
+  .compose-screen .compose-dialog__picker-option:hover:not(:disabled):not([aria-pressed='true']) {
+    background: transparent;
+  }
+  .compose-screen .compose-dialog__picker-option:active:not(:disabled):not([aria-pressed='true']) {
+    background: var(--color-bg);
+  }
+  /* Item 5: in channel mode the list reaches the body's edges, like the rows of the direct-message mode. */
+  .compose-screen .compose-dialog__people .compose-dialog__picker-list {
+    margin: 0 calc(var(--space-8) * -1);
+  }
+  /* Item 8: the whole chip is the button; the ✕ is decorative. */
+  .compose-screen .compose-dialog__chips,
+  .compose-screen .compose-dialog__dm-chips {
+    gap: var(--space-8);
+  }
+  .compose-screen .compose-dialog__chip {
+    padding: var(--space-8) var(--space-12) var(--space-8) var(--space-8);
+    border: 0;
+    font-family: var(--font-family-sans);
+    line-height: 1;
+    cursor: pointer;
+  }
+  .compose-screen .compose-dialog__chip:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+  /* Item 3: one button across the screen, in a fixed footer above the keyboard and the bottom safe area. */
+  .compose-screen__footer {
+    flex: none;
+    display: flex;
+    padding: var(--space-12) var(--space-16);
+    padding-bottom: calc(var(--space-12) + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--color-border);
+  }
+  :root[data-keyboard] .compose-screen__footer {
+    padding-bottom: var(--space-12);
+  }
+  .compose-screen__footer .ui-button {
+    flex: 1;
+  }
+}
+
+/* ── Account banners: a column, text on top and the action under it ───────────── */
+@media (width < 728px) {
+  .new-access-banner,
+  .reset-access-banner {
+    flex-direction: column;
+    align-items: stretch;
+    margin: var(--space-12) var(--space-12) 0;
+    padding: var(--space-12);
+  }
+  /* "Novo acesso": the quiet action closes the banner, with no gap and no bottom padding. */
+  .new-access-banner {
+    gap: 0;
+    padding-bottom: 0;
+  }
+  /* "Fui eu, dispensar": quiet, on the left, its text aligned with the title. */
+  .ui-button.new-access-banner__dismiss {
+    align-self: flex-start;
+    margin-left: calc(var(--space-8) * -1);
+    font-size: var(--font-size-ui);
+  }
+  .reset-access-banner__sweep {
+    width: auto;
+  }
+}
+
+/* ── "Your account": the language row stacks, the field on the touch floor at full width ─────── */
+@media (width < 728px) {
+  .account-settings__language {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-12);
+  }
+  .account-settings__language-control {
+    min-height: var(--density-touch-floor);
+    padding: 0 var(--space-12) 0 var(--space-16);
+    font-size: var(--font-size-field);
+  }
+}
+
+/* ── Conversation ────────────────────────────────────────────────────────────────────── */
+@media (width < 728px) {
+  /* The pinned panel and the composer take the banners' edges. */
+  .pinned-panel {
+    margin: var(--space-12) var(--space-12) 0;
+  }
+  .composer {
+    margin: 0 var(--space-12) var(--space-12);
+    margin-bottom: calc(var(--space-12) + env(safe-area-inset-bottom));
+  }
+}
+
+/* ── Composer (workspace.md §23.7 items 1, 2, 4 and 5; §23.10; PLANO-MOBILE §0.15) ───────────────── */
+@media (width < 728px) {
+  /* The card: --space-4 inside, --radius-lg (the card's own); the conversation's and the thread's alike. */
+  .composer--narrow {
+    padding: var(--space-4);
+  }
+  /* With the keyboard open it covers the system's bar: the bottom safe area does not add (K1). */
+  :root[data-keyboard] .composer {
+    margin-bottom: var(--space-12);
+  }
+  :root[data-keyboard] .ui-sheet {
+    padding-bottom: var(--space-8);
+  }
+  :root[data-keyboard] .ui-sheet[data-padding='form'] {
+    padding-bottom: var(--space-16);
+  }
+  /* Item 1: attach (+) · field · "Aa" · send, on the touch floor. */
+  .composer__line {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-4);
+  }
+  .composer--narrow .composer__field {
+    min-width: 0;
+  }
+  /* The field: 16px (ADR-097 dec. 5, --font-size-field), one line centred in the touch floor. */
+  .composer--narrow .composer__input {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: var(--density-touch-floor);
+    padding: 0 var(--space-4);
+    font-size: var(--font-size-field);
+  }
+  .composer--editing .composer__input {
+    padding-left: var(--space-12);
+  }
+  .composer--narrow .composer__input--rich > [contenteditable] {
+    min-height: calc(var(--font-size-field) * var(--font-line-height-body));
+  }
+  .composer--narrow .composer__attach,
+  .composer__format {
+    flex: none;
+    width: var(--density-touch-floor);
+    height: var(--density-touch-floor);
+    border-radius: var(--radius-md);
+  }
+  .composer__format {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--color-muted);
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-ui);
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+  }
+  .composer__format[aria-pressed='true'] {
+    color: var(--color-text);
+    background: var(--color-bg);
+  }
+  .composer__format:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .composer--narrow .ui-button.composer__send {
+    flex: none;
+    justify-content: center;
+    width: var(--density-touch-floor);
+    padding: 0;
+  }
+  /* Item 2: the bands above the line, inside the card, each with a bottom rule. */
+  .composer__band,
+  .composer--narrow .composer__toolbar {
+    margin: 0 0 var(--space-4);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .composer__band {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    min-height: var(--density-touch-floor);
+    padding: 0 0 0 var(--space-12);
+    color: var(--color-muted);
+    font-size: var(--font-size-meta);
+  }
+  .composer__band.composer__reply {
+    border-left: 0;
+  }
+  .composer__band-text {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .composer__band .composer__reply-label,
+  .composer__band-title {
+    overflow: hidden;
+    color: var(--color-text);
+    font-size: var(--font-size-ui);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--font-line-height-ui);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .composer__band .composer__reply-label > strong {
+    font-weight: inherit;
+  }
+  .composer__band .composer__reply-excerpt {
+    line-height: var(--font-line-height-meta);
+  }
+  .composer__band-close {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: var(--density-touch-floor);
+    height: var(--density-touch-floor);
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--color-muted);
+    cursor: pointer;
+  }
+  /* The formatting band: the six buttons of the toolbar, in order, on the touch floor. */
+  .composer--narrow .composer__toolbar {
+    padding: 0 0 var(--space-4);
+  }
+  .composer--narrow .composer__toolbar button {
+    width: var(--density-touch-floor);
+    height: var(--density-touch-floor);
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-body);
+  }
+  /* Item 4: the suggestion opens above the composer at the screen's width (out past the card's margin and
+     border), rules only on top and bottom, no radius; 236 a constant of the component (§23.10). */
+  .composer--narrow .composer__suggest {
+    right: calc((var(--space-12) + 1px) * -1);
+    bottom: calc(100% + 1px + var(--space-4));
+    left: calc((var(--space-12) + 1px) * -1);
+    max-height: 236px;
+    margin: 0;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+  .composer__suggest-lines {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .composer__suggest-line {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    min-width: 0;
+  }
+  .composer__suggest-line > .composer__suggest-command {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  /* The message being edited, marked in the timeline (§23.7 item 2; the artboard's highlight). */
+  .message[data-editing='true'] {
+    background: var(--color-accent-wash);
+    border-radius: var(--radius-md);
+  }
+}
+
+/* ── Link sheet (workspace.md §23.7 item 3, §23.9, §23.10) ──────────────────────────────────────── */
+@media (width < 728px) {
+  .link-sheet {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+  }
+  .link-sheet__title {
+    margin: 0;
+    font-size: var(--font-size-title);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--font-line-height-title);
+  }
+  .link-sheet__actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    margin-top: var(--space-4);
+  }
+  .link-sheet__actions .ui-button {
+    width: 100%;
+    font-size: var(--font-size-ui);
+  }
+}
+
+/* ── Timeline at rest (workspace.md §23.3 items 4, 5, 7, 8, 9, 11 and 14; §25.3 item 7) ──────── */
+@media (width < 728px) {
+  /* Item 4 (T7): a short conversation sits at the end, "Carregar mensagens anteriores" stays on top. The
+     automatic margin on the first row after the button takes the free space; once the rows overflow it
+     resolves to 0, so the JS bottom anchoring (Timeline.tsx) is left as it is. The empty state stays on
+     top (item 6). */
+  .timeline > :nth-child(1 of :not(.timeline__jump, .timeline__older, .timeline__empty)) {
+    margin-top: auto;
+  }
+  /* Item 5: the touch target on the text button. */
+  .timeline__older {
+    min-height: var(--density-touch-floor);
+    padding: 0 var(--space-8);
+  }
+  /* Item 7: the line of reactions on the touch target, the pills at 26 (OG-4). The "+" stays until the
+     sheet brings reacting (N3 a, owner 20/Nov/2026). */
+  .reactions {
+    min-height: var(--density-touch-floor);
+  }
+  /* Item 8: the thread summary on the touch target. */
+  .message__thread-summary {
+    min-height: var(--density-touch-floor);
+  }
+  /* Item 9: the quote is a touch target across the row; the unavailable one stays without touch. */
+  .message__quote {
+    width: 100%;
+    min-height: var(--density-touch-floor);
+    line-height: var(--font-line-height-meta);
+  }
+  .message__quote--unavailable {
+    min-height: 0;
+  }
+  /* Items 11 and 14, §25.3 item 7: "Tentar de novo" on the touch target, in the row and on the card. */
+  .message__retry-inline {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--density-touch-floor);
+  }
+  /* Item 14: the card takes the row's width; the options share its line evenly and wrap when they do
+     not fit, in the ui font (the Button already carries the touch floor here). */
+  .approval {
+    align-self: stretch;
+  }
+  .approval__options > .ui-button {
+    flex: 1 1 auto;
+    font-size: var(--font-size-ui);
+  }
+  /* Item 14: the footer of a single-answer card (sending, not sent, answered) on one line of the touch
+     target; on a card with several approvers, only the line of the viewer's own answer not sent. */
+  .approval__slot > .approval__footer,
+  .approval__answers > .approval__footer:has(.message__status--failed) {
+    min-height: var(--density-touch-floor);
+  }
+}
+
+/* ── Message actions by touch (workspace.md §23.8, §29 items 1, 3 and 5, §30 items 1 and 2) ──────────── */
+@media (width < 728px) {
+  /* No floating action bar, with any pointer (T6); no "+" at the end of the reactions: reacting is in the
+     sheet (§23.3 item 7). */
+  .message__actions,
+  .reactions .reaction-anchor {
+    display: none;
+  }
+  /* Item 8: "Mais ações", 44, where the wide bar sits (§11 item 4); shown under keyboard or screen-reader
+     focus (and on hover with a fine pointer, below). Hidden, it takes no pointer. */
+  .message__more {
+    position: absolute;
+    top: calc(var(--space-12) * -1);
+    right: var(--space-12);
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--density-touch-floor);
+    height: var(--density-touch-floor);
+    padding: 0;
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-overlay);
+    color: var(--color-text);
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .message:has(:focus-visible) .message__more {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .message__more:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+  /* Item 7 (N6 a): the held message over the scrim (2) and under the panel (4), not dimmed. */
+  .message[data-held] {
+    z-index: 3;
+    background: var(--color-surface);
+  }
+  /* §30 item 2: each pill a touch target 44 high, drawn at 26 (OG-4); the pill is drawn under the content. */
+  .reactions .reaction {
+    position: relative;
+    isolation: isolate;
+    min-height: var(--density-touch-floor);
+    background: transparent;
+    border-color: transparent;
+  }
+  .reactions .reaction:hover {
+    background: transparent;
+  }
+  .reactions .reaction::before {
+    content: '';
+    position: absolute;
+    inset: calc((var(--density-touch-floor) - 26px) / 2) 0;
+    z-index: -1;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+  }
+  .reactions .reaction--mine::before {
+    background: var(--color-accent-wash);
+    border-color: var(--color-accent);
+  }
+  /* Fine pointer on the narrow window: "Mais ações" on hover too (PLANO-MOBILE §0.10.1 item 4). */
+  @media (pointer: fine) {
+    .message:hover .message__more {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+  /* Coarse pointer on the narrow window, where the sheet exists: the row gives up the system's text
+     selection and the iOS callout of links and images; "Copiar texto" is in the sheet (§30 item 1, ajuste do
+     T4). */
+  @media (pointer: coarse) {
+    .message {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+  }
+}
+
+/* ── Action sheet (workspace.md §23.8 item 2, §23.10): the three reactions, round 44 on the floor, over a
+   rule; each action a tall row with its icon and text; the delete question and its two buttons ──────────── */
+@media (width < 728px) {
+  .message-sheet__reactions {
+    display: flex;
+    gap: var(--space-8);
+    margin-bottom: var(--space-4);
+    padding: var(--space-8) var(--space-8) var(--space-12);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .message-sheet__emoji {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: var(--density-touch-floor);
+    height: var(--density-touch-floor);
+    padding: 0;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    /* stylelint-disable-next-line declaration-property-value-disallowed-list -- 20px adjudicado: glifo das reações da folha, workspace.md §23.10 ([data-sheet-emoji], "20 cru") */
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .message-sheet__row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    width: 100%;
+    min-height: var(--density-estreito-row-height);
+    padding: 0 var(--space-12);
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-md);
+    color: var(--color-text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .message-sheet__row--danger {
+    color: var(--color-danger);
+  }
+  .message-sheet__row:active,
+  .message-sheet__emoji:active {
+    background: var(--color-bg);
+  }
+  .message-sheet__row:focus-visible,
+  .message-sheet__emoji:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+  .message-sheet__question {
+    margin: 0;
+    padding: var(--space-16) var(--space-12) var(--space-8);
+    font-weight: var(--font-weight-medium);
+  }
+  .message-sheet__confirm {
+    display: flex;
+    gap: var(--space-8);
+    padding: var(--space-8);
+  }
+  .message-sheet__confirm > .ui-button {
+    flex: 1 1 auto;
+    font-size: var(--font-size-ui);
+  }
+}
+
+/* ── Boot: the empty shell behind the card is one screen ──────────────────────── */
+@media (width < 728px) {
+  .boot-surface__skeleton {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .boot-surface__side {
+    border-right: 0;
+  }
+  .boot-surface__main {
+    display: none;
+  }
+}
+
+/* ── Media in the conversation (workspace.md §23.3 items 12 and 13, §23.10) ─────────────────────────── */
+@media (width < 728px) {
+  /* Item 13: the thumbnail and its waiting box at 4:3, up to 320 wide, --radius-md. The waiting box of an
+     image with no dimensions keeps its text for the screen reader, pushed out of sight. */
+  .message__thumb,
+  .message__thumb--sized {
+    width: min(320px, 100%);
+  }
+  .message__thumb > .message__image {
+    width: 100%;
+    max-width: none;
+    height: auto;
+    max-height: none;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+  }
+  .message__image--pending,
+  .message__image-wait {
+    display: block;
+    width: min(320px, 100%);
+    max-width: none;
+    max-height: none;
+    aspect-ratio: 4 / 3;
+    margin-top: var(--space-4);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-raised);
+  }
+  .message__image-wait {
+    overflow: hidden;
+    text-indent: 100%;
+    white-space: nowrap;
+  }
+  /* Item 13, failure: the label and "Tentar de novo", wrapping. */
+  .message__image-failed {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-8);
+    margin-top: var(--space-4);
+  }
+  /* Item 12: the link on the touch target; downloading, the name, the indicator and "Baixando…" on one line
+     of the touch target; failure, the name over the danger line and the danger Button at 44. */
+  .message__file {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--density-touch-floor);
+  }
+  .message__file-state {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: var(--space-8);
+    min-height: var(--density-touch-floor);
+  }
+  .message__file-state--failed {
+    row-gap: var(--space-4);
+  }
+  .message__file-state--failed > .message__file-name {
+    flex-basis: 100%;
+  }
+  .message__file-status {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-8);
+  }
+  .message__spinner {
+    width: var(--space-12);
+    height: var(--space-12);
+    border-color: var(--color-border);
+    border-top-color: var(--color-muted);
+  }
+  .ui-button.message__retry {
+    margin-left: 0;
+    padding: 0 var(--space-12);
+  }
+}
+
+/* ── Image screen (workspace.md §23.5 item 2, §25.2 items 6 and 7; PLANO-MOBILE §0.14 V4) ────────────── */
+@media (width < 728px) {
+  /* The screen header's geometry (§23.10): close and "Baixar" on the touch target, the title's size for the
+     author. */
+  .image-viewer__header {
+    min-height: var(--density-estreito-row-height);
+    padding: calc(var(--space-4) + env(safe-area-inset-top)) var(--space-4) var(--space-4) 0;
+  }
+  .image-viewer__close {
+    width: var(--density-touch-floor);
+    height: var(--density-touch-floor);
+    color: var(--color-text);
+  }
+  .image-viewer__download {
+    height: auto;
+    min-height: var(--density-touch-floor);
+    padding: 0 var(--space-12);
+  }
+  /* The image across the screen's width, centred in its height; no zoom. */
+  .image-viewer__body {
+    padding: 0 0 env(safe-area-inset-bottom);
+  }
+  .image-viewer__image {
+    width: 100cqw;
+    height: auto;
+    object-fit: contain;
+  }
+  /* Loading and failure: the --space-16 padding of the export (`--space-lg`); failure in a column. */
+  .image-viewer__body:has(> .image-viewer__loading, > .image-viewer__failed) {
+    padding: var(--space-16) var(--space-16) calc(var(--space-16) + env(safe-area-inset-bottom));
+  }
+  .image-viewer__failed {
+    flex-direction: column;
+    gap: var(--space-4);
+    text-align: center;
+  }
+  .image-viewer__failed-dot {
+    display: none;
+  }
+  .image-viewer__retry {
+    min-height: var(--density-touch-floor);
+    padding: 0 var(--space-12);
+  }
+}

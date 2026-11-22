@@ -1,6 +1,6 @@
-import { useEffect, useId, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
-import { Extension, type Editor } from '@tiptap/core'
+import { Extension, type Editor, type JSONContent } from '@tiptap/core'
 import { Plugin, TextSelection, type EditorState, type Transaction } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
@@ -8,7 +8,7 @@ import { Placeholder } from '@tiptap/extensions'
 import Mention from '@tiptap/extension-mention'
 import type { SuggestionKeyDownProps, SuggestionOptions, SuggestionProps } from '@tiptap/suggestion'
 import type { AgentColor, AgentCommand, User, UserId } from '@tayet/client'
-import { PaperPlane, List, Plus, At, Link } from '../icons'
+import { PaperPlane, List, Plus, At, Link, Check, Close, Edit, Reply } from '../icons'
 import { Avatar, Dialog, Field, Button } from '../primitives'
 import { initialsOf } from '../author'
 import { richExtensions } from './rich-schema'
@@ -17,6 +17,9 @@ import type { ComposeResult } from '../compose'
 import { isSafeHref } from './safe-href'
 import { t, GLYPH } from '../i18n'
 import { AgentAvatar, agentColorOf } from '../components/AgentAvatar'
+import { isCoarsePointer } from '../narrow'
+import type { LinkRequest } from './LinkSheet'
+import type { HistoryEntry } from './history'
 
 // Cap on the rendered candidate rows — the picker is a quick-pick, not a roster browser (mirrors the
 // textarea Composer's MENTION_LIMIT).
@@ -146,6 +149,23 @@ function commandTextSeparated(text: string, name: string): boolean {
   return text.startsWith(`/${name}`) && (rest === '' || /^\s/.test(rest))
 }
 
+// The narrow window's composer (workspace.md §23.7; PLANO-MOBILE §0.15) and the ↑/↓ history (§25.6), forwarded
+// by Composer. All optional: the inline edit island and the bare mounts stay as they are.
+export interface ComposerModeProps {
+  // Below the width breakpoint: one line, the bands, the link as a sheet.
+  narrow?: boolean
+  // The conversation on screen: "Aa" closes when it changes.
+  conversation?: string
+  // Editing from the bottom composer (§23.7 item 2, §23.8 item 5): the message's HTML, keyed by the message.
+  editTarget?: { key: string; html: string }
+  onSaveEdit?: (body: ComposeResult) => void
+  onCancelEdit?: () => void
+  // Narrow: the link opens as a sheet that the Workspace mounts (LinkSheet).
+  onOpenLink?: (request: LinkRequest) => void
+  // The ↑/↓ history (§25.6), newest first.
+  history?: HistoryEntry[]
+}
+
 // Shift+Enter: em lista, cria o PRÓXIMO item (splitListItem); fora, novo bloco (splitBlock). O
 // RichDoc não modela quebra-leve (hardBreak fora do schema por design, ADR-051) — daí "novo bloco",
 // não <br>. Retorna true (sempre trata a tecla).
@@ -177,7 +197,14 @@ export function RichComposer({
   initialHTML,
   onSave,
   onCancel,
-}: {
+  narrow = false,
+  conversation,
+  editTarget,
+  onSaveEdit,
+  onCancelEdit,
+  onOpenLink,
+  history,
+}: ComposerModeProps & {
   // `command`: the picked `/` command (ADR-093 dec. 7), handed as data with the body — absent otherwise.
   onSend: (body: ComposeResult, mentions: UserId[], command?: ComposerCommand) => void
   // Attachment: mesma assinatura do Composer. Ausente = sem botão de anexo (espelha o textarea, que
@@ -213,7 +240,28 @@ export function RichComposer({
   onCancel?: () => void
 }) {
   const compact = variant === 'compact'
-  const editing = onSave !== undefined
+  // Two edit modes: the inline island of the wide timeline (onSave) and the bottom composer of the narrow
+  // window (editTarget). The keymap and the suggestion rules are built once, so they read the live mode
+  // through a ref (the stale `editing` of the `/` rule, fixed in M5).
+  const inline = onSave !== undefined
+  const bottomEdit = editTarget !== undefined
+  const editing = inline || bottomEdit
+  const editingRef = useRef(editing)
+  editingRef.current = editing
+  const narrowRef = useRef(narrow)
+  narrowRef.current = narrow
+  const historyRef = useRef(history)
+  historyRef.current = history
+  // The history walk (§25.6): the entry shown and the document it left. While the document is still that one,
+  // ↑ and ↓ walk; an edit ends the walk. `brought` = the field holds text the history brought (Esc empties it).
+  const walk = useRef<{ index: number; shown: PMNode | null; brought: boolean }>({ index: -1, shown: null, brought: false })
+  // Set while the history writes the field: no suggestion opens over the text it brings.
+  const quietRef = useRef(false)
+  const walking = (doc: PMNode): boolean => quietRef.current || (walk.current.shown !== null && doc.eq(walk.current.shown))
+  // The draft put aside while editing from the bottom composer (E2 a): the editor's document, not its text.
+  const draftRef = useRef<JSONContent | null>(null)
+  // "Aa" (narrow): the formatting band, closed at birth and on a change of conversation.
+  const [formatOpen, setFormatOpen] = useState(false)
   const resolvedPlaceholder = placeholder ?? (compact ? t('composer.placeholderThread') : t('composer.placeholder'))
   // The extensions are built once and the composer outlives a change of conversation, so the
   // Placeholder reads the live value through a ref (same stale-closure guard as sendRef).
@@ -224,6 +272,9 @@ export function RichComposer({
   // closure). `cancelRef` guarda o onCancel só no modo edit (undefined no send → Esc segue default).
   const sendRef = useRef<() => void>(() => {})
   const cancelRef = useRef<(() => void) | undefined>(undefined)
+  // ↑/↓ and Esc of the history (§25.6), read by the keymap like sendRef.
+  const historyKeyRef = useRef<(dir: 'up' | 'down') => boolean>(() => false)
+  const escapeRef = useRef<() => boolean>(() => false)
   // The open popup (commands or mention), mirrored from the suggestion plugins. Two copies: React state
   // drives the popup render; a ref gives the suggestion's onKeyDown (a closure created once) the CURRENT
   // value without a stale read (same pattern as sendRef).
@@ -326,13 +377,19 @@ export function RichComposer({
       name: 'sendOnEnter',
       addKeyboardShortcuts() {
         return {
+          // N1 b (PLANO-MOBILE §0.15): on the narrow window with a coarse pointer Enter breaks the line, as
+          // Shift+Enter, and only the button sends or saves. Read at the key press. An open suggestion list
+          // takes Enter before this (it picks the row).
           Enter: () => {
+            if (narrowRef.current && isCoarsePointer()) return shiftEnterSplit(this.editor)
             sendRef.current()
             return true
           },
           'Shift-Enter': () => shiftEnterSplit(this.editor),
+          ArrowUp: () => historyKeyRef.current('up'),
+          ArrowDown: () => historyKeyRef.current('down'),
           Escape: () => {
-            if (!cancelRef.current) return false
+            if (!cancelRef.current) return escapeRef.current()
             cancelRef.current()
             return true
           },
@@ -350,6 +407,12 @@ export function RichComposer({
       suggestions: [
         {
           char: '@',
+          // No list while editing (ADR-051 addendum) nor over the text the history brought; otherwise the
+          // extension's own rule (a mention fits where the caret is).
+          allow: ({ state, range }) => {
+            if (editingRef.current || walking(state.doc)) return false
+            return !!state.doc.resolve(range.from).parent.type.contentMatch.matchType(state.schema.nodes.mention!)
+          },
           items: ({ query }): MentionItem[] =>
             (usersRef.current ?? [])
               .filter((u) => u.displayName.toLowerCase().includes(query.toLowerCase()))
@@ -369,7 +432,7 @@ export function RichComposer({
           // name to show and is left out.
           char: '/',
           allow: ({ state, range }) => {
-            if (editing || pastedRef.current || range.from !== 1) return false
+            if (editingRef.current || pastedRef.current || range.from !== 1 || walking(state.doc)) return false
             return reopenRef.current || state.doc.textBetween(range.to, state.doc.content.size) === ''
           },
           items: ({ query }): CommandItem[] => {
@@ -448,7 +511,9 @@ export function RichComposer({
       },
     },
     onUpdate: ({ editor: e }) => {
-      if (e.isEmpty) pastedRef.current = false
+      if (!e.isEmpty) return
+      pastedRef.current = false
+      walk.current = { index: -1, shown: null, brought: false }
     },
     // useEditor (TipTap 3) NÃO re-renderiza por transação por default; a toolbar espelha isActive
     // via aria-pressed, então precisa re-render a cada transação pra refletir marca/lista/seleção.
@@ -464,8 +529,14 @@ export function RichComposer({
     if (!editor) return
     const body = editorToComposeResult(editor)
     if (!body.text) return
-    if (editing) {
+    if (inline) {
       onSave(body)
+      return
+    }
+    // The bottom composer's edit (E1 b): the edit verb of today, with no mentions; the caller leaves the
+    // edit, and the draft comes back (below).
+    if (bottomEdit) {
+      onSaveEdit?.(body)
       return
     }
     // ADR-093 dec. 7: the chip leaves as data — `{ agent, name }` beside the body, whose text starts with
@@ -476,22 +547,115 @@ export function RichComposer({
     editor.commands.clearContent()
     pastedRef.current = false
   }
+  // ── The ↑/↓ history (§25.6; PLANO-MOBILE §0.15 H1 c, H2 a). An entry goes in by the edit path (setContent with
+  // the message's HTML) and counts as pasted, so a text starting with "/" never becomes a command. A command
+  // message comes back with its chip rebuilt from the live list — the attrs the pick writes, the hint and the
+  // agent's name from `commands` and `users` — and the rest of the text as the arguments; a command or agent no
+  // longer there skips the entry. A mention comes back as its "@nome" text. Sending it is a new message.
+  const bring = (entry: HistoryEntry): boolean => {
+    if (!editor) return false
+    let chip: MentionAttrs | undefined
+    if (entry.command) {
+      const { agent, name } = entry.command
+      const command = commandsRef.current?.find((c) => c.agent === agent && c.name === name)
+      const member = usersRef.current?.find((u) => u.id === agent)
+      if (!command || !member) return false
+      chip = { id: agent, label: member.displayName, command: name, ...(command.hint !== undefined && { hint: command.hint }) }
+    }
+    quietRef.current = true
+    try {
+      editor.commands.setContent(entry.html)
+      const lead = chip ? `/${chip.command}` : ''
+      const doc = editor.state.doc
+      if (chip && doc.textBetween(1, Math.min(1 + lead.length, doc.content.size)) === lead) {
+        editor.view.dispatch(editor.state.tr.replaceWith(1, 1 + lead.length, editor.schema.nodes.mention!.create(chip)))
+      } else chip = undefined
+      editor.commands.focus('end')
+    } finally {
+      quietRef.current = false
+    }
+    pastedRef.current = chip === undefined
+    walk.current = { ...walk.current, shown: editor.state.doc, brought: true }
+    return true
+  }
+  // ↑ starts only on an empty field in send mode with no suggestion open; while the field still shows the
+  // entry, ↑ and ↓ walk; ↓ past the newest empties the field.
+  const historyKey = (dir: 'up' | 'down'): boolean => {
+    if (!editor || editingRef.current || suggestRef.current) return false
+    const entries = historyRef.current ?? []
+    const w = walk.current
+    const on = w.shown !== null && editor.state.doc.eq(w.shown)
+    if (dir === 'up' && !on && !editor.isEmpty) return false
+    if (dir === 'down' && !on) return false
+    const step = dir === 'up' ? 1 : -1
+    for (let i = (on ? w.index : -1) + step; i >= 0 && i < entries.length; i += step) {
+      if (bring(entries[i]!)) {
+        walk.current.index = i
+        return true
+      }
+    }
+    if (dir === 'down') editor.commands.clearContent(true)
+    return on
+  }
+  // Esc empties the field the history filled (§25.6 item 2).
+  const escape = (): boolean => {
+    if (!editor || editingRef.current || !walk.current.brought) return false
+    editor.commands.clearContent(true)
+    return true
+  }
   useEffect(() => {
     sendRef.current = submit
-    cancelRef.current = editing ? onCancel : undefined
+    cancelRef.current = inline ? onCancel : bottomEdit ? onCancelEdit : undefined
+    historyKeyRef.current = historyKey
+    escapeRef.current = escape
   })
+
+  // Entering the bottom composer's edit puts the draft aside and brings the message in, with its formatting,
+  // into the live editor (initialHTML is read once, on creation); leaving it, by save or cancel, brings the
+  // draft back (E2 a). Another message while editing keeps the first draft.
+  const editKey = editTarget?.key
+  const editHtml = useRef(editTarget?.html)
+  editHtml.current = editTarget?.html
+  useLayoutEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    if (editKey !== undefined) {
+      if (draftRef.current === null) draftRef.current = editor.getJSON()
+      editor.commands.setContent(editHtml.current ?? '')
+      editor.commands.focus('end')
+    } else if (draftRef.current !== null) {
+      const draft = draftRef.current
+      draftRef.current = null
+      editor.commands.setContent(draft)
+      pastedRef.current = !editor.isEmpty
+    }
+  }, [editor, editKey])
+
+  // "Aa" closes on a change of conversation.
+  useEffect(() => setFormatOpen(false), [conversation])
 
   // Open the link dialog, pre-filled from the current editor state: a selection seeds "Texto"; a
   // caret inside an existing link seeds "URL" with its href and flags `editing`. The editor's
   // selection persists in ProseMirror while focus moves to the dialog input, so submit re-reads it.
+  // On the narrow window the request goes up to the Workspace, which mounts the sheet (LinkSheet).
   const openLinkDialog = (): void => {
     if (!editor) return
     const { from, to, empty } = editor.state.selection
-    const editing = editor.isActive('link')
+    const inLink = editor.isActive('link')
     const text = empty ? '' : editor.state.doc.textBetween(from, to)
-    const url = editing ? String(editor.getAttributes('link').href ?? '') : ''
+    const url = inLink ? String(editor.getAttributes('link').href ?? '') : ''
+    if (onOpenLink) {
+      onOpenLink({
+        text,
+        url,
+        editing: inLink,
+        apply: (label, href) => applyLink(label, href, inLink),
+        remove: unsetLink,
+        returnFocus: editor.view.dom,
+      })
+      return
+    }
     setLinkError(false)
-    setLinkDialog({ text, url, editing })
+    setLinkDialog({ text, url, editing: inLink })
   }
 
   const closeLinkDialog = (): void => {
@@ -511,23 +675,31 @@ export function RichComposer({
       setLinkError(true)
       return
     }
+    applyLink(linkDialog.text, href, linkDialog.editing)
+    setLinkDialog(null)
+    setLinkError(false)
+  }
+  // The edit itself, shared by the Dialog and the sheet (the href already passed barrier 1).
+  function applyLink(text: string, href: string, inLink: boolean): void {
+    if (!editor) return
     const { empty } = editor.state.selection
-    if (linkDialog.editing || !empty) {
+    if (inLink || !empty) {
       editor.chain().focus().extendMarkRange('link').setLink({ href }).run()
     } else {
-      const label = linkDialog.text.trim() || href
+      const label = text.trim() || href
       editor
         .chain()
         .focus()
         .insertContent({ type: 'text', text: label, marks: [{ type: 'link', attrs: { href } }] })
         .run()
     }
-    setLinkDialog(null)
-    setLinkError(false)
+  }
+  function unsetLink(): void {
+    editor?.chain().focus().extendMarkRange('link').unsetLink().run()
   }
 
   const removeLink = (): void => {
-    editor?.chain().focus().extendMarkRange('link').unsetLink().run()
+    unsetLink()
     setLinkDialog(null)
     setLinkError(false)
   }
@@ -598,7 +770,18 @@ export function RichComposer({
                 pick(suggest, item)
               }}
             >
-              {item.kind === 'command' ? (
+              {item.kind === 'command' && narrow ? (
+                // §23.7 item 4: two lines on the narrow window — the name, the agent's avatar and name; under
+                // them the description.
+                <span className="composer__suggest-lines">
+                  <span className="composer__suggest-line">
+                    <span className="composer__suggest-command">/{item.name}</span>
+                    <AgentAvatar color={item.agentColor} size="gestao" />
+                    <span className="composer__suggest-agent">{item.agentName}</span>
+                  </span>
+                  <span className="composer__suggest-description">{item.description}</span>
+                </span>
+              ) : item.kind === 'command' ? (
                 <>
                   <span className="composer__suggest-command">/{item.name}</span>
                   <span className="composer__suggest-description">{item.description}</span>
@@ -678,7 +861,7 @@ export function RichComposer({
         onMouseDown={(e) => e.preventDefault()}
         onClick={openLinkDialog}
       >
-        <Link />
+        <Link size={narrow ? 20 : undefined} />
       </button>
       <button
         type="button"
@@ -689,7 +872,7 @@ export function RichComposer({
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => editor?.chain().focus().toggleBulletList().run()}
       >
-        <List />
+        <List size={narrow ? 20 : undefined} />
       </button>
       <button
         type="button"
@@ -709,15 +892,16 @@ export function RichComposer({
   // (menção); à direita o send. O @ insere o caractere "@", que o suggestion detecta e abre o picker
   // (com `users` wired) — teclado e botão unificados. O send é o Button do tier (workspace.md §4.11),
   // desabilitado com o campo vazio; full = rótulo + ícone à direita; compact = só o ícone.
+  const attach = onSendAttachment && (
+    <label className="composer__attach" aria-label={t('composer.attach')} title={t('composer.attach')}>
+      <Plus size={narrow ? 20 : undefined} />
+      <input type="file" className="composer__file" onChange={pickFile} disabled={disabled} />
+    </label>
+  )
   const actions = (
     <div className="composer__actions">
       <div className="composer__actions-left">
-        {onSendAttachment && (
-          <label className="composer__attach" aria-label={t('composer.attach')} title={t('composer.attach')}>
-            <Plus />
-            <input type="file" className="composer__file" onChange={pickFile} disabled={disabled} />
-          </label>
-        )}
+        {attach}
         <button
           type="button"
           className="composer__mention"
@@ -843,9 +1027,83 @@ export function RichComposer({
     </div>
   )
 
+  // ── The narrow window (workspace.md §23.7 items 1, 2 and 5; PLANO-MOBILE §0.15). One line inside the card:
+  // attach (+) · field · "Aa" · send (primary, icon only); no mention button. Above the line, inside the card,
+  // the bands: reply, edit, formatting. Editing: attach goes, send becomes "Salvar". The same for the
+  // conversation and the thread.
+  if (narrow && !inline) {
+    const close = (label: string, onClick: (() => void) | undefined, reply = false) => (
+      <button
+        type="button"
+        className={reply ? 'composer__band-close composer__reply-cancel' : 'composer__band-close'}
+        onClick={onClick}
+        aria-label={label}
+        title={label}
+      >
+        <Close size={20} />
+      </button>
+    )
+    const empty = !editor?.getText().trim()
+    return (
+      <div className={['composer composer--narrow', compact && 'composer--compact', bottomEdit && 'composer--editing'].filter(Boolean).join(' ')}>
+        {popup}
+        {!compact && !bottomEdit && replyingTo && (
+          <div className="composer__band composer__reply" role="status">
+            <Reply />
+            <span className="composer__band-text">
+              <span className="composer__reply-label">
+                {t('composer.replyingTo')}{' '}
+                {replyingTo.authorAgent !== undefined && <AgentAvatar color={replyingTo.authorAgent} size="gestao" />}
+                <strong>{replyingTo.author}</strong>
+              </span>
+              <span className="composer__reply-excerpt">{replyingTo.excerpt}</span>
+            </span>
+            {close(t('composer.cancelReply'), onCancelReply, true)}
+          </div>
+        )}
+        {bottomEdit && (
+          <div className="composer__band composer__band--edit" role="status">
+            <Edit />
+            <span className="composer__band-text composer__band-title">{t('composer.editing')}</span>
+            {close(t('composer.cancelEdit'), onCancelEdit)}
+          </div>
+        )}
+        {formatOpen && toolbar}
+        <div className="composer__line">
+          {!bottomEdit && attach}
+          {input}
+          <button
+            type="button"
+            className="composer__format"
+            aria-label={t('composer.formatting')}
+            title={t('composer.formatting')}
+            aria-pressed={formatOpen}
+            disabled={disabled}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setFormatOpen((open) => !open)}
+          >
+            {GLYPH.formatToggle}
+          </button>
+          <Button
+            variant="fill"
+            size="cotidiano"
+            className="composer__send"
+            onClick={submit}
+            disabled={disabled || empty}
+            aria-label={bottomEdit ? t('composer.editSave') : t('composer.send')}
+            title={bottomEdit ? t('composer.editSave') : t('composer.send')}
+          >
+            {bottomEdit ? <Check size={20} /> : <PaperPlane />}
+          </Button>
+        </div>
+        {!onOpenLink && linkDialogEl}
+      </div>
+    )
+  }
+
   // Edit mode (ADR-051 PR-5b): toolbar + editor + Save/Cancel, no action-row, no reply banner, no
   // mention picker (the row never passes `users`). The link dialog stays — the toolbar keeps Link.
-  if (editing) {
+  if (inline) {
     return (
       <div className="composer composer--edit">
         {toolbar}

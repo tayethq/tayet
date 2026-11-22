@@ -75,11 +75,11 @@ describe('action bar (§11 item 4)', () => {
       b.getAttribute('title'),
     )
 
-  it('React · Reply · Thread on a message of someone else, no "More"', () => {
+  it('React · Reply · Thread · Copy on a message of someone else, no "More"', () => {
     const { container } = render(
       <Timeline messages={[msg('a')]} usersById={usersById} onReact={() => {}} onReply={() => {}} onOpenThread={() => {}} />,
     )
-    expect(titles(container)).toEqual([copy.timeline.reactOpen, copy.timeline.reply, copy.timeline.replyInThread])
+    expect(titles(container)).toEqual([copy.timeline.reactOpen, copy.timeline.reply, copy.timeline.replyInThread, copy.timeline.copyText])
   })
 
   it('+ Edit · Delete on one\'s own', () => {
@@ -98,6 +98,7 @@ describe('action bar (§11 item 4)', () => {
       copy.timeline.reactOpen,
       copy.timeline.reply,
       copy.timeline.replyInThread,
+      copy.timeline.copyText,
       copy.timeline.editMessage,
       copy.timeline.deleteMessage,
     ])

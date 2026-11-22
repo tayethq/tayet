@@ -164,7 +164,9 @@ test('access reset: approval, giving up without a burn, others out, everyone bac
       const popup = await clickAndCatchWindow(pageA, confirm.getByRole('button', { name: ACCOUNT.reset, exact: true }))
       await expect(confirm.getByRole('status')).toHaveText(ACCOUNT.resetPending)
       await popup.getByRole('link', { name: 'Cancel' }).click()
-      await expect(popup.getByText('Identity reset cancelled.')).toBeVisible()
+      // The MAS reset page is the stock SPA, translated by the MAS from the context's Accept-Language
+      // (pt-BR, pinAppLocale): its pt-BR heading is this one, in English ("Identity reset cancelled." in en).
+      await expect(popup.getByText('Digital identity reset cancelled', { exact: true })).toBeVisible()
       // The MAS page stays open ("You can close this window"); closing it is what the app can see.
       await popup.close()
       await expect(confirm.getByRole('status')).toHaveText(ACCOUNT.resetNotDone)

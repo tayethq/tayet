@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { render, cleanup, act, waitFor } from '@testing-library/react'
+import { render, cleanup, act, waitFor, fireEvent } from '@testing-library/react'
 import { Workspace } from '../../src/ui/components/Workspace'
 import { MediaProvider } from '../../src/ui/MediaContext'
 import { createAcl } from '../../src/acl'
@@ -262,8 +262,14 @@ describe('DOM render-scan (P1 on screen)', () => {
         </MediaProvider>,
       )
 
+    // A file is fetched on the click (PLANO-MOBILE §0.14 V2 b): each mount clicks its link first.
+    const clickFile = (view: ReturnType<typeof mount>): void => {
+      fireEvent.click(view.getByRole('link', { name: /notes\.pdf/ }))
+    }
+
     // Waiting: the resolver never settles.
     const waiting = mount(() => new Promise(() => {}))
+    clickFile(waiting)
     expect(waiting.container.textContent).toContain(copy.timeline.downloading)
     scan(waiting.container)
     waiting.unmount()
@@ -272,6 +278,7 @@ describe('DOM render-scan (P1 on screen)', () => {
     const failed = mount(async () => {
       throw new Error('media fetch failed: M_UNKNOWN_TOKEN mxc://tayet.local/filesecret')
     })
+    clickFile(failed)
     await waitFor(() => expect(failed.getAllByRole('button', { name: copy.timeline.retry })).toHaveLength(2))
     expect(failed.container.textContent).toContain(copy.timeline.downloadFailed)
     scan(failed.container)

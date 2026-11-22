@@ -22,6 +22,8 @@ export const GLYPH = {
   bold: 'B',
   italic: 'I',
   strike: 'S',
+  // The narrow composer's formatting toggle (workspace.md §23.7 item 1).
+  formatToggle: 'Aa',
 } as const
 
 // Atalho da busca, por plataforma.

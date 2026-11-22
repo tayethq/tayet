@@ -4,6 +4,7 @@ import type { AclTelemetry } from '@tayet/client'
 import { Boot } from './components/Boot'
 import { loadTheme, applyTheme } from './theme'
 import { t, resolveLocale, applyLocale } from './i18n'
+import { trackVisualViewport } from './visual-viewport'
 // Self-hosted fonts (ADR-027 / PLANO §0.2): bundled via @fontsource, NO third-party CDN — aligned
 // with the privacy thesis. Hanken Grotesk is the variable upright axis (covers weights 400 + 500);
 // IBM Plex Mono ships the two static weights we use. Family names are mapped in the token source
@@ -13,6 +14,7 @@ import '@fontsource-variable/hanken-grotesk/index.css'
 import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
 import './styles.css'
+import './styles.narrow.css'
 
 // App bootstrap. Thin by design and NOT part of the CI gate (the render-scan is — see test/ui). The
 // async connect now lives inside <Boot/> as React state, so any auth failure renders a neutral error
@@ -25,10 +27,12 @@ const telemetry: AclTelemetry = {
 const serverUrl = import.meta.env.VITE_SERVER_URL ?? 'http://localhost:8008'
 const envToken = import.meta.env.VITE_SESSION_TOKEN
 const clientId = import.meta.env.VITE_OIDC_CLIENT_ID ?? ''
-const ssoLabel = import.meta.env.VITE_SSO_LABEL ?? t('boot.accountFallback')
 
 applyTheme(loadTheme()) // antes do render: evita flash-of-wrong-theme
 applyLocale(resolveLocale()) // antes do render: lang e copy no locale do dispositivo (ADR-080 D2)
+trackVisualViewport() // the keyboard on the narrow window (visual-viewport.ts)
+// After applyLocale: the fallback is copy, so it reads the device's language.
+const ssoLabel = import.meta.env.VITE_SSO_LABEL ?? t('boot.accountFallback')
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Boot

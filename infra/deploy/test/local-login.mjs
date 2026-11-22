@@ -6,6 +6,10 @@
 // e só vai para o campo do formulário do Dex: não aparece em log nem em saída. Sem trace, vídeo ou
 // screenshot. O Chromium resolve o domínio e os subdomínios para 127.0.0.1:<HTTPS_PORT> e ignora o erro de
 // certificado (quem valida a cadeia é o curl do local-install.sh).
+//
+// Duas passadas. A primeira, com o navegador em pt-BR, faz o login inteiro. A segunda, com o navegador em
+// inglês, só vai até a página de login do MAS e confere o nome do provedor da casa em inglês, "your company
+// account" (ADR-109, L5): o `human_name` do template de deploy é o padrão "a conta da empresa".
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
@@ -30,13 +34,12 @@ const browser = await chromium.launch({
 let ok = false
 try {
   const context = await browser.newContext({ ignoreHTTPSErrors: true })
-  // Locale do app, não do navegador (como o tier E2E): as páginas do MAS e do Dex ficam em inglês.
+  // The app sees a Portuguese browser and every request says so (Accept-Language), so the MAS login
+  // pages come in pt-BR too. The Dex pages are English only.
+  await context.setExtraHTTPHeaders({ 'Accept-Language': 'pt-BR' })
   await context.addInitScript(() => {
-    try {
-      localStorage.setItem('tayet.locale', 'pt-BR')
-    } catch {
-      // Sem storage, o app cai no navigator.language.
-    }
+    Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR'], configurable: true })
+    Object.defineProperty(navigator, 'language', { get: () => 'pt-BR', configurable: true })
   })
   const page = await context.newPage()
   page.setDefaultTimeout(30_000)
@@ -65,7 +68,7 @@ try {
     if (onApp(url.href)) break
     if (linkPage.test(url.pathname)) {
       log('MAS: página de vínculo do upstream')
-      await page.getByRole('button', { name: /^(Create Account|Continue|Link)/ }).first().click()
+      await page.getByRole('button', { name: /^(Criar Conta|Create Account|Continuar|Continue|Link)/ }).first().click()
     } else {
       log('MAS: consentimento')
       await page.getByRole('button', { name: 'Continuar', exact: true }).click()
@@ -81,6 +84,28 @@ try {
     .getByRole('button', { name: '#all' })
   await orgChannel.waitFor({ timeout: 60_000 })
   log('canal da organização #all na lista de canais')
+  await context.close()
+
+  // Second pass: a browser in English, up to the MAS login page. No credentials.
+  const en = await browser.newContext({ ignoreHTTPSErrors: true })
+  await en.setExtraHTTPHeaders({ 'Accept-Language': 'en-US' })
+  await en.addInitScript(() => {
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US'], configurable: true })
+    Object.defineProperty(navigator, 'language', { get: () => 'en-US', configurable: true })
+  })
+  const pageEn = await en.newPage()
+  pageEn.setDefaultTimeout(30_000)
+  await pageEn.goto(`${APP}/`)
+  const ssoEn = pageEn.getByRole('button', { name: /^Continue with/ })
+  await ssoEn.waitFor()
+  log(`app em inglês: botão "${(await ssoEn.innerText()).trim()}"`)
+  await ssoEn.click()
+  await pageEn.waitForURL((u) => u.origin === AUTH)
+  const company = pageEn.getByRole('link', { name: 'Continue with your company account', exact: true })
+  await company.waitFor()
+  const lang = await pageEn.evaluate(() => document.documentElement.lang)
+  if (lang !== 'en') throw new Error(`MAS em inglês com <html lang="${lang}">`)
+  log(`MAS em inglês: "Continue with your company account", <html lang="en">`)
   ok = true
 } catch (err) {
   // Só a mensagem: o Playwright não põe valor de campo nela, e a senha nunca é argumento de log.

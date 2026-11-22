@@ -51,7 +51,10 @@ const alice: User = { id: ALICE_ID, displayName: 'Alice Souza', kind: 'member' }
 const ROW = [
   'article',
   'li',
-  'h2',
+  // The conversation header's name: its row is the whole header, where the agent's block sits before
+  // the heading.
+  'h2:not(.channel-header__name)',
+  '.channel-header',
   '[role="option"]',
   '.message__quote',
   '.composer__reply-label',
@@ -159,7 +162,11 @@ describe('gate "agente sem marca" — Workspace (timeline, thread, quote, reply 
   it('DM with the agent: the header carries the avatar and "operado por"', () => {
     const { container } = mountWorkspace(agent, 'dm')
     expectEveryNameMarked(container)
-    expect(container.querySelector('.channel-header__name [data-agent-avatar]')).not.toBeNull()
+    // A block before the name, not inside its line.
+    const block = container.querySelector('.channel-header > .channel-header__agent')
+    expect(block?.querySelector('[data-agent-avatar]')).not.toBeNull()
+    expect(block?.nextElementSibling?.classList.contains('channel-header__heading')).toBe(true)
+    expect(container.querySelector('.channel-header__name [data-agent-avatar]')).toBeNull()
     expect(container.querySelector('[data-agent-operator]')?.textContent).toBe(
       fill(copy.agent.operatedBy, { name: 'Alice Souza' }),
     )

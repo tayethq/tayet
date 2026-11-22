@@ -113,7 +113,7 @@ services:
     # build, mesmo entrypoint e contrato de env do dev-stack. Um processo por tenant,
     # co-locado (ADR-047), alcançável SÓ same-origin via /escrow no Caddy — sem endpoint
     # público próprio, sem porta publicada. node:22-bookworm-slim, mesmo digest do dev.
-    image: node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752  # node:22-bookworm-slim
+    image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee  # node:22-bookworm-slim
     restart: unless-stopped
     depends_on:
       mas:
@@ -163,7 +163,7 @@ services:
     # `npm ci --omit=dev` DENTRO desta mesma imagem (deps Linux-nativas, sem depender do Node do VPS).
     # O `deploy.sh up` só sobe este serviço numa SEGUNDA fase, depois de provisionar o cofre e cunhar o
     # token; com o opt-out do ADR-069 dec. 11 (secrets/agent.disabled) ele fica parado.
-    image: node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752  # node:22-bookworm-slim
+    image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee  # node:22-bookworm-slim
     restart: unless-stopped
     depends_on:
       synapse:

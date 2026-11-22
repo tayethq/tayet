@@ -76,6 +76,72 @@ export function parseSessionBlob(session: OpaqueSession): ParsedSession {
   return { oidc: false, accessToken: raw }
 }
 
+// ── Login state that survives the trip to the provider. ─────────────────────────────────────────
+// The SDK keeps the outbound state (PKCE verifier, nonce, server) in sessionStorage under `mx_oidc_*`,
+// with no public option to change the store. A return that lands in a fresh browsing context (a new
+// tab, or the installed app reopening the page) has an empty sessionStorage and the code exchange
+// fails. So right after the outbound URL is built, the entries are copied to localStorage under one
+// key of our own, stamped with the time; on return, before the exchange, the missing ones are put
+// back. The copy lives at most as long as the SDK's own stale-state age (15 minutes) and is removed
+// on return, whatever the outcome. Storage errors are swallowed: without the copy the login works as
+// it did before. The values are never logged or put in an error message.
+const SDK_STATE_PREFIX = 'mx_oidc_'
+const LOGIN_STATE_COPY_KEY = 'tayet.login-state-copy'
+export const LOGIN_STATE_COPY_MAX_AGE_MS = 15 * 60 * 1000
+
+interface LoginStateCopy {
+  savedAt: number
+  entries: Record<string, string>
+}
+
+function copyLoginState(): void {
+  try {
+    const entries: Record<string, string> = {}
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const key = window.sessionStorage.key(i)
+      if (key === null || !key.startsWith(SDK_STATE_PREFIX)) continue
+      const value = window.sessionStorage.getItem(key)
+      if (value !== null) entries[key] = value
+    }
+    if (Object.keys(entries).length === 0) return
+    const copy: LoginStateCopy = { savedAt: Date.now(), entries }
+    window.localStorage.setItem(LOGIN_STATE_COPY_KEY, JSON.stringify(copy))
+  } catch {
+    // Storage unavailable or full: the login goes on without the copy.
+  }
+}
+
+function clearLoginStateCopy(): void {
+  try {
+    window.localStorage.removeItem(LOGIN_STATE_COPY_KEY)
+  } catch {
+    // Storage unavailable: nothing to clear.
+  }
+}
+
+// Put back the entries the current sessionStorage lacks; never overwrite one that exists. A copy past
+// its age, or one that does not parse, is removed as it is read.
+function restoreLoginState(): void {
+  try {
+    const raw = window.localStorage.getItem(LOGIN_STATE_COPY_KEY)
+    if (raw === null) return
+    const copy = JSON.parse(raw) as Partial<LoginStateCopy> | null
+    const savedAt = copy?.savedAt
+    const age = typeof savedAt === 'number' ? Date.now() - savedAt : Number.NaN
+    if (!(age >= 0 && age < LOGIN_STATE_COPY_MAX_AGE_MS) || typeof copy?.entries !== 'object' || copy.entries === null) {
+      clearLoginStateCopy()
+      return
+    }
+    for (const [key, value] of Object.entries(copy.entries)) {
+      if (!key.startsWith(SDK_STATE_PREFIX) || typeof value !== 'string') continue
+      if (window.sessionStorage.getItem(key) === null) window.sessionStorage.setItem(key, value)
+    }
+  } catch {
+    // Unreadable copy or storage unavailable: drop the copy; the exchange runs on what it has.
+    clearLoginStateCopy()
+  }
+}
+
 // Ida (ADR-032 D3): discover the OP, build the authorize URL. The SDK stashes PKCE/state itself (in
 // sessionStorage, prefix `mx_oidc_`) and generates the device scope with a fresh random device id.
 // `serverUrl` is the neutral product name for the homeserver base url (the SDK needs it both to
@@ -88,7 +154,7 @@ export async function buildLoginUrl(opts: {
 }): Promise<string> {
   const tmp = createClient({ baseUrl: opts.serverUrl })
   const metadata = await tmp.getAuthMetadata()
-  return generateOidcAuthorizationUrl({
+  const url = await generateOidcAuthorizationUrl({
     metadata,
     clientId: opts.clientId,
     redirectUri: redirectUri(),
@@ -96,6 +162,8 @@ export async function buildLoginUrl(opts: {
     nonce: crypto.randomUUID(),
     loginHint: opts.loginHint,
   })
+  copyLoginState()
+  return url
 }
 
 // Volta (ADR-032 D3/D4): exchange the code (read from the current URL) for a renewable session and
@@ -107,6 +175,7 @@ export async function completeLogin(): Promise<OpaqueSession> {
   const code = params.get('code')
   const state = params.get('state')
   if (!code || !state) throw new Error('not an OIDC callback')
+  restoreLoginState()
   // Classificação de rede do exchange (PLANO-BOOT-STORE-ORFAO §8 item 11), mesmo regime assimétrico
   // do connect (matrix-client.ts isNetworkFailure): rejeição de transporte é o único sinal POSITIVO
   // de rede; ausência dele = falha comum. O tipo não sobrevive ao SDK aqui — o catch de
@@ -135,6 +204,7 @@ export async function completeLogin(): Promise<OpaqueSession> {
     throw sawTransportFailure ? new ConnectionError() : new Error('OIDC login failed')
   } finally {
     globalThis.fetch = realFetch
+    clearLoginStateCopy()
   }
   // SEM userId/deviceId: a identidade é resolvida via whoami no connect (§8.L25). Aqui guardamos só o
   // material de refresh; o sub do id token (não-canônico) deliberadamente NÃO entra no blob.

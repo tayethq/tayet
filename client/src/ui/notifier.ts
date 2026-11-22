@@ -25,6 +25,9 @@ export interface NotifierDeps {
   getSelectedId(): ChannelId | undefined
   select(id: ChannelId): void
   getMembers(id: ChannelId): Promise<User[]>
+  // The thread that covers the conversation on a narrow window (the stack's thread screen). With it on
+  // screen only that thread's replies are in view; absent or undefined, the whole conversation is.
+  getThreadOnScreen?(): MessageId | undefined
 }
 
 // Injected like TabLockEnv (tab-lock.ts): the unit tests drive a fake clock and record notify calls.
@@ -117,9 +120,13 @@ export function createNotifier(deps: NotifierDeps, env: NotifierEnv = browserNot
     return p
   }
 
-  // Dec. 4: the user is looking at this very channel.
-  const suppressed = (channelId: ChannelId): boolean =>
-    deps.getSelectedId() === channelId && env.isVisible() && env.hasFocus()
+  // The user is looking at this very channel (with the narrow stack's thread on screen, at that
+  // thread: a message of the conversation's timeline is not in view and notifies as usual).
+  const suppressed = (channelId: ChannelId, message: Message): boolean => {
+    if (deps.getSelectedId() !== channelId || !env.isVisible() || !env.hasFocus()) return false
+    const thread = deps.getThreadOnScreen?.()
+    return thread === undefined || message.threadParent === thread
+  }
 
   const show = (channelId: ChannelId, title: string, body: string): void => {
     if (disposed) return
@@ -137,7 +144,7 @@ export function createNotifier(deps: NotifierDeps, env: NotifierEnv = browserNot
     const channel = deps.getChannel(channelId)
     if (!channel || channel.archived) return
     if (body === undefined && !shouldNotify(message, channel)) return
-    if (env.permission() !== 'granted' || suppressed(channelId)) return
+    if (env.permission() !== 'granted' || suppressed(channelId, message)) return
     const text = body ?? previewOf(message.body)
     if (channel.kind === 'dm') {
       show(channelId, channel.peerAgent ? t('notifications.titleDmAgent', { name: channel.name }) : channel.name, text)

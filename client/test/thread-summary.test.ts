@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { MatrixEvent, ThreadEvent } from 'matrix-js-sdk'
+import { EventStatus, MatrixEvent, ThreadEvent } from 'matrix-js-sdk'
 import { MatrixGateway } from '../src/acl/internal/matrix-client'
 import { eventToMessage, threadSummaryOf, type Ctx } from '@tayet/shared/internal'
 import type { AclTelemetry, DomainEvent, Message } from '../src/acl'
@@ -94,6 +94,63 @@ describe('threadSummary — derivation (ADR-066 dec. 2)', () => {
   it('a Thread at zero (replies redacted) → no summary, even with a stale aggregation', () => {
     const live: Ctx = { ...ctx, threadFor: () => fakeThread(0) as never }
     expect(threadSummaryOf(rawRoot({ count: 2, latestTs: 5000 }), live)).toBeUndefined()
+  })
+})
+
+// A thread reply as the SDK holds it in the thread's timeline; `status` set = a local echo still sending.
+function threadReply(id: string, ts: number, status: EventStatus | null = null): MatrixEvent {
+  const ev = new MatrixEvent({
+    type: 'm.room.message',
+    event_id: id,
+    room_id: ROOM_ID,
+    sender: '@me:tayet.local',
+    origin_server_ts: ts,
+    content: { msgtype: 'm.text', body: 'reply', 'm.relates_to': { rel_type: 'm.thread', event_id: ROOT_ID } },
+  })
+  ev.status = status
+  return ev
+}
+
+// A Thread whose timeline this session holds: `complete` = its first page was fetched and nothing
+// older is left to paginate (the whole thread is in hand); otherwise more replies live on the server.
+function loadedThread(length: number, events: MatrixEvent[], complete: boolean, latestTs = 7000) {
+  return {
+    ...fakeThread(length, latestTs),
+    events,
+    initialEventsFetched: true,
+    liveTimeline: { getPaginationToken: () => (complete ? null : 'older') },
+  }
+}
+
+describe('threadSummary — count of a thread held whole (each reply once)', () => {
+  const liveWith = (thread: unknown): Ctx => ({ ...ctx, threadFor: (id) => (id === ROOT_ID ? (thread as never) : undefined) })
+
+  // Measured in the browser: the root's server aggregate (already counting the reply) lands before
+  // the reply reaches the thread's timeline; the reply's arrival then counts it again.
+  it('one confirmed reply counted by the aggregate and again on arrival → 1', () => {
+    const thread = loadedThread(2, [rawRoot(), threadReply('$r1:tayet.local', 7000)], true)
+    expect(threadSummaryOf(rawRoot({ count: 1, latestTs: 7000 }), liveWith(thread))).toEqual({ replyCount: 1, latestReplyAt: 7000 })
+  })
+
+  it('a pending own reply counts once', () => {
+    const thread = loadedThread(2, [rawRoot(), threadReply('~local1', 7000, EventStatus.SENDING)], true)
+    expect(threadSummaryOf(rawRoot(), liveWith(thread))?.replyCount).toBe(1)
+  })
+
+  it('two replies, one confirmed and one pending → 2', () => {
+    const thread = loadedThread(3, [rawRoot(), threadReply('$r1:tayet.local', 6000), threadReply('~local2', 7000, EventStatus.SENT)], true)
+    expect(threadSummaryOf(rawRoot(), liveWith(thread))?.replyCount).toBe(2)
+  })
+
+  it('more replies on the server than held → the SDK count (server aggregate) stands', () => {
+    const thread = loadedThread(7, [threadReply('$r6:tayet.local', 6000), threadReply('$r7:tayet.local', 7000)], false)
+    expect(threadSummaryOf(rawRoot({ count: 7, latestTs: 7000 }), liveWith(thread))?.replyCount).toBe(7)
+  })
+
+  it('a thread held whole with every reply redacted → no summary', () => {
+    const redacted = new MatrixEvent({ type: 'm.room.message', event_id: '$r1:tayet.local', room_id: ROOM_ID, sender: '@me:tayet.local', origin_server_ts: 7000, content: {} })
+    const thread = loadedThread(0, [rawRoot(), redacted], true)
+    expect(threadSummaryOf(rawRoot({ count: 1, latestTs: 7000 }), liveWith(thread))).toBeUndefined()
   })
 })
 

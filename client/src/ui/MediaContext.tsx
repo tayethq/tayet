@@ -62,3 +62,52 @@ export function useMedia(ref: MediaRef | undefined, variant?: MediaVariant): Med
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
   return { ...state, retry }
 }
+
+// A file's bytes are fetched on the person's click, never on render (PLANO-MOBILE §0.14 V2 b; ADR-009 dec. 2,
+// lazy and explicit). 'idle' until `start()`; then the same states as useMedia. When a download that `start()`
+// began lands, `onReady` runs once with the url (the save); the url stays until unmount (release()), so a
+// later click saves at once, without fetching again. `start()` on 'failed' is the retry.
+export type LazyMediaStatus = 'idle' | MediaStatus
+export interface LazyMediaState {
+  url?: string
+  status: LazyMediaStatus
+  start: () => void
+}
+
+export function useLazyMedia(ref: MediaRef, onReady: (url: string) => void): LazyMediaState {
+  const resolve = useContext(MediaContext)
+  const [state, setState] = useState<{ url?: string; status: LazyMediaStatus }>({ status: 'idle' })
+  const [attempt, setAttempt] = useState(0)
+  const ready = useRef(onReady)
+  useEffect(() => {
+    ready.current = onReady
+  }, [onReady])
+
+  useEffect(() => {
+    if (attempt === 0 || !resolve) return
+    let alive = true
+    let release: (() => void) | undefined
+    resolve(ref)
+      .then((m) => {
+        if (!alive) return m.release()
+        release = m.release
+        setState({ url: m.url, status: 'ready' })
+        ready.current(m.url)
+      })
+      .catch(() => {
+        if (alive) setState({ status: 'failed' })
+      })
+    return () => {
+      alive = false
+      release?.()
+    }
+  }, [ref, resolve, attempt])
+
+  const status = state.status
+  const start = useCallback(() => {
+    if (status !== 'idle' && status !== 'failed') return
+    setState({ status: 'loading' })
+    setAttempt((n) => n + 1)
+  }, [status])
+  return { ...state, start }
+}

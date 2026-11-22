@@ -151,6 +151,8 @@ function fakeAcl(initial: Message, answer: Acl['answerApproval']): { acl: Acl; e
     removeAvatar: async () => {
       throw new Error('unused')
     },
+    getAccountPreferences: async () => ({}),
+    setAccountPreferences: async () => {},
     getThreadUnread: async () => ({ unread: false }),
     searchMessages: async () => [],
     getMessage: async () => undefined,

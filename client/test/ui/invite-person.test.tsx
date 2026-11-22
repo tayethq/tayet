@@ -8,6 +8,7 @@ import type { Channel, ChannelId, NewPerson, Person, PersonInvite, UserId } from
 import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
 import { copy, fill } from '../support/copy'
 import { noExport } from '../support/data-export-fake'
+import { idleLanguage } from '../support/language-fake'
 
 // Dialog "Convidar pessoa" e os confirms (manifesto account-access.md §9.1, §9.2 g), um it por estado
 // do artboard. Fixtures com shape de protocolo de propósito: nunca chegam ao DOM.
@@ -224,7 +225,7 @@ describe('confirms de Pessoas', () => {
         onReset={() => {}}
         onSignOut={() => {}}
         theme="light"
-        onThemeChange={() => {}}
+        onThemeChange={() => {}} language={idleLanguage}
         onClose={() => {}}
       />
     )

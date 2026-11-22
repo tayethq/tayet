@@ -13,6 +13,10 @@
       "row-height": { "$value": "30px", "$type": "dimension" },
       "avatar": { "$value": "22px", "$type": "dimension" }
     },
+    "estreito": {
+      "$description": "Narrow shell (the stack below the width breakpoint): screen header, list top and footer, tall rows.",
+      "row-height": { "$value": "56px", "$type": "dimension" }
+    },
     "touch-floor": {
       "$value": "44px",
       "$type": "dimension",

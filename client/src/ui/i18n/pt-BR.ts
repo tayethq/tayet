@@ -42,6 +42,13 @@ export const ptBR = {
     appearanceFlavor: 'Mesmo cômodo, outro horário',
     themeLight: 'Claro',
     themeDark: 'Escuro',
+    language: 'Idioma',
+    languageAuto: 'Automático',
+    languagePt: 'Português',
+    languageEn: 'English',
+    languageDevice: 'Idioma deste aparelho: {language}',
+    languageEverywhere: 'Em todos os seus aparelhos',
+    languageFailed: 'Não foi possível mudar o idioma',
     accessSection: 'Acesso',
     accessTitle: 'Acessos à sua conta',
     accessSubtitle: 'Onde sua conta está sendo acessada.',
@@ -135,6 +142,9 @@ export const ptBR = {
     nothingFound: 'Nada encontrado para “{query}”',
     partial: 'Mostrando o que já foi carregado neste dispositivo',
     today: 'hoje {time}',
+    // The date of an older hit: the order of day, month and year is the language's.
+    dayMonth: '{day} {month}',
+    dayMonthYear: '{day} {month} {year}',
     inThread: 'em thread',
     openFailed: 'Não foi possível abrir esta mensagem',
     unknownAuthor: 'Alguém',
@@ -168,6 +178,10 @@ export const ptBR = {
     dayYesterday: 'ontem',
     reply: 'Responder',
     replyInThread: 'Responder na thread',
+    copyText: 'Copiar texto',
+    copied: 'Copiado',
+    actionsSheet: 'Ações da mensagem',
+    moreActions: 'Mais ações',
     replies: { one: '{n} resposta', other: '{n} respostas' },
     lastReplyAt: 'última às {time}',
     lastReplyOn: 'última em {date}',
@@ -179,6 +193,18 @@ export const ptBR = {
     // ADR-093 (Proposto), workspace.md §21.1 item 8: a linha sob a mensagem de comando.
     commandFor: 'comando para {agent}',
     you: 'Você',
+  },
+  // O visualizador de imagem (workspace.md §25.2, §25.8; PLANO-MOBILE §0.14). "Imagem", "Fechar", "Tentar de
+  // novo" e o nome genérico do download ("imagem") são as chaves de `timeline` e de `dialog`.
+  viewer: {
+    open: 'Abrir imagem {name}',
+    openUnnamed: 'Abrir imagem',
+    label: 'Imagem {name}',
+    actualSize: 'Ver no tamanho real',
+    fit: 'Ajustar à janela',
+    loading: 'Carregando…',
+    failed: 'Não foi possível carregar a imagem',
+    download: 'Baixar',
   },
   thread: {
     title: 'Thread',
@@ -266,11 +292,15 @@ export const ptBR = {
     linkInvalid: 'URL inválida — use http, https ou mailto',
     replyingTo: 'Respondendo a',
     cancelReply: 'Cancelar resposta',
+    // workspace.md §23.11: a faixa de edição do composer estreito e o nome acessível do fechar dela.
+    editing: 'Editando mensagem',
+    cancelEdit: 'Cancelar edição',
   },
   channel: {
     privateMark: 'Canal privado',
     manageNamed: 'Gerenciar {name}', // sem artboard — fidelidade pendente
-    managePrivate: 'Gerenciar {mark} {name}', // sem artboard — fidelidade pendente
+    // The whole phrase, so each language places the mark; the same text as privateMark.
+    managePrivate: 'Gerenciar Canal privado {name}', // sem artboard — fidelidade pendente
     manage: 'Gerenciar canal', // sem artboard — fidelidade pendente
     closeManage: 'Fechar gerenciamento do canal', // sem artboard — fidelidade pendente
     name: 'Nome',
@@ -346,7 +376,7 @@ export const ptBR = {
     empty: 'Nenhuma conversa ainda',
     unread: { one: '{n} não lida', other: '{n} não lidas' },
     mentions: { one: '{n} menção', other: '{n} menções' },
-    notifyPrompt: 'Receba avisos de mensagens diretas e menções',
+    notifyPrompt: 'Receba avisos de mensagens diretas, menções e pedidos de aprovação',
     enableNotifications: 'Ativar notificações',
     dismiss: 'Dispensar',
     archived: 'Arquivados',

@@ -5,10 +5,10 @@ Copyright 2022-2024 The Matrix.org Foundation C.I.C.
 SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 Please see LICENSE files in the repository root for full details.
 
-Modified by Tayet (first on 2026-11-04, last on 2026-11-15): the consent page, with no protocol
-identifier. The copy is literal. Never `matrix_user.mxid`, `branding.server_name`, `client_uri`,
+Modified by Tayet (first on 2026-11-04, last on 2026-11-20): the consent page, with no protocol
+identifier. The copy is literal, in pt-BR or English by `tayet_lang` (base.html). Never `matrix_user.mxid`, `branding.server_name`, `client_uri`,
 `client_name`, `id_color_hash` or `current_session.user.username`. Without a `display_name` (null or
-""), the name is "Sua conta" and the monogram is its initial ("S"). The consent form comes first and
+""), the name is "Sua conta" ("Your account" in English) and the monogram is its initial. The consent form comes first and
 carries `csrf`: the contract of the headless sign-in the tests use (client/test/support/mint-oidc.ts
 and escrow/test/support/mint-oidc.ts). The `.mas-*` rules are a copy of the ones in pages/login.html.
 The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and infra/mas/NOTICE.md.
@@ -98,7 +98,7 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
         line-height: var(--font-line-height-ui);
         font-weight: var(--font-weight-medium);
       }
-      /* "Cancelar" é o `back_to_client.link` stock (`cpd-button`, data-kind tertiary): ghost por aqui, sem editar o componente. */
+      {# The cancel link is the stock `back_to_client.link` (`cpd-button`, data-kind tertiary): a ghost button here, without editing the component. #}
       .mas-button, .mas-card .cpd-button[data-kind="tertiary"] {
         display: flex;
         align-items: center;
@@ -143,20 +143,21 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
 {% endblock tayet_style %}
 
 {% block tayet_content %}
-  {% set person_name = matrix_user.display_name or "Sua conta" %}
+  {% set pt = tayet_lang == "pt-BR" %}
+  {% set person_name = matrix_user.display_name or ("Sua conta" if pt else "Your account") %}
   <div class="mas-page">
     <main class="mas-card">
       <div class="mas-wordmark"><span class="mas-wordmark__dot" aria-hidden="true"></span>tayet</div>
 
       <div class="mas-heading">
-        <h1>Entre no Tayet</h1>
-        <p>Confirme a conta que você vai usar.</p>
+        <h1>{% if pt %}Entre no Tayet{% else %}Sign in to Tayet{% endif %}</h1>
+        <p>{% if pt %}Confirme a conta que você vai usar.{% else %}Confirm the account you'll use.{% endif %}</p>
       </div>
 
       {% call(scopes) scope.unsafe_scopes(scopes=grant.scope.split(" ")) %}
         {% if scopes is not empty %}
           <section class="mas-scopes">
-            <p class="mas-meta">Este acesso inclui:</p>
+            <p class="mas-meta">{% if pt %}Este acesso inclui:{% else %}This access includes:{% endif %}</p>
             {{ scope.list(scopes=scopes) }}
           </section>
         {% endif %}
@@ -170,15 +171,15 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
       <div class="mas-stack">
         <form method="POST">
           <input type="hidden" name="csrf" value="{{ csrf_token }}" />
-          <button type="submit" class="mas-button mas-button--fill">Continuar</button>
+          <button type="submit" class="mas-button mas-button--fill">{% if pt %}Continuar{% else %}Continue{% endif %}</button>
         </form>
 
         {% call logout.button(csrf_token=csrf_token, post_logout_action=action) %}
-          <button type="submit" class="mas-button">Entrar com outra conta</button>
+          <button type="submit" class="mas-button">{% if pt %}Entrar com outra conta{% else %}Sign in with another account{% endif %}</button>
         {% endcall %}
 
         {{ back_to_client.link(
-          text="Cancelar",
+          text=("Cancelar" if pt else "Cancel"),
           kind="tertiary",
           uri=grant.redirect_uri,
           mode=grant.response_mode,
@@ -186,7 +187,7 @@ The modifications are licensed under AGPL-3.0-only: see infra/mas/LICENSE and in
         ) }}
       </div>
 
-      <p class="mas-meta">Você volta para o Tayet automaticamente.</p>
+      <p class="mas-meta">{% if pt %}Você volta para o Tayet automaticamente.{% else %}You'll come back to Tayet automatically.{% endif %}</p>
     </main>
   </div>
 {% endblock tayet_content %}

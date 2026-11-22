@@ -93,9 +93,14 @@ describe('rich DOM render-scan (P1 on screen, ADR-012)', () => {
       'DIV', 'SPAN', 'P', 'STRONG', 'EM', 'DEL', 'CODE', 'PRE', 'A', 'UL', 'OL', 'LI', 'BLOCKQUOTE',
       'BR', 'BUTTON',
     ])
+    // The action bar's icon buttons (ui/icons: an aria-hidden <svg> of <path>/<rect>) are the one
+    // affordance glyph at rest — "Copiar texto" is on every text message (workspace.md §25.1). Those tags
+    // pass ONLY inside the bar and only aria-hidden; anywhere else in the bubble an <svg> still fails.
+    const ICON = new Set(['svg', 'path', 'rect'])
     // Scope to the rendered message bubble so we only assert on content tags.
     const bubble = container.querySelector('.message')!
     bubble.querySelectorAll('*').forEach((el) => {
+      if (ICON.has(el.tagName) && el.closest('.message__actions') && el.closest('svg')?.getAttribute('aria-hidden') === 'true') return
       expect(ALLOWED.has(el.tagName), `unexpected tag <${el.tagName.toLowerCase()}>`).toBe(true)
     })
   })

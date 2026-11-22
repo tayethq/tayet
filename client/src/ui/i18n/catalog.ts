@@ -1,4 +1,5 @@
 import { ptBR } from './pt-BR'
+import { en } from './en'
 import { getLocale, type Locale } from './locale'
 
 // Catálogo de copy da UI (ADR-080 D1). A fonte é pt-BR.ts; o tipo do catálogo deriva dele, e a
@@ -26,7 +27,7 @@ export type Key = Paths<Catalog>
 
 export type Params = Readonly<Record<string, string | number>>
 
-const CATALOGS: Record<Locale, Catalog> = { 'pt-BR': ptBR }
+const CATALOGS: Record<Locale, Catalog> = { 'pt-BR': ptBR, en }
 
 const pluralRules = new Map<Locale, Intl.PluralRules>()
 function pluralOf(locale: Locale, n: number): 'one' | 'other' {

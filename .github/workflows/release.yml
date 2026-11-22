@@ -6,6 +6,18 @@
 # packed. A prerelease tag (tayet-agent-v1.2.3-rc.1) goes to the npm dist-tag `next` and gets no `latest`
 # image. The agent has its own tag: a product tag (v*) reaches this repository too and publishes nothing here.
 #
+# Each agent tag also gets a GitHub Release (ADR-111): the tarball published to npm
+# (tayet-agent-<version>.tgz), the CycloneDX SBOM of the package (npm sbom --omit dev, from the build's
+# lockfile), one CycloneDX SBOM of the image per platform (linux/amd64 and linux/arm64, by digest, via
+# Trivy) and the provenance bundles (*.sigstore.json). The notes are the tag message plus the image digest;
+# a prerelease tag makes a prerelease. The image's provenance is also stored in the registry. To verify:
+#   gh attestation verify <file from the Release> --repo tayethq/tayet
+#   gh attestation verify oci://ghcr.io/tayethq/tayet-agent:<version> --repo tayethq/tayet
+#
+# Order of failure: npm publishes first and cannot be undone, as before. If `image` or `release` fails,
+# the tag stays and only the failed job is re-run (a re-run of `image` pushes a new digest under the same
+# tags; a re-run of `release` uploads to the Release if it already exists).
+#
 # Owner prerequisites (outside the code): the name `tayet-agent` reserved on npm, and its trusted
 # publisher set to tayethq/tayet, workflow release.yml, no environment, with `npm publish` ticked
 # under Allowed actions. A configuration created after 2026-09-03 allows only `npm stage publish` by
@@ -43,8 +55,8 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "version $VERSION"
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
@@ -61,6 +73,15 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: npm version "$VERSION" --no-git-tag-version
+      # The package's SBOM, from the lockfile of this build (runtime dependencies only). It describes this
+      # build: without a shrinkwrap, an npm install resolves the transitive versions at install time.
+      - name: SBOM of the package (CycloneDX)
+        working-directory: sidecar
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          npm sbom --sbom-format cyclonedx --omit dev > "$RUNNER_TEMP/release/tayet-agent-${VERSION}.npm.cdx.json"
       # The package ships the repository's license (sidecar/ has no copy in the source).
       - run: cp LICENSE sidecar/LICENSE
       - name: publish
@@ -72,16 +93,22 @@ jobs:
             *-*) npm publish --access public --tag next ;;
             *) npm publish --access public ;;
           esac
-      # The same build, packed for the image job.
-      - name: pack for the image
+      # The same build, packed for the image job and the Release (npm pack is byte-identical for the same
+      # files, so this is the tarball npm received).
+      - name: pack for the image and the Release
         working-directory: sidecar
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           npm pack
-          mv tayet-agent-*.tgz tayet-agent.tgz
-      - uses: actions/upload-artifact@v4
+          mv "tayet-agent-${VERSION}.tgz" "$RUNNER_TEMP/release/tayet-agent-${VERSION}.tgz"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tayet-agent-tgz
-          path: sidecar/tayet-agent.tgz
+          name: tayet-agent-npm
+          path: |
+            ${{ runner.temp }}/release/tayet-agent-${{ steps.version.outputs.version }}.tgz
+            ${{ runner.temp }}/release/tayet-agent-${{ steps.version.outputs.version }}.npm.cdx.json
+          if-no-files-found: error
           retention-days: 7
 
   image:
@@ -91,27 +118,187 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    env:
+      VERSION: ${{ needs.npm.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: tayet-agent-tgz
-          path: sidecar
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+          name: tayet-agent-npm
+          path: ${{ runner.temp }}/npm
+      # The Dockerfile copies sidecar/tayet-agent.tgz: the image gets the tarball under the same name as before.
+      - run: cp "$RUNNER_TEMP/npm/tayet-agent-${VERSION}.tgz" sidecar/tayet-agent.tgz
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # The digest is that of the multi-arch index buildx pushed; the attestation, the SBOMs and the
+      # Release notes all name it.
       - name: build and push
+        id: build
         working-directory: sidecar
-        env:
-          VERSION: ${{ needs.npm.outputs.version }}
         run: |
+          set -euo pipefail
           TAGS=(-t "ghcr.io/tayethq/tayet-agent:${VERSION}")
           case "$VERSION" in
             *-*) ;;
             *) TAGS+=(-t ghcr.io/tayethq/tayet-agent:latest) ;;
           esac
-          docker buildx build --platform linux/amd64,linux/arm64 --push "${TAGS[@]}" .
+          docker buildx build --platform linux/amd64,linux/arm64 --push "${TAGS[@]}" \
+            --metadata-file "$RUNNER_TEMP/meta.json" .
+          digest=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/meta.json")
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::no image digest in the buildx metadata: '$digest'"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "ghcr.io/tayethq/tayet-agent@$digest"
+      # Provenance of the image, signed with Sigstore and also pushed to the registry next to the image.
+      - name: attest the image
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/tayethq/tayet-agent
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: keep the image's provenance bundle
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          cp "$BUNDLE" "$RUNNER_TEMP/release/tayet-agent-${VERSION}.image.sigstore.json"
+      # The same Trivy as the Publish's image scan (ADR-110 dec. 4), the Linux build: the checksum is that of
+      # the v0.76.2 release's checksums file, whose cosign signature was checked against the release
+      # workflow's identity before it was written here (PLANO-RELEASE-PUBLICA §8.148).
+      - name: install trivy 0.76.2 (sha256 pinned)
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS/$RUNNER_ARCH" in
+            Linux/X64) asset=Linux-64bit; sum=bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf ;;
+            *) echo "::error::no pinned trivy build for $RUNNER_OS/$RUNNER_ARCH"; exit 1 ;;
+          esac
+          dir="$RUNNER_TEMP/trivy-0.76.2"
+          rm -rf "$dir"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 -o "$dir/trivy.tar.gz" \
+            "https://github.com/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_${asset}.tar.gz"
+          got=$(sha256sum "$dir/trivy.tar.gz" | cut -d' ' -f1)
+          if [ "$got" != "$sum" ]; then
+            echo "::error::trivy archive sha256 mismatch: got $got"
+            exit 1
+          fi
+          tar -xzf "$dir/trivy.tar.gz" -C "$dir" trivy
+          "$dir/trivy" --version
+      # One SBOM per platform, read from the registry by the pushed digest. CycloneDX output does no
+      # vulnerability scan. Run from an empty directory with no TRIVY_* variable, like the Publish's scan.
+      - name: SBOM of the image per platform (CycloneDX)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for v in $(env | sed -n 's/^\(TRIVY_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+          work="$RUNNER_TEMP/trivy-run"
+          rm -rf "$work"
+          mkdir -p "$work"
+          cd "$work"
+          for arch in amd64 arm64; do
+            "$RUNNER_TEMP/trivy-0.76.2/trivy" image --cache-dir "$RUNNER_TEMP/trivy-cache" --no-progress \
+              --image-src remote --platform "linux/${arch}" --format cyclonedx \
+              --output "$RUNNER_TEMP/release/tayet-agent-${VERSION}.image-${arch}.cdx.json" \
+              "ghcr.io/tayethq/tayet-agent@${DIGEST}"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tayet-agent-image
+          path: |
+            ${{ runner.temp }}/release/tayet-agent-${{ needs.npm.outputs.version }}.image-amd64.cdx.json
+            ${{ runner.temp }}/release/tayet-agent-${{ needs.npm.outputs.version }}.image-arm64.cdx.json
+            ${{ runner.temp }}/release/tayet-agent-${{ needs.npm.outputs.version }}.image.sigstore.json
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: GitHub Release
+    needs: [npm, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.npm.outputs.version }}
+      DIGEST: ${{ needs.image.outputs.digest }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # gh release create --notes-from-tag reads the tag message from local git and refuses --repo, so the
+      # job runs in a checkout. actions/checkout leaves a tag push as a lightweight tag on the commit; the
+      # annotated tag is fetched again so the notes are the tag's message, not the commit's.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: fetch the annotated tag
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          if [ "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" != tag ]; then
+            echo "::error::${GITHUB_REF_NAME} is not an annotated tag: the Release notes come from its message"
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tayet-agent-npm
+          path: ${{ runner.temp }}/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tayet-agent-image
+          path: ${{ runner.temp }}/release
+      # One provenance attestation for the Release's files (the tarball and the three SBOMs).
+      - name: attest the Release files
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/release/tayet-agent-${{ needs.npm.outputs.version }}.tgz
+            ${{ runner.temp }}/release/tayet-agent-${{ needs.npm.outputs.version }}.npm.cdx.json
+            ${{ runner.temp }}/release/tayet-agent-${{ needs.npm.outputs.version }}.image-amd64.cdx.json
+            ${{ runner.temp }}/release/tayet-agent-${{ needs.npm.outputs.version }}.image-arm64.cdx.json
+      # *.sigstore.json is a signature suffix the OpenSSF Scorecard's Signed-Releases check looks for.
+      - name: keep the Release files' provenance bundle
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE" "$RUNNER_TEMP/release/tayet-agent-${VERSION}.sigstore.json"
+      - name: create the Release
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/release"
+          FILES=(
+            "$dir/tayet-agent-${VERSION}.tgz"
+            "$dir/tayet-agent-${VERSION}.npm.cdx.json"
+            "$dir/tayet-agent-${VERSION}.image-amd64.cdx.json"
+            "$dir/tayet-agent-${VERSION}.image-arm64.cdx.json"
+            "$dir/tayet-agent-${VERSION}.sigstore.json"
+            "$dir/tayet-agent-${VERSION}.image.sigstore.json"
+          )
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # A re-run of this job: the Release exists; replace its files.
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${FILES[@]}"
+          else
+            ARGS=()
+            case "$VERSION" in
+              *-*) ARGS+=(--prerelease) ;;
+            esac
+            gh release create "$GITHUB_REF_NAME" --verify-tag --notes-from-tag "${ARGS[@]}" "${FILES[@]}"
+          fi
+      - name: add the image digest to the notes
+        run: |
+          set -euo pipefail
+          line="Image: ghcr.io/tayethq/tayet-agent@${DIGEST}"
+          body=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+          if ! grep -qF "$line" <<< "$body"; then
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes "$(printf '%s\n\n%s\n' "$body" "$line")"
+          fi

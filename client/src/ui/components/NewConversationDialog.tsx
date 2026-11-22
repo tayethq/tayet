@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { GROUP_MAX_OTHERS } from '@tayet/client'
 import type { NewChannel, Presence, User, UserId } from '@tayet/client'
-import { Avatar, Button, Dialog, Field, Segmented } from '../primitives'
+import { Avatar, Button, Dialog, Field, ScreenHeader, Segmented } from '../primitives'
 import { Close, Search } from '../icons'
 import { AgentAvatar, agentColorOf } from './AgentAvatar'
 import { t, GLYPH } from '../i18n'
@@ -29,8 +29,18 @@ import { t, GLYPH } from '../i18n'
 // Field, Segmented, Button, Avatar). The Dialog owns the scrim/surface/header and the shared focus
 // trap. The contact picker, the people chips and the name filter stay compose-specific one-offs (not
 // primitives, below the ADR-036 dec. 3 bar); the picker's options compose Avatar.
+//
+// Narrow window (`narrow`; manifest new-conversation.md §11, PLANO-MOBILE M6): a full screen of the stack in
+// place of the Dialog. The ScreenHeader with the ✕ and the title; the focus opens on the ✕ (N1); one button
+// in a fixed footer, no "Cancelar"; in channel mode the people are the same list with selection as the
+// direct-message mode, without the dashed suggestions; a chip is all one button that removes the person.
 
 type Mode = 'channel' | 'dm'
+
+// The send lock (PLANO-MOBILE M6 N2, T1): while a verb is in flight no path closes the surface, for at most this
+// long. The three verbs have no deadline of their own (issue #421); past the cap the paths close again and the
+// verb keeps running.
+export const SUBMIT_LOCK_MS = 10_000
 type Kind = NewChannel['kind'] // 'public' | 'private'
 
 // The filter matches the name without accents and without case (§9 item 10).
@@ -44,6 +54,8 @@ export function NewConversationDialog({
   onClose,
   initialMode,
   presenceOf,
+  narrow = false,
+  onLockChange,
 }: {
   onCreateChannel: (input: NewChannel) => Promise<void>
   onOpenDirectMessage: (user: UserId) => Promise<void>
@@ -57,6 +69,9 @@ export function NewConversationDialog({
   // Synchronous map-first read composed by the Workspace. Optional: absent (bare harness) → the
   // Avatar gets no prop and stays byte-identical (ADR-036 addendum).
   presenceOf?: (user: UserId) => Presence
+  narrow?: boolean
+  // The lock, for the stack entry of the narrow screen: the system's back is refused while it holds.
+  onLockChange?: (locked: boolean) => void
 }) {
   const [mode, setMode] = useState<Mode>(initialMode ?? 'channel')
 
@@ -78,17 +93,47 @@ export function NewConversationDialog({
 
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(false)
+  // N2: the lock, its cap and whether the surface is still mounted (a late settle touches nothing then).
+  const [locked, setLocked] = useState(false)
+  const lockTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const mounted = useRef(true)
+  const lockChange = useRef(onLockChange)
+  lockChange.current = onLockChange
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      clearTimeout(lockTimer.current)
+      lockChange.current?.(false)
+    }
+  }, [])
+  const lock = (on: boolean) => {
+    clearTimeout(lockTimer.current)
+    lockTimer.current = undefined
+    setLocked(on)
+    lockChange.current?.(on)
+    if (on) lockTimer.current = setTimeout(() => lock(false), SUBMIT_LOCK_MS)
+  }
+  // Every path that closes from the interface (Esc, the ×, the header's close) goes through here.
+  const close = () => {
+    if (!locked) onClose()
+  }
 
   const nameRef = useRef<HTMLInputElement>(null)
   const modeRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
   const initialModeRef = useRef<Mode>(initialMode ?? 'channel')
+  const narrowAtOpen = useRef(narrow)
 
   // a11y: focus enters the dialog on open. Channel mode lands on the name field (its first input);
   // DM mode lands on the first focusable of the mode selector — otherwise focus stays OUTSIDE the
   // dialog's focus trap. Reads refs only, so the effect stays [] (lint-safe) and never re-runs on
   // mode change.
   useEffect(() => {
-    if (initialModeRef.current === 'channel') {
+    // N1 (PLANO-MOBILE M6): on a narrow window the screen opens with the focus on its ✕.
+    if (narrowAtOpen.current) {
+      closeRef.current?.focus()
+    } else if (initialModeRef.current === 'channel') {
       nameRef.current?.focus()
     } else {
       modeRef.current?.querySelector<HTMLElement>('button, [role="radio"], input')?.focus()
@@ -122,6 +167,12 @@ export function NewConversationDialog({
     setMembers((current) => current.filter((member) => member.id !== user.id))
   }
 
+  // Narrow channel mode (§11.1 item 5): a row toggles the person in the channel's members, with no limit.
+  function toggleMember(user: User) {
+    if (members.some((member) => member.id === user.id)) removeMember(user)
+    else addMember(user)
+  }
+
   // DM mode: a row (or a chip's ✕) toggles; the pick keeps the order of selection. Past the limit a
   // new pick is refused (the rows are disabled anyway).
   function toggleSelected(user: User) {
@@ -149,6 +200,7 @@ export function NewConversationDialog({
     if (!canSubmit) return
     setSubmitting(true)
     setSubmitError(false)
+    lock(true)
     try {
       if (mode === 'channel') {
         const input: NewChannel = { name: trimmedName, kind }
@@ -161,8 +213,13 @@ export function NewConversationDialog({
       } else {
         await onOpenGroupConversation(selected.map((user) => user.id))
       }
+      // Closed past the cap: nothing to close again, no state to write.
+      if (!mounted.current) return
+      lock(false)
       onClose() // await-and-close: success closes; useChat selects the room on its channel.added.
     } catch {
+      if (!mounted.current) return
+      lock(false)
       setSubmitError(true) // inline error; the dialog stays open, the pick intact, nothing inserted.
       setSubmitting(false)
     }
@@ -179,13 +236,41 @@ export function NewConversationDialog({
 
   const filterField = <PeopleFilter value={filter} onChange={setFilter} />
 
-  return (
-    <Dialog
-      className="compose-dialog"
-      title={t('newConversation.title')}
-      onClose={onClose}
-      closeLabel={t('newConversation.close')}
-    >
+  // The list with selection (§10.1): the DM mode's, and on a narrow window the channel mode's too (§11.1
+  // item 5). `picked` is the mode's pick; `limit` disables the rows not picked (the DM mode at the limit).
+  const peopleList = (picked: User[], toggle: (user: User) => void, limit: boolean, labelledBy?: string) =>
+    rows.length === 0 ? (
+      <p className="compose-dialog__dm-note">{t('people.noResults', { term: filter.trim() })}</p>
+    ) : (
+      <ul className="compose-dialog__picker-list" aria-labelledby={labelledBy}>
+        {rows.map((user) => {
+          const on = picked.some((u) => u.id === user.id)
+          return (
+            <li key={user.id}>
+              <button
+                type="button"
+                className="compose-dialog__picker-option"
+                aria-pressed={on}
+                disabled={limit && !on}
+                onClick={() => toggle(user)}
+              >
+                {/* Densidade gestão (manifesto new-conversation.md §2/§7 item 1). */}
+                {agentColorOf(user) !== undefined ? (
+                  <AgentAvatar color={agentColorOf(user)!} size="gestao" />
+                ) : (
+                  <Avatar size="gestao" label={user.displayName.slice(0, 1)} presence={presenceOf?.(user.id)} />
+                )}
+                <span className="compose-dialog__option-name">{user.displayName}</span>
+                {on && <CheckMark />}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    )
+
+  const content = (
+    <>
       {/* Mode selector (F1 combined). A DM is a PATH, not a kind (P1). The inert ref wrapper lets the
           open effect focus INTO the dialog when DM mode has no text field to land on. */}
       <div ref={modeRef} className="compose-dialog__mode">
@@ -260,11 +345,21 @@ export function NewConversationDialog({
                     {GLYPH.dot} {t('newConversation.addPeopleHint')}
                   </span>
                 </span>
+                {narrow && members.length > 0 && (
+                  // §11.1 item 5: the chips (only with a pick), the filter, the list with selection.
+                  <div className="compose-dialog__chips">
+                    {members.map((user) => (
+                      <PersonChip key={user.id} user={user} onRemove={() => removeMember(user)} whole />
+                    ))}
+                  </div>
+                )}
                 {filterField}
                 {contactsError ? (
                   <p className="compose-dialog__picker-empty">{t('newConversation.contactsFailed')}</p>
                 ) : !contactsLoading && contacts.length === 0 ? (
                   <p className="compose-dialog__picker-empty">{t('newConversation.noContacts')}</p>
+                ) : narrow ? (
+                  !contactsLoading && peopleList(members, toggleMember, false)
                 ) : (
                   <>
                     <div className="compose-dialog__chips">
@@ -300,7 +395,7 @@ export function NewConversationDialog({
               {selected.length > 0 && (
                 <div className="compose-dialog__dm-chips">
                   {selected.map((user) => (
-                    <PersonChip key={user.id} user={user} onRemove={() => toggleSelected(user)} />
+                    <PersonChip key={user.id} user={user} onRemove={() => toggleSelected(user)} whole={narrow} />
                   ))}
                 </div>
               )}
@@ -319,39 +414,7 @@ export function NewConversationDialog({
               ) : (
                 <>
                   {full && <p className="compose-dialog__limit">{t('group.limit')}</p>}
-                  {rows.length === 0 ? (
-                    <p className="compose-dialog__dm-note">{t('people.noResults', { term: filter.trim() })}</p>
-                  ) : (
-                    <ul className="compose-dialog__picker-list" aria-labelledby="compose-team">
-                      {rows.map((user) => {
-                        const on = selected.some((u) => u.id === user.id)
-                        return (
-                          <li key={user.id}>
-                            <button
-                              type="button"
-                              className="compose-dialog__picker-option"
-                              aria-pressed={on}
-                              disabled={full && !on}
-                              onClick={() => toggleSelected(user)}
-                            >
-                              {/* Densidade gestão (manifesto new-conversation.md §2/§7 item 1). */}
-                              {agentColorOf(user) !== undefined ? (
-                                <AgentAvatar color={agentColorOf(user)!} size="gestao" />
-                              ) : (
-                                <Avatar
-                                  size="gestao"
-                                  label={user.displayName.slice(0, 1)}
-                                  presence={presenceOf?.(user.id)}
-                                />
-                              )}
-                              <span className="compose-dialog__option-name">{user.displayName}</span>
-                              {on && <CheckMark />}
-                            </button>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  )}
+                  {peopleList(selected, toggleSelected, full, 'compose-team')}
                 </>
               )}
             </>
@@ -364,25 +427,65 @@ export function NewConversationDialog({
           )}
         </div>
 
-        <div className="ui-dialog__footer">
-          <Button variant="secondary" onClick={onClose} disabled={submitting}>
-            {t('newConversation.cancel')}
-          </Button>
+        <div className={narrow ? 'compose-screen__footer' : 'ui-dialog__footer'}>
+          {!narrow && (
+            <Button variant="secondary" onClick={onClose} disabled={submitting}>
+              {t('newConversation.cancel')}
+            </Button>
+          )}
           <Button variant="fill" type="submit" disabled={!canSubmit}>
             {submitLabel}
           </Button>
         </div>
       </form>
+    </>
+  )
+
+  if (narrow)
+    return (
+      <section
+        className="compose-dialog compose-screen"
+        aria-label={t('newConversation.title')}
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape') return
+          e.stopPropagation()
+          close()
+        }}
+      >
+        <ScreenHeader
+          className="compose-screen__header"
+          glyph="close"
+          onBack={close}
+          backDisabled={locked}
+          backLabel={t('newConversation.close')}
+          backRef={closeRef}
+          title={t('newConversation.title')}
+        />
+        {content}
+      </section>
+    )
+  return (
+    <Dialog
+      className="compose-dialog"
+      title={t('newConversation.title')}
+      onClose={close}
+      closeLabel={t('newConversation.close')}
+      closeDisabled={locked}
+    >
+      {content}
     </Dialog>
   )
 }
 
 // A picked person (§6.1, §10.2): the initial — or, for an agent, the agent avatar at 18 — the name and
 // the ✕ that undoes the pick. The same chip in both modes.
-function PersonChip({ user, onRemove }: { user: User; onRemove: () => void }) {
+// `whole` (narrow window, new-conversation.md §11.1 item 8): the whole chip is the button that removes, and
+// the ✕ is decorative.
+function PersonChip({ user, onRemove, whole = false }: { user: User; onRemove: () => void; whole?: boolean }) {
   const agent = agentColorOf(user)
-  return (
-    <span className="compose-dialog__chip">
+  const removeLabel = t('newConversation.removePerson', { name: user.displayName })
+  const inner = (
+    <>
       {agent !== undefined ? (
         // ADR-086: an agent's chip carries the agent avatar in place of the initial.
         <AgentAvatar color={agent} size="gestao" />
@@ -392,12 +495,21 @@ function PersonChip({ user, onRemove }: { user: User; onRemove: () => void }) {
         </span>
       )}
       {user.displayName}
-      <button
-        type="button"
-        className="compose-dialog__chip-remove"
-        aria-label={t('newConversation.removePerson', { name: user.displayName })}
-        onClick={onRemove}
-      >
+    </>
+  )
+  if (whole)
+    return (
+      <button type="button" className="compose-dialog__chip" aria-label={removeLabel} onClick={onRemove}>
+        {inner}
+        <span className="compose-dialog__chip-remove" aria-hidden="true">
+          {GLYPH.clear}
+        </span>
+      </button>
+    )
+  return (
+    <span className="compose-dialog__chip">
+      {inner}
+      <button type="button" className="compose-dialog__chip-remove" aria-label={removeLabel} onClick={onRemove}>
         {GLYPH.clear}
       </button>
     </span>

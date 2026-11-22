@@ -14,7 +14,8 @@ import { channelRow, mainComposer, messages } from './support/workspace'
 // agent-panel.spec.ts); the agent declares two commands (`PUT /v1/commands`); tai types `/` and sees the
 // popup, filters, picks with Enter, sees the chip and the hint, types the argument and sends; the timeline
 // shows the chip and "comando para {agente}"; the agent reads the message with `command: { name, args }` and
-// answers with a plain message; the command message offers no edit.
+// answers with a plain message; the command message offers no edit. Last, ↑ brings the command back with its chip
+// rebuilt and, sent again, it reaches the agent as a command (workspace.md §25.6; PLANO-MOBILE §0.15 H1 c).
 //
 // The channel is PRIVATE (encrypted, ADR-045). Secrets: the credential is in the DOM while the dialog is
 // open → no trace, video or screenshot.
@@ -169,6 +170,22 @@ test('agent commands: declare, pick in the popup, send, the agent receives and a
       expect(r.status, JSON.stringify(r.json)).toBe(200)
       await expect(messages(page)).toContainText(answer, { timeout: SEEN_MS })
       await expectNoProtocolLeak(page)
+    })
+
+    await test.step('5. ↑ brings the command back with the chip (H1 c); sent again, it reaches the agent as a command', async () => {
+      const composer = mainComposer(page)
+      await composer.click()
+      await page.keyboard.press('ArrowUp')
+      await expect(composer.locator('.mention--command')).toHaveText('/status')
+      await expect(composer).toHaveText('/status semana')
+      await page.keyboard.press('Enter')
+      await expect(messages(page).locator('article').filter({ hasText: '/status semana' })).toHaveCount(2, { timeout: SEEN_MS })
+      const both = await poll(async () => {
+        const r = await run.call('GET', `/v1/conversations/${conv}/messages`)
+        const found = (r.json.messages as Listed[] | undefined)?.filter((m) => m.text === '/status semana') ?? []
+        return found.length === 2 ? found : undefined
+      }, 'the resent command in the agent listing')
+      for (const m of both) expect(m.command).toEqual({ name: 'status', args: 'semana' })
     })
 
     console.log(`[e2e] console: ${JSON.stringify(ledger.observed())}`)

@@ -3,13 +3,17 @@
 # release workflow and the local probe both make it). The credential comes only from the environment
 # (TAYET_AGENT_TOKEN); no port is published by default.
 # Base: node:22-bookworm-slim, pinned to the digest of infra/deploy/compose.yaml.
-FROM node@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752
+FROM node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
 
 ENV NODE_ENV=production
 COPY tayet-agent.tgz /tmp/tayet-agent.tgz
+# The agent never calls npm, npx or corepack at runtime: once the tarball is installed, the package
+# managers leave the image, so the npm bundled in the base is not shipped (nor scanned) with the agent.
 RUN npm install -g /tmp/tayet-agent.tgz \
   && rm /tmp/tayet-agent.tgz \
   && npm cache clean --force \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /root/.npm \
   && mkdir /data \
   && chown node:node /data
 

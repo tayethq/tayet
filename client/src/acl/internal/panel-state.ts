@@ -38,7 +38,7 @@ export interface PanelPorts {
 // Conversations kept in the cache; past this the oldest goes (its next listPanels reads it again).
 export { ANCHORED_CACHE_CAP as PANEL_CACHE_CAP } from './anchored-state'
 
-const collator = new Intl.Collator('pt-BR')
+const collator = new Intl.Collator(undefined)
 
 export class PanelAggregator extends AnchoredAggregator<AgentPanel> {
   constructor(ports: PanelPorts) {

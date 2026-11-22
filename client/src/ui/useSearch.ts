@@ -39,7 +39,9 @@ export interface SearchView {
 
 const IDLE: SearchState = { preparing: false, partial: false, persisting: false, degraded: false }
 
-export function useSearch(acl: Acl, current: ChannelId | undefined): SearchView {
+// Below the width breakpoint (`narrow`) there is no "nesta conversa" scope (workspace.md §23.12): the chip is
+// not offered and a scope that was on goes off when the window narrows (PLANO-MOBILE M6).
+export function useSearch(acl: Acl, current: ChannelId | undefined, narrow = false): SearchView {
   const [query, setQuery] = useState('')
   const [scoped, setScoped] = useState(false)
   const [results, setResults] = useState<{ searched: string; hits: ResolvedHit[] }>({ searched: '', hits: [] })
@@ -54,6 +56,10 @@ export function useSearch(acl: Acl, current: ChannelId | undefined): SearchView 
     setState(feed.get())
     return feed.subscribe(setState)
   }, [acl])
+
+  useEffect(() => {
+    if (narrow) setScoped(false)
+  }, [narrow])
 
   const term = query.trim()
   const active = term.length >= SEARCH_MIN_CHARS
@@ -112,7 +118,7 @@ export function useSearch(acl: Acl, current: ChannelId | undefined): SearchView 
     query,
     setQuery,
     scoped: scoped && current !== undefined,
-    toggleScope: current ? toggle : undefined,
+    toggleScope: current && !narrow ? toggle : undefined,
     clear,
     active,
     hits: results.hits,

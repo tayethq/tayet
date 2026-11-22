@@ -24,7 +24,7 @@ Duas regras para quem roda os comandos, pessoa ou agente:
 - **O primeiro administrador entra com uma senha** gerada na instalação.
 - **Sem envio de email.** O Tayet não envia convites; você mesmo passa as instruções para a pessoa.
 - **Sem federação.** O servidor não conversa com outros servidores Matrix.
-- **A interface do produto e as páginas de login estão só em português do Brasil.**
+- **A interface do produto e as páginas de login estão em inglês e em português do Brasil.**
 - **Testado só com Chromium.** Os outros navegadores não foram testados.
 - **Um servidor, uma stack Compose.** Não há configuração de alta disponibilidade.
 
@@ -186,6 +186,8 @@ curl -sS "https://$TAYET_DOMAIN/.well-known/matrix/client"
 Esperado: `200` e depois um objeto JSON cujo `base_url` é `https://matrix.<domain>`.
 
 ## 9. Primeiro login **[humano]**
+
+A interface segue o idioma do navegador, português do Brasil ou inglês. Os rótulos dos passos 9 e 10 são os em português.
 
 1. Abra `https://chat.<domain>` e escolha **Continuar com sua conta**.
 2. Na página de login escolha **Continuar com a conta da empresa**.
