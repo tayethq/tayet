@@ -103,7 +103,7 @@ The documents themselves live in the private development repository.
 - ADR-106 — Shell estreito: o login sobrevive à ida ao provedor, a pilha vale por largura e vive no histórico do navegador, e o projeto de teste de celular roda só os specs do estreito (Aceito)
 - ADR-109 — Páginas de login em duas línguas, pelo idioma do navegador (Aceito)
 - ADR-110 — Cadeia de suprimento do CI: actions por SHA, Dependabot só de actions, scan da imagem do agente no `Publish` e base `node` nova (Aceito)
-- ADR-111 — GitHub Release do agente com SBOM CycloneDX e atestado de proveniência (Proposto)
+- ADR-111 — GitHub Release do agente com SBOM CycloneDX e atestado de proveniência (Aceito)
 
 ## Plans
 
@@ -145,4 +145,4 @@ The documents themselves live in the private development repository.
 
 ---
 
-95 architecture decision records, 35 plans, tree 5d1bce6f02311d13bbc75c2886cb0914fa932a0d.
+95 architecture decision records, 35 plans, tree bbdb9503a9feed72cd7a3748390f61e73a7b865f.
