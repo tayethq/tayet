@@ -15,6 +15,7 @@ import {
   SEARCH,
   SESSION,
   ACCOUNT,
+  ACCOUNT_PHONE,
   DATA_EXPORT,
   PROFILE_EDITOR,
   PROFILE,
@@ -322,7 +323,8 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
     })
     expect(PROFILE.open('Ana')).toBe(fill(copy.timeline.viewProfile, { name: 'Ana' }))
     expect(PROFILE.open('Ana')).toBe(fill(copy.channel.viewProfile, { name: 'Ana' }))
-    const { open: _o, ...profile } = PROFILE
+    expect(PROFILE.screen('Ana')).toBe(fill(copy.profile.viewLabel, { name: 'Ana' }))
+    const { open: _o, screen: _s, ...profile } = PROFILE
     expect(profile).toEqual({
       dialog: copy.profile.viewTitle,
       sendMessage: copy.profile.sendMessage,
@@ -332,6 +334,20 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
       orgJobTitle: copy.profile.orgJobTitle,
       presenceOnline: copy.profile.presenceOnline,
       presenceOffline: copy.profile.presenceOffline,
+    })
+  })
+
+  it('account on the narrow window, open on phone and install', () => {
+    expect(ACCOUNT_PHONE).toEqual({
+      back: copy.dialog.back,
+      cancel: copy.account.cancel,
+      exportDesktopOnly: copy.dataExport.desktopOnly,
+      openOnPhone: copy.account.openOnPhone,
+      code: copy.account.openOnPhoneCode,
+      installSheet: copy.install.sheetLabel,
+      installRow: copy.install.row,
+      continueInBrowser: copy.install.continueInBrowser,
+      notNow: copy.install.notNow,
     })
   })
 

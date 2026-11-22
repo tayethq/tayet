@@ -327,6 +327,10 @@ O que um restore não traz de volta: tudo o que foi escrito depois que o backup 
 
 ## 13. Atualização
 
+Se `secrets/postgres.password` não existe, a sua instalação é anterior à senha de banco por
+instalação: rode `./deploy.sh db-password` uma vez, com a stack de pé, logo depois de trocar para o
+código novo e antes do `render`, do `build` e do `up`.
+
 ```bash
 git fetch --tags
 git checkout <tag>

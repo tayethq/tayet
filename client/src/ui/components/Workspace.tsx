@@ -408,8 +408,15 @@ export function Workspace({
         : 'chat'
   // "Nova conversa" on a narrow window is a full screen over the others (new-conversation.md §11).
   const composeScreen = narrow && composing && canCompose
+  // So is "Sua conta", with the screens above it (account-access.md §13.2; PLANO-MOBILE M7 H1).
+  const accountScreen = narrow && accountOpen && canAccount
+  // So are a group's details, someone's profile over them and the agent's form over both (PLANO-MOBILE M8).
+  const groupScreen = narrow && managing?.kind === 'group' && Boolean(onCloseManage && onLeaveChannel && onConvertToChannel)
+  const profileScreen = narrow && openProfile !== null && Boolean(onLoadUserProfile)
+  const formScreen = narrow && Boolean(agentForm?.form)
+  const screenOver = composeScreen || accountScreen || groupScreen || profileScreen || formScreen
   const stackProps = (of: Screen) =>
-    screen !== undefined && (screen !== of || composeScreen) ? { 'data-stack-covered': '', inert: true } : {}
+    screen !== undefined && (screen !== of || screenOver) ? { 'data-stack-covered': '', inert: true } : {}
   const backToList = useStackBack(() => onBackToList?.())
   const backFromThread = useStackBack(() => onCloseThread?.())
   const backFromSearch = useStackBack(() => search?.onClear())
@@ -419,14 +426,14 @@ export function Workspace({
   useStackFocus(screen, searchOpen, { search: searchInputRef, chat: chatBackRef, thread: threadBackRef })
   // On a narrow window each open dialog takes a history entry, and the system's back closes it. "Nova
   // conversa" is a full screen of its own there (PLANO-MOBILE M6) and keeps the same entry (ADR-106 dec. 11);
-  // the other dialogs stay dialogs until their screens.
+  // so is "Sua conta", which takes its own entries, one per screen and sheet (AccountSettings, M7 H1), as a
+  // group's details do (GroupDetailsPanel, with the leave sheet). A child's entries are pushed before the ones
+  // below, which are declared bottom first (M8): the profile over the details, the form over both.
   // N2: while its send is in flight (up to the cap) the screen refuses the system's back.
   const composeLocked = useRef(false)
   useStackDialog('compose', composeScreen, () => setComposing(false), () => composeLocked.current)
-  useStackDialog('account', narrow && accountOpen && canAccount, () => setAccountOpen(false))
-  useStackDialog('profile', narrow && openProfile !== null && Boolean(onLoadUserProfile), () => setOpenProfile(null))
-  useStackDialog('group', narrow && managing?.kind === 'group' && Boolean(onCloseManage), () => onCloseManage?.())
-  useStackDialog('agent-form', narrow && Boolean(agentForm?.form), () => {
+  useStackDialog('profile', profileScreen, () => setOpenProfile(null))
+  useStackDialog('agent-form', formScreen, () => {
     if (agentForm?.form) agentForm.close(agentForm.form.id)
   })
 
@@ -806,7 +813,7 @@ export function Workspace({
       </main>
       {threadRoot && onCloseThread && onSendThread && (
         <ThreadPanel
-          covered={screen !== undefined && screen !== 'thread'}
+          covered={screen !== undefined && (screen !== 'thread' || screenOver)}
           header={
             narrow ? (
               // "Thread" over the channel's name, back in place of the close.
@@ -862,6 +869,8 @@ export function Workspace({
           onOpenProfile={onLoadUserProfile ? (u) => setOpenProfile(u) : undefined}
           presenceOf={presenceOf}
           onClose={onCloseManage}
+          narrow={narrow}
+          covered={profileScreen || formScreen}
         />
       )}
       {managing &&
@@ -933,6 +942,7 @@ export function Workspace({
           theme={theme!}
           onThemeChange={onThemeChange!}
           language={language!}
+          narrow={narrow}
           onClose={() => setAccountOpen(false)}
         />
       )}
@@ -952,6 +962,9 @@ export function Workspace({
           onSubscribePresence={onSubscribePresence}
           onOpenDirectMessage={canDm ? onOpenDirectMessage : undefined}
           onClose={() => setOpenProfile(null)}
+          onNavigated={groupScreen ? onCloseManage : undefined}
+          narrow={narrow}
+          covered={formScreen}
         />
       )}
       {agentForm?.form && (
@@ -962,6 +975,7 @@ export function Workspace({
           agent={agentForm.agent}
           onSubmit={agentForm.submit}
           onClose={agentForm.close}
+          narrow={narrow}
         />
       )}
       {sheet && sheetOpen && sheetMessage && (

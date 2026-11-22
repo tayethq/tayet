@@ -46,7 +46,7 @@ http:
   public_base: https://auth.empresa.example/
   issuer: https://auth.empresa.example/
 database:
-  uri: postgresql://synapse:synapse@postgres:5432/mas
+  uri: postgresql://synapse:0000000000000000000000000000000000000000000000000000000000000000@postgres:5432/mas
   max_connections: 10
   min_connections: 0
   connect_timeout: 30

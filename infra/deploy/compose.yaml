@@ -24,17 +24,19 @@ services:
     image: postgres@sha256:4b7183ac05f8ef417db21fd72d71047a4238340c261d3cc3ddb6d579ab5071ae
     restart: unless-stopped
     environment:
-      # Credenciais da REDE INTERNA do compose: o Postgres não publica porta nenhuma,
-      # logo só é alcançável de dentro da rede (quem tem root no host — o mesmo operador
-      # que já detém HS/MAS/escrow, ADR-047). Não são secret de superfície pública; por
-      # isso não entram no `deploy.sh secrets` (que cobre só o material foreclosante).
+      # The password is per installation: `deploy.sh secrets` generates it in secrets/postgres.password.
+      # The file only takes effect when the volume is created; on an existing installation, and to rotate,
+      # use `deploy.sh db-password`. No published port, but every container on this network reaches the
+      # database, so the password is what protects it from them.
       POSTGRES_USER: synapse
-      POSTGRES_PASSWORD: synapse
+      POSTGRES_PASSWORD_FILE: /run/postgres.password
       POSTGRES_DB: synapse
       # Synapse exige locale C no DB.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Mode 600 on the host: the entrypoint reads it as root, before dropping to the postgres user.
+      - ./secrets/postgres.password:/run/postgres.password:ro
       # initdb só roda em volume VIRGEM (primeira subida). Cria o banco `mas` que a uri
       # do MAS espera; owner = POSTGRES_USER `synapse`, o mesmo da uri — correto.
       - ./postgres-init:/docker-entrypoint-initdb.d:ro

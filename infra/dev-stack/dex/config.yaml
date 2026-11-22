@@ -381,3 +381,32 @@ staticPasswords:
     username: "ned"
     userID: "tayet-ned-0072"
     hash: "$2y$12$nZ1NiFvk7NHAXGjdOYUKK.DzaMgwSoZfMyNXs4vtIjMy.GnR8RJF2"
+  # ira: only for account.narrow.spec.ts (phone project), password irapass123, hash by the recipe above.
+  - email: "ira@tayet.local"
+    username: "ira"
+    userID: "tayet-ira-0073"
+    hash: "$2y$12$c7PlXguPe6vlFQEG5QIYWeZvSPZlsk.i2u41muEODN5NdRSxHzYj."
+  # gael, iris and noe: the trio of group-profile.narrow.spec.ts only (phone project), passwords gaelpass123,
+  # irispass123 and noepass123, hashes by the recipe above.
+  - email: "gael@tayet.local"
+    username: "gael"
+    userID: "tayet-gael-0074"
+    hash: "$2y$12$6QZPQOcvRv4R27IcC6IoOOjcUW7OILQ2N4qp9aL73dyugnWfvNDYC"
+  - email: "iris@tayet.local"
+    username: "iris"
+    userID: "tayet-iris-0075"
+    hash: "$2y$12$TLTskJ5i6J.tqK4zrnrGw.IcVRB2P9eOgSFQXkMXkvpVzB.Zfaf.2"
+  - email: "noe@tayet.local"
+    username: "noe"
+    userID: "tayet-noe-0076"
+    hash: "$2y$12$7J47Q0BV6rGTERBjWvv7iOhOFOCs23Gz0CiexcZhfehsBwU4uoOWa"
+  # bia and caio: the pair of agent-form.narrow.spec.ts only (phone project), passwords biapass123 and
+  # caiopass123, hashes by the recipe above. bia is an org admin (dev-stack.sh `up`).
+  - email: "bia@tayet.local"
+    username: "bia"
+    userID: "tayet-bia-0077"
+    hash: "$2y$12$/eeFTuR58shi9YdDN0pL3ukrifvS7YFvNnzDCTdPfVYnXP4JHTl4O"
+  - email: "caio@tayet.local"
+    username: "caio"
+    userID: "tayet-caio-0078"
+    hash: "$2y$12$krrJOH2tElSZTJKbiFdBqOL3Emh.FYI8316Gbym/6Gs3KXWyCIFd."

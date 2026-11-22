@@ -279,6 +279,20 @@ export const ACCOUNT = {
   resetBannerTitle: 'Esta sessão precisa de você',
 } as const
 
+// "Sua conta" on the narrow window and "Abrir no celular" (account-access.md §13). Fonte: AccountSettings.tsx,
+// AccountScreen.tsx (back), ResetSheet.tsx (cancel), OpenOnPhoneDialog.tsx, InstallSheet.tsx.
+export const ACCOUNT_PHONE = {
+  back: 'Voltar',
+  cancel: 'Cancelar',
+  exportDesktopOnly: 'Disponível no computador',
+  openOnPhone: 'Abrir no celular',
+  code: 'Código para abrir o Tayet no celular',
+  installSheet: 'Instalar o Tayet',
+  installRow: 'Instalar na Tela de Início',
+  continueInBrowser: 'Continuar no navegador',
+  notNow: 'Agora não',
+} as const
+
 // "Seus dados" → "Exportar seus dados" (manifesto account-access.md §12). Fonte: AccountSettings.tsx (entry),
 // DataExportDialog.tsx (dialog, actions, end titles). `readmeFirstLine` is the first line of the README.txt
 // inside the zip (the catalog's dataExport.readme).
@@ -311,6 +325,8 @@ export const PROFILE_EDITOR = {
 export const PROFILE = {
   open: (name: string) => `Ver perfil de ${name}`,
   dialog: 'Perfil',
+  // The narrow screen's name, once the profile loaded (view-profile.md §8).
+  screen: (name: string) => `Perfil de ${name}`,
   sendMessage: 'Enviar mensagem',
   note: 'Recado',
   org: 'Da organização',

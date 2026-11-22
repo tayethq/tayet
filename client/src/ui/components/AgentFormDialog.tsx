@@ -1,12 +1,17 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import type { AgentForm, FormField, FormId, FormIssue, FormOption, FormValues, User } from '@tayet/client'
-import { Button, Dialog, Field, type FieldA11y } from '../primitives'
+import { Button, Dialog, Field, ScreenHeader, type FieldA11y } from '../primitives'
+import { useCoveringScreen } from '../covering-screen'
 import { AgentAvatar, agentColorOf } from './AgentAvatar'
 import { RichText } from './RichText'
 import { t } from '../i18n'
 
-// ADR-103 (Proposto); workspace.md §25.5, §26 and §27. The agent's form, wide screen only (§26 item 12):
+// ADR-103 (Proposto); workspace.md §25.5, §26 and §27. The agent's form. On a narrow window (`narrow`;
+// §25.5 item 6, PLANO-MOBILE M8) a full screen of the stack: ✕, the avatar, the title and the agent in the
+// header, the submit alone in a fixed footer under the status, and the screen opens with the focus on its ✕.
+// The instance is the same in both widths, so what was filled, the errors and the sending survive a crossing
+// (F3). On a wide window,
 // the tier's Dialog with a width modifier (480, §26 item 1); the agent's avatar, the form's title and the
 // agent's name in the `title` (§26 item 2, P6); the form's own scrolling body with --space-16 between the
 // fields (§26 item 3); "Cancelar" and the agent's submit label in the footer. Closing (✕, "Cancelar", Esc)
@@ -93,11 +98,14 @@ export function AgentFormDialog({
   agent,
   onSubmit,
   onClose,
+  narrow = false,
 }: {
   form: AgentForm
   agent: User | undefined
   onSubmit: (formId: FormId, values: FormValues) => Promise<{ ok: true } | { issues: Record<string, FormIssue> }>
   onClose: (formId: FormId) => void
+  // Below the width breakpoint: a full screen of the stack.
+  narrow?: boolean
 }) {
   const base = useId()
   const formId = `${base}-form`
@@ -179,6 +187,58 @@ export function AgentFormDialog({
   const status = state.kind === 'failed' || orphan ? t('timeline.failed') : state.kind === 'noAnswer' ? t('form.noAnswer', { agent: agentName }) : undefined
   const submitLabel = sending ? t('timeline.sending') : retry ? t('timeline.retry') : form.submitLabel
 
+  const statusLine = status && (
+    <span className="agent-form__status" role="alert">
+      {status}
+    </span>
+  )
+  const submitButton = (
+    <Button variant="fill" type="submit" form={formId} disabled={sending}>
+      {submitLabel}
+    </Button>
+  )
+  const body = (
+    <form ref={formRef} id={formId} className="agent-form__body" onSubmit={submit} noValidate>
+      {fields.map((f, i) =>
+        f.kind === 'context' ? (
+          <div key={`context-${i}`} className="agent-form__context">
+            {f.rich ? <RichText doc={f.rich} /> : <p className="agent-form__context-text">{f.text}</p>}
+          </div>
+        ) : (
+          <FieldControl
+            key={`${i}-${f.id}`}
+            field={f}
+            domId={`${base}-f${i}`}
+            value={values[f.id]}
+            error={errorOf(f)}
+            // A narrow screen opens on its ✕, as the others of the stack: no keyboard over a form not read yet.
+            autoFocus={!narrow && f === firstInput}
+            register={register(f.id)}
+            onChange={(v) => change(f.id, v)}
+          />
+        ),
+      )}
+    </form>
+  )
+
+  if (narrow)
+    return (
+      <FormScreen
+        title={form.title}
+        agentName={agentName}
+        avatar={<AgentAvatar color={color} />}
+        onClose={() => onClose(form.id)}
+        footer={
+          <>
+            {statusLine}
+            {submitButton}
+          </>
+        }
+      >
+        {body}
+      </FormScreen>
+    )
+
   return (
     <Dialog
       className="agent-form"
@@ -196,41 +256,51 @@ export function AgentFormDialog({
       closeLabel={t('dialog.close')}
       footer={
         <>
-          {status && (
-            <span className="agent-form__status" role="alert">
-              {status}
-            </span>
-          )}
+          {statusLine}
           <Button variant="secondary" onClick={() => onClose(form.id)}>
             {t('form.cancel')}
           </Button>
-          <Button variant="fill" type="submit" form={formId} disabled={sending}>
-            {submitLabel}
-          </Button>
+          {submitButton}
         </>
       }
     >
-      <form ref={formRef} id={formId} className="agent-form__body" onSubmit={submit} noValidate>
-        {fields.map((f, i) =>
-          f.kind === 'context' ? (
-            <div key={`context-${i}`} className="agent-form__context">
-              {f.rich ? <RichText doc={f.rich} /> : <p className="agent-form__context-text">{f.text}</p>}
-            </div>
-          ) : (
-            <FieldControl
-              key={`${i}-${f.id}`}
-              field={f}
-              domId={`${base}-f${i}`}
-              value={values[f.id]}
-              error={errorOf(f)}
-              autoFocus={f === firstInput}
-              register={register(f.id)}
-              onChange={(v) => change(f.id, v)}
-            />
-          ),
-        )}
-      </form>
+      {body}
     </Dialog>
+  )
+}
+
+// F1: the ✕ and Esc discard without asking, as the system's back does (the Workspace's stack entry).
+function FormScreen({
+  title,
+  agentName,
+  avatar,
+  onClose,
+  footer,
+  children,
+}: {
+  title: string
+  agentName: string
+  avatar: ReactNode
+  onClose: () => void
+  footer: ReactNode
+  children: ReactNode
+}) {
+  const { backRef, screenProps } = useCoveringScreen(onClose)
+  return (
+    <section className="agent-form-screen" aria-label={title} {...screenProps}>
+      <ScreenHeader
+        className="agent-form-screen__header"
+        glyph="close"
+        backLabel={t('dialog.close')}
+        onBack={onClose}
+        backRef={backRef}
+        leading={avatar}
+        title={title}
+        subtitle={agentName}
+      />
+      {children}
+      <div className="agent-form-screen__footer">{footer}</div>
+    </section>
   )
 }
 

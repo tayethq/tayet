@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
-import { ZAK } from './fixtures/users'
+import { IPHONE_SAFARI_UA, ZAK } from './fixtures/users'
 import { leaveAppForLogin, loginThroughDex, onApp, pinAppLocale } from './support/login'
 import { expectNoProtocolLeak } from './support/assertions'
-import { APP } from './support/labels'
+import { ACCOUNT_PHONE, APP } from './support/labels'
 
 // Phone project: the login completes when the provider's return lands in a fresh browsing context.
 // The installed app on a phone can reopen the page instead of the tab that left; a new tab of the same
@@ -77,4 +77,23 @@ test('the app declares its manifest: standalone, named Tayet', async ({ page }) 
   const manifest = (await res.json()) as Record<string, unknown>
   expect(manifest.name).toBe('Tayet')
   expect(manifest.display).toBe('standalone')
+})
+
+test.describe("the iPhone's Safari", () => {
+  test.use({ userAgent: IPHONE_SAFARI_UA })
+
+  test('no session: the install sheet; "Continuar no navegador" closes it, and a reload does not bring it back', async ({ page }) => {
+    await pinAppLocale(page)
+    await page.goto('/')
+    const sheet = page.getByRole('dialog', { name: ACCOUNT_PHONE.installSheet })
+    const entry = page.getByRole('button', { name: 'Continuar com Dex (local)' })
+    await expect(sheet).toBeVisible()
+    await expectNoProtocolLeak(page)
+    await sheet.getByRole('button', { name: ACCOUNT_PHONE.continueInBrowser }).click()
+    await expect(sheet).toHaveCount(0)
+    await expect(entry).toBeFocused()
+    await page.reload()
+    await expect(entry).toBeVisible()
+    await expect(sheet).toHaveCount(0)
+  })
 })

@@ -96,6 +96,7 @@ The documents themselves live in the private development repository.
 - ADR-095 — Deploy parametrizado por domínio: um domínio base por deployment, cinco hosts derivados, valor persistido e imutável (Aceito)
 - ADR-096 — Export de dados: formato aberto em pasta e export por pessoa no app (Aceito)
 - ADR-097 — Mobile começa por web instalável: o mesmo client com layout estreito em pilha, instalado na tela inicial; service worker só para push; nativo com gatilho (Aceito)
+- ADR-098 — Push por Web Push a partir do servidor da organização: gateway de push no compose, chaves por instalação, conteúdo só do que o servidor já lê em claro (Aceito)
 - ADR-100 — A conversa aberta é lida conforme as mensagens chegam: recibo na chegada com a conversa à vista, na thread aberta e na volta da aba (Aceito)
 - ADR-101 — Cartão de aprovação com até 25 opções e edição com botões pela camada Slack (Aceito)
 - ADR-103 — Formulários do agente: o agente abre um formulário para a pessoa que clicou ou mandou o comando (Aceito)
@@ -104,6 +105,7 @@ The documents themselves live in the private development repository.
 - ADR-109 — Páginas de login em duas línguas, pelo idioma do navegador (Aceito)
 - ADR-110 — Cadeia de suprimento do CI: actions por SHA, Dependabot só de actions, scan da imagem do agente no `Publish` e base `node` nova (Aceito)
 - ADR-111 — GitHub Release do agente com SBOM CycloneDX e atestado de proveniência (Aceito)
+- ADR-112 — Custódia: convite independente do mapa de conversas diretas e reparo ao abrir a conversa (Aceito)
 
 ## Plans
 
@@ -145,4 +147,4 @@ The documents themselves live in the private development repository.
 
 ---
 
-95 architecture decision records, 35 plans, tree bbdb9503a9feed72cd7a3748390f61e73a7b865f.
+97 architecture decision records, 35 plans, tree 9e8a555a264972c760f424f5db7559fd8b91d138.

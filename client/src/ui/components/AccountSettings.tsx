@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
+import type { ReactNode } from 'react'
 import type {
   AgentColor,
   AgentPatch,
@@ -20,6 +21,12 @@ import type { DataExportVerb } from '../useDataExport'
 import { AgentDialog, type AgentDialogMode } from './AgentDialog'
 import { PeoplePanel } from './PeoplePanel'
 import { ProfileEditor } from './ProfileEditor'
+import { AccountScreen, AccountSurface } from './AccountScreen'
+import { InstallSheet } from './InstallSheet'
+import { OpenOnPhoneDialog } from './OpenOnPhoneDialog'
+import { ResetSheet } from './ResetSheet'
+import { useCanInstall } from '../install'
+import { useStackBack, useStackDialog } from '../stack'
 import type { ResetStatus } from './ResetAccessBanner'
 import { relativeTimeOf } from './Timeline'
 import { type Theme } from '../theme'
@@ -93,6 +100,37 @@ function languageSubtitle(language: LanguageState): string {
   return t('account.languageDevice', { language: applied })
 }
 
+type View =
+  | 'main'
+  | 'access'
+  | 'confirm'
+  | 'profile'
+  | 'people'
+  | 'invite'
+  | 'removePerson'
+  | 'agent'
+  | 'export'
+  | 'phone'
+  | 'install'
+
+// What is under each view: one step back (PLANO-MOBILE M7 H1). On the narrow window "Sua conta" and each step
+// above it are one entry of the stack each.
+const UNDER: Record<Exclude<View, 'main'>, View> = {
+  access: 'main',
+  confirm: 'access',
+  profile: 'main',
+  people: 'main',
+  invite: 'people',
+  removePerson: 'people',
+  agent: 'people',
+  export: 'main',
+  phone: 'main',
+  install: 'main',
+}
+
+// The views with no narrow screen: one already open when the window narrows stays a dialog until it closes (H2).
+const DIALOG_ONLY: readonly View[] = ['people', 'invite', 'removePerson', 'agent', 'export', 'phone']
+
 // The language row sits in the appearance block, with no divider between the two. The control is the
 // system's own select, laid transparent over the closed field (value and chevron), so the list that
 // opens is the system's.
@@ -153,6 +191,7 @@ export function AccountSettings({
   theme,
   onThemeChange,
   language,
+  narrow = false,
   onClose,
 }: {
   open: boolean
@@ -191,11 +230,11 @@ export function AccountSettings({
   theme: Theme
   onThemeChange: (theme: Theme) => void
   language: LanguageState
+  // Below the width breakpoint: full screens of the stack and bottom sheets (account-access.md §13.2).
+  narrow?: boolean
   onClose: () => void
 }) {
-  const [view, setView] = useState<
-    'main' | 'access' | 'confirm' | 'profile' | 'people' | 'invite' | 'removePerson' | 'agent' | 'export'
-  >('main')
+  const [view, setView] = useState<View>('main')
   // ADR-086: what the AgentDialog opens on (create, or edit/remove of an agent of the list).
   const [agentMode, setAgentMode] = useState<AgentDialogMode>({ kind: 'create' })
   const [peopleFilter, setPeopleFilter] = useState('')
@@ -208,8 +247,9 @@ export function AccountSettings({
   // (autoFocus), espelhando o ChannelManagementPanel.
   const subtitleRef = useRef<HTMLParagraphElement>(null)
   useEffect(() => {
-    if (view === 'access') subtitleRef.current?.focus()
-  }, [view])
+    // On the narrow window the focus is the screen's back, or the reset box when the sheet closes.
+    if (view === 'access' && !narrow) subtitleRef.current?.focus()
+  }, [view, narrow])
 
   // Cargo sob o nome (ADR-054, read-only): só o perfil o traz, lido ao abrir a view main. Ausente ou
   // falha de leitura = sem linha, em silêncio — a identidade não depende dele.
@@ -237,8 +277,6 @@ export function AccountSettings({
     [accesses],
   )
 
-  if (!open) return null
-
   // Fecha SEMPRE resetando pra main, pro próximo open começar na raiz (o componente não desmonta no
   // close — só retorna null — então o estado de view persiste sem isto).
   const handleClose = () => {
@@ -248,23 +286,61 @@ export function AccountSettings({
     onClose()
   }
 
+  // H1: three levels at most. The entries are declared bottom first, so they push in that order when all
+  // open in one commit (a window that narrows with a view open).
+  const under = view === 'main' ? undefined : UNDER[view]
+  const stacked = narrow && open
+  useStackDialog('account', stacked, handleClose)
+  useStackDialog('account-view', stacked && under !== undefined, () => setView('main'))
+  useStackDialog('account-step', stacked && under !== undefined && under !== 'main', () => setView(under ?? 'main'))
+  const back = useStackBack(() => (under ? setView(under) : handleClose()))
+  // The install sheet has no wide form, and none outside the iPhone's Safari (I1).
+  const installable = useCanInstall()
+  const showInstall = narrow && installable
+  useEffect(() => {
+    if (view === 'install' && !showInstall) setView('main')
+  }, [view, showInstall])
+  const installRef = useRef<HTMLButtonElement>(null)
+
+  if (!open) return null
+
+  // What a view draws, over the narrow screens under it. Both widths render it in the same place of the tree,
+  // so an open view keeps its state when the window crosses the breakpoint.
+  const shown = (surface: ReactNode, sheet?: ReactNode) => (
+    <>
+      {narrow && (
+        <AccountScreen
+          title={t('account.title')}
+          onBack={back}
+          covered={view === 'access' || view === 'confirm' || view === 'profile'}
+          behind={DIALOG_ONLY.includes(view)}
+        >
+          {mainBody()}
+        </AccountScreen>
+      )}
+      {surface}
+      {sheet}
+    </>
+  )
+
   // ── view 'profile' ── 2º drill-in (ADR-040): o editor possui o próprio Dialog (corpo + footer), tal
   // como cada view aqui dá early-return do seu. onBack volta pra main; onClose reseta via handleClose.
   if (view === 'profile') {
-    return (
+    return shown(
       <ProfileEditor
-        onBack={() => setView('main')}
+        narrow={narrow}
+        onBack={narrow ? back : () => setView('main')}
         onClose={handleClose}
         onLoadProfile={onLoadProfile}
         onSaveProfile={onSaveProfile}
         onSaveAvatar={onSaveAvatar}
         onClearAvatar={onClearAvatar}
-      />
+      />,
     )
   }
 
   if (view === 'agent' && onCreateAgent && onUpdateAgent && onReissueAgent && onRemoveAgent) {
-    return (
+    return shown(
       <AgentDialog
         mode={agentMode}
         operatorName={displayName}
@@ -273,19 +349,24 @@ export function AccountSettings({
         onReissue={onReissueAgent}
         onRemove={onRemoveAgent}
         onClose={() => setView('people')}
-      />
+      />,
     )
   }
 
   // ── view 'export' ── "Exportar seus dados" (account-access.md §12): its own dialog, back to "Sua conta" on
   // close, as the invite goes back to "Pessoas" (PLANO-EXPORT-DADOS §0.3.6 item 1).
   if (view === 'export') {
-    return <DataExportDialog onExport={onExportData} onClose={() => setView('main')} />
+    return shown(<DataExportDialog onExport={onExportData} onClose={() => setView('main')} />)
+  }
+
+  // ── view 'phone' ── "Abrir no celular" (account-access.md §13.1): a dialog of its own, like the export.
+  if (view === 'phone') {
+    return shown(<OpenOnPhoneDialog onClose={() => setView('main')} />)
   }
 
   if (view === 'invite') {
-    return (
-      <InvitePersonDialog channels={inviteChannels} onInvite={onInvitePerson!} onClose={() => setView('people')} />
+    return shown(
+      <InvitePersonDialog channels={inviteChannels} onInvite={onInvitePerson!} onClose={() => setView('people')} />,
     )
   }
 
@@ -311,7 +392,7 @@ export function AccountSettings({
         setRemoveBusy(false)
       }
     }
-    return (
+    return shown(
       <Dialog
         role="alertdialog"
         size="gestao"
@@ -344,12 +425,12 @@ export function AccountSettings({
             </p>
           )}
         </div>
-      </Dialog>
+      </Dialog>,
     )
   }
 
   if (view === 'people') {
-    return (
+    return shown(
       <PeoplePanel
         people={people}
         filter={peopleFilter}
@@ -384,19 +465,27 @@ export function AccountSettings({
         }
         onBack={() => setView('main')}
         onClose={handleClose}
-      />
+      />,
     )
   }
 
-  if (view === 'access') {
-    return (
-      <Dialog
-        className="account-settings-dialog account-settings-dialog--access"
+  if (showInstall && view === 'install') {
+    const close = () => setView('main')
+    return shown(
+      null,
+      <InstallSheet action="install.notNow" onAction={close} onClose={close} returnFocus={installRef.current} />,
+    )
+  }
+
+  // On the narrow window the confirm is a sheet over this view, which stays mounted under it.
+  if (view === 'access' || (narrow && view === 'confirm')) {
+    return shown(
+      <AccountSurface
+        narrow={narrow}
+        name="access"
         title={t('account.accessTitle')}
-        onBack={() => setView('main')}
-        backLabel={t('dialog.back')}
+        onBack={narrow ? back : () => setView('main')}
         onClose={handleClose}
-        closeLabel={t('dialog.close')}
       >
         <div className="account-settings account-settings--access">
           <p ref={subtitleRef} tabIndex={-1} className="account-settings__subtitle">
@@ -459,7 +548,10 @@ export function AccountSettings({
             </span>
           </button>
         </div>
-      </Dialog>
+      </AccountSurface>,
+      narrow && view === 'confirm' && (
+        <ResetSheet status={resetStatus} onReset={onReset} onSignOut={onSignOut} onClose={() => setView('access')} />
+      ),
     )
   }
 
@@ -471,7 +563,7 @@ export function AccountSettings({
   // chamado SÓ pelo danger-fill. Assimetria intencional: o ResetAccessBanner (recuperação) segue
   // direto, sem confirmação — lá o reset restaura histórico; aqui ele queima histórico ainda legível.
   if (view === 'confirm') {
-    return (
+    return shown(
       <Dialog
         size="gestao"
         ariaLabel={t('account.resetTitle')}
@@ -521,24 +613,39 @@ export function AccountSettings({
             )}
           </div>
         )}
-      </Dialog>
+      </Dialog>,
     )
   }
 
   // ── view 'main' ──
-  const knownCount = accesses.length
-  const unknownCount = accesses.filter((a) => !a.friendlyName?.trim()).length
-  const accessSummary =
-    t('account.accessCount', { n: knownCount }) +
-    (unknownCount > 0 ? ` ${GLYPH.dot} ${t('account.unknownCount', { n: unknownCount })}` : '')
-
-  return (
+  if (narrow) return shown(null)
+  return shown(
     <Dialog
       className="account-settings-dialog account-settings-dialog--main"
       title={t('account.title')}
       onClose={handleClose}
       closeLabel={t('dialog.close')}
     >
+      {mainBody()}
+    </Dialog>,
+  )
+
+  // Shared by the wide dialog and the narrow screen.
+  function mainBody() {
+    const knownCount = accesses.length
+    const unknownCount = accesses.filter((a) => !a.friendlyName?.trim()).length
+    // A1: with a single access, in any width.
+    const accessSummary =
+      knownCount === 1
+        ? t('account.accessesOnlyThis')
+        : t('account.accessCount', { n: knownCount }) +
+          (unknownCount > 0 ? ` ${GLYPH.dot} ${t('account.unknownCount', { n: unknownCount })}` : '')
+    const chevron = (
+      <span className="account-settings__access-entry-chevron" aria-hidden="true">
+        {narrow ? <Chevron /> : GLYPH.chevron}
+      </span>
+    )
+    return (
       <div className="account-settings">
         <header className="account-settings__identity">
           <Avatar label={(displayName?.trim()?.[0] ?? t('account.title')[0]!).toUpperCase()} src={avatarUrl} presence={presence} />
@@ -561,6 +668,7 @@ export function AccountSettings({
             value={theme}
             options={themeOptions()}
             onChange={onThemeChange}
+            fill={narrow}
           />
         </section>
         <LanguageRow language={language} />
@@ -578,7 +686,7 @@ export function AccountSettings({
               <span className="account-settings__access-entry-label">{t('account.accessTitle')}</span>
               <span className="account-settings__access-entry-summary">{accessSummary}</span>
             </span>
-            <span className="account-settings__access-entry-chevron" aria-hidden="true">{GLYPH.chevron}</span>
+            {chevron}
           </button>
         </section>
         <hr className="account-settings__divider" />
@@ -586,20 +694,68 @@ export function AccountSettings({
             before "Organização". */}
         <section className="account-settings__access-section">
           <h3 className="account-settings__section-title">{t('dataExport.section')}</h3>
-          <button
-            type="button"
-            className="account-settings__access-entry"
-            onClick={() => setView('export')}
-          >
-            <span className="account-settings__access-entry-text">
+          {narrow ? (
+            // §13.2 item 2: it points at the computer, with no action and no chevron.
+            <p className="account-settings__desktop-only">
               <span className="account-settings__access-entry-label">{t('dataExport.entry')}</span>
-              <span className="account-settings__access-entry-summary">{t('dataExport.entrySummary')}</span>
-            </span>
-            <span className="account-settings__access-entry-chevron" aria-hidden="true">{GLYPH.chevron}</span>
-          </button>
+              <span className="account-settings__access-entry-summary">{t('dataExport.desktopOnly')}</span>
+            </p>
+          ) : (
+            <button
+              type="button"
+              className="account-settings__access-entry"
+              onClick={() => setView('export')}
+            >
+              <span className="account-settings__access-entry-text">
+                <span className="account-settings__access-entry-label">{t('dataExport.entry')}</span>
+                <span className="account-settings__access-entry-summary">{t('dataExport.entrySummary')}</span>
+              </span>
+              {chevron}
+            </button>
+          )}
         </section>
         <hr className="account-settings__divider" />
-        {orgAdmin && (
+        {showInstall && (
+          <>
+            <section className="account-settings__access-section">
+              <h3 className="account-settings__section-title">{t('install.section')}</h3>
+              <button
+                ref={installRef}
+                type="button"
+                className="account-settings__access-entry"
+                onClick={() => setView('install')}
+              >
+                <span className="account-settings__access-entry-text">
+                  <span className="account-settings__access-entry-label">{t('install.row')}</span>
+                  <span className="account-settings__access-entry-summary">{t('install.rowHint')}</span>
+                </span>
+                {chevron}
+              </button>
+            </section>
+            <hr className="account-settings__divider" />
+          </>
+        )}
+        {!narrow && (
+          // "No celular" (§13.1 item 1): every person, before "Organização".
+          <>
+            <section className="account-settings__access-section">
+              <h3 className="account-settings__section-title">{t('account.onPhone')}</h3>
+              <button
+                type="button"
+                className="account-settings__access-entry"
+                onClick={() => setView('phone')}
+              >
+                <span className="account-settings__access-entry-text">
+                  <span className="account-settings__access-entry-label">{t('account.openOnPhone')}</span>
+                  <span className="account-settings__access-entry-summary">{t('account.openOnPhoneHint')}</span>
+                </span>
+                {chevron}
+              </button>
+            </section>
+            <hr className="account-settings__divider" />
+          </>
+        )}
+        {orgAdmin && !narrow && (
           <>
             <section className="account-settings__access-section">
               <h3 className="account-settings__section-title">{t('people.orgSection')}</h3>
@@ -615,7 +771,7 @@ export function AccountSettings({
                     {t('people.summaryGuests', { n: people.filter((p) => p.user.kind === 'guest').length })}
                   </span>
                 </span>
-                <span className="account-settings__access-entry-chevron" aria-hidden="true">{GLYPH.chevron}</span>
+                {chevron}
               </button>
             </section>
             <hr className="account-settings__divider" />
@@ -625,6 +781,6 @@ export function AccountSettings({
           {t('account.signOut')}
         </Button>
       </div>
-    </Dialog>
-  )
+    )
+  }
 }

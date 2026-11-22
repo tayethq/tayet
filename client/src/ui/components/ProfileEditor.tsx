@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { MediaRef, MyProfile, OrgFields } from '@tayet/client'
-import { Button, Dialog, Field } from '../primitives'
+import { Button, Field } from '../primitives'
+import { AccountSurface } from './AccountScreen'
 import { ProfilePhoto } from './ProfilePhoto'
 import { t } from '../i18n'
 
@@ -29,6 +30,7 @@ export function ProfileEditor({
   onSaveProfile,
   onSaveAvatar,
   onClearAvatar,
+  narrow = false,
 }: {
   onBack: () => void
   onClose: () => void
@@ -37,6 +39,8 @@ export function ProfileEditor({
   // Foto de perfil (ADR-041 PR-3): required — torna irrepresentável montar o editor sem os verbos.
   onSaveAvatar: (file: File) => Promise<void>
   onClearAvatar: () => Promise<void>
+  // Below the width breakpoint: a full screen with a fixed footer (edit-profile.md §9).
+  narrow?: boolean
 }) {
   const [fullName, setFullName] = useState<string | null>(null) // null = carregando
   // ADR-054: camada organizacional do próprio (Cargo/Email), read-only. Lida na mesma volta do
@@ -76,6 +80,18 @@ export function ProfileEditor({
     }
   }, [onLoadProfile])
 
+  // The photo control mounts again when the window crosses the breakpoint and loses what it had just sent or
+  // removed: read the photo again (the typed fields live here and stay).
+  const wasNarrow = useRef(narrow)
+  useEffect(() => {
+    if (wasNarrow.current === narrow) return
+    wasNarrow.current = narrow
+    void onLoadProfile().then(
+      (p) => setAvatar(p.avatar),
+      () => undefined,
+    )
+  }, [narrow, onLoadProfile])
+
   const dirty =
     nickname.trim() !== original.trim() ||
     pronouns.trim() !== originalPronouns.trim() ||
@@ -114,34 +130,38 @@ export function ProfileEditor({
           ? t('profile.saveFailed')
           : ''
 
+  // §9.1 item 7: on the narrow window, no footer while it loads or when the load failed.
+  const hasFooter = !narrow || (!loadError && fullName !== null)
+
   return (
-    <Dialog
-      className="account-settings-dialog account-settings-dialog--profile"
+    <AccountSurface
+      narrow={narrow}
+      name="profile"
       title={t('profile.editTitle')}
       onBack={onBack}
-      backLabel={t('dialog.back')}
       onClose={onClose}
-      closeLabel={t('dialog.close')}
       footer={
-        <div className="profile-editor__footer">
-          <span
-            className={`profile-editor__status profile-editor__status--${save}`}
-            role="status"
-            aria-live="polite"
-          >
-            {status}
-          </span>
-          <Button variant="fill" onClick={handleSave} disabled={!dirty || save === 'saving'}>
-            {t('profile.save')}
-          </Button>
-        </div>
+        hasFooter && (
+          <div className="profile-editor__footer">
+            <span
+              className={`profile-editor__status profile-editor__status--${save}`}
+              role="status"
+              aria-live="polite"
+            >
+              {status}
+            </span>
+            <Button variant="fill" onClick={handleSave} disabled={!dirty || save === 'saving'}>
+              {t('profile.save')}
+            </Button>
+          </div>
+        )
       }
     >
       <div className="profile-editor">
         {loadError ? (
-          <p className="profile-editor__load-error">{t('profile.loadOwnFailed')}</p>
+          <p className="profile-editor__load-error" role={narrow ? 'alert' : undefined}>{t('profile.loadOwnFailed')}</p>
         ) : fullName === null ? (
-          <p className="profile-editor__loading">{t('profile.loading')}</p>
+          <p className="profile-editor__loading" role={narrow ? 'status' : undefined}>{t('profile.loading')}</p>
         ) : (
           <>
             <ProfilePhoto
@@ -226,6 +246,6 @@ export function ProfileEditor({
           </>
         )}
       </div>
-    </Dialog>
+    </AccountSurface>
   )
 }

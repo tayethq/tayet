@@ -14,6 +14,7 @@ import { BootMessage, type BootPhase } from './BootMessage'
 import { createTabLock, WAIT_COPY_DELAY_MS, type TabLock } from '../tab-lock'
 import { watchSearchState } from '../search-state'
 import { reconcileLanguage } from '../language'
+import { installDismissed, saveInstallDismissed, useCanInstall } from '../install'
 
 // Controlador de boot. Trilha 1: connect-como-estado (issue #1). Fatia 2a: detecta o callback OIDC,
 // inicia o login no no-session, mostra os beats. Fatia 2b: logout (ADR-034) — signOut na ACL (para o
@@ -67,6 +68,10 @@ export function Boot({
   const [lock] = useState<TabLock>(() => tabLock ?? createTabLock())
   // ADR-065 D4: a espera do "Usar aqui" passou de WAIT_COPY_DELAY_MS → copy secundária.
   const [waitedLong, setWaitedLong] = useState(false)
+  // The install sheet before the sign-in (PLANO-MOBILE M7 I1, I2): only `no-session`. The scrim and Esc close
+  // it for this visit; "Continuar no navegador" closes it for good in this browser.
+  const installable = useCanInstall()
+  const [installClosed, setInstallClosed] = useState(installDismissed)
   // ADR-065 D2: fases que NÃO seguram o lock — nada nelas usa token nem o store. O retry readquire.
   // `revoked` também solta, mas só depois do wipe (ver os três pontos que a alcançam).
   const settle = useCallback(
@@ -273,6 +278,17 @@ export function Boot({
           onTakeOver={() => void takeOver()}
           exiting={readyAcl !== null}
           onExited={endExit}
+          install={
+            boot === 'no-session' && installable && !installClosed
+              ? {
+                  onContinue: () => {
+                    saveInstallDismissed()
+                    setInstallClosed(true)
+                  },
+                  onClose: () => setInstallClosed(true),
+                }
+              : undefined
+          }
         />
       ) : null}
     </>

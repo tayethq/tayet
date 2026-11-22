@@ -40,14 +40,14 @@ describe('"Seus dados" in "Sua conta" (account-access.md §12.1 item 1)', () => 
 
   it('a member or a guest (no admin) sees it after "Acesso"', () => {
     const view = account()
-    expect(sections(view.container)).toEqual([ptBR.account.accessSection, copy.section])
+    expect(sections(view.container)).toEqual([ptBR.account.accessSection, copy.section, ptBR.account.onPhone])
     const entry = view.getByRole('button', { name: (n) => n.startsWith(copy.entry) && n.endsWith(copy.entrySummary) })
     expect(entry).toBeTruthy()
   })
 
   it('the admin sees it before "Organização"', () => {
     const view = account({ orgAdmin: true, people: [] })
-    expect(sections(view.container)).toEqual([ptBR.account.accessSection, copy.section, ptBR.people.orgSection])
+    expect(sections(view.container)).toEqual([ptBR.account.accessSection, copy.section, ptBR.account.onPhone, ptBR.people.orgSection])
   })
 
   it('the entry opens the dialog; ✕ goes back to "Sua conta"', () => {

@@ -325,6 +325,10 @@ What a restore does not bring back: anything written after the backup was taken.
 
 ## 13. Update
 
+If `secrets/postgres.password` does not exist, your installation predates the per-installation
+database password: run `./deploy.sh db-password` once, with the stack up, right after checking out
+the new code and before `render`, `build` and `up`.
+
 ```bash
 git fetch --tags
 git checkout <tag>

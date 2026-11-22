@@ -42,13 +42,16 @@ Who talks to whom (internal Compose network; no public port except Caddy's):
 ```bash
 ./deploy.sh secrets   # once: generates every secret in secrets/ (aborts if they already exist)
 ./deploy.sh render    # re-renders the three templates (synapse/mas/dex) from the live secrets
+./deploy.sh db-password # new Postgres password: sets it on the role, renders, restarts synapse and mas,
+                      # after recreating postgres if its Compose config changed
+                      # (once on an installation without secrets/postgres.password, and to rotate)
 ./deploy.sh build     # builds the web app into client/dist; agent dependencies into agent/node_modules
 ./deploy.sh up        # aborts on a pending render; pg_dump + migrate + MAS config sync, starts the stack,
                       # restarts MAS/Synapse/Caddy when their config changed, provisions the service
                       # accounts and the bootstrap admin, seeds #all; second phase: the custody agent
 ./deploy.sh down      # stops the stack, PRESERVING volumes
 ./deploy.sh check     # read-only: probes, renders up to date, Synapse and MAS config = render,
-                      # base domain, #all, escrow, latest backup, custody agent
+                      # base domain, Postgres password file, #all, escrow, latest backup, custody agent
 ```
 
 **Deployment parameters.** `TAYET_DOMAIN` is required by `secrets` and has no default (ADR-095).
@@ -172,6 +175,52 @@ Operation notes for `render`:
 
 **Zero drift:** a future `./deploy.sh secrets` (a new deployment) renders the same templates and
 produces the same result; `render` exists only for a deployment that is **already running**.
+
+## Postgres password
+
+Each installation has its own password, in `secrets/postgres.password` (64 hex, mode 600). `secrets`
+generates it, `render` puts it in the Synapse and MAS configs, and the `postgres` service reads the
+file through `POSTGRES_PASSWORD_FILE`. Postgres only uses that file when it creates the volume:
+editing it does not change the password of an existing database. The command that does is:
+
+```bash
+./deploy.sh db-password
+```
+
+Run it once on an installation that has no `secrets/postgres.password` (after checking out the new
+code, before `render`, `build` and `up`: `render` and `up` refuse to run without the file), and again
+whenever you want to rotate. It needs the stack up. It checks the render with a new password, sets
+the password on the role, promotes the file, renders, recreates Postgres if its Compose config
+changed (the first run does; it must happen before the restarts), restarts Synapse and MAS, waits
+for both and ends with `Postgres password rotated: <path>`. Expect a short interruption. It needs no
+current password, so if it is interrupted or fails after changing the role, run it again. `check`
+reports a missing file or a mode other than 600.
+
+The password protects the database from the other containers of the Compose network. Inside the
+Postgres container the socket and the loopback (`127.0.0.1`, `::1`) ask for no password, so to test
+a password connect to the host `postgres`.
+
+Two cases need a manual step, both with Postgres up
+(`docker compose -p <project> --env-file secrets/deployment.env -f compose.yaml up -d --wait postgres`):
+
+- **Restoring `secrets/` from before a rotation onto a database volume that survived.** Dumps do not
+  carry the role's password. Set the role to the restored file before `./deploy.sh up`:
+
+  ```bash
+  { printf "SET log_min_error_statement = 'panic';\nALTER ROLE synapse WITH PASSWORD '"
+    tr -d '\n' < secrets/postgres.password; printf "';\n"; } |
+    docker compose -p <project> --env-file secrets/deployment.env -f compose.yaml exec -T postgres \
+      psql -U synapse -d postgres -v ON_ERROR_STOP=1 -q
+  ```
+
+- **Going back to a release without this file.** Its templates carry a fixed password. Check that
+  release out, set the role to the value of `POSTGRES_PASSWORD` in its `compose.yaml`, then `render`
+  and `up`. `\password` asks for the value and keeps it out of the process list and the log:
+
+  ```bash
+  docker compose -p <project> --env-file secrets/deployment.env -f compose.yaml exec postgres \
+    psql -U synapse -d postgres -c '\password synapse'
+  ```
 
 ## Custody agent
 
@@ -361,7 +410,8 @@ Synapse upgrade and is not restored. Rolling back only the image, without the re
 is not the procedure: background updates of the new version can change the schema in ways the old
 version does not expect.
 
-After checking out the previous release, run `render` too: `up` aborts if the reverted template
+If the previous release has no per-installation Postgres password, first follow "Postgres password"
+above. After checking out the previous release, run `render` too: `up` aborts if the reverted template
 differs from the live render. The final check confirms the renders and the config Synapse reads.
 
 ```bash

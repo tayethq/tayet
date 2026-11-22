@@ -6,6 +6,7 @@ import {
   SyncState,
   EventType,
   EventStatus,
+  JoinRule,
   RelationType,
   Direction,
   MatrixError,
@@ -765,6 +766,8 @@ export class MatrixGateway {
       this.channelSubs.set(key, set)
     }
     set.add(handler)
+    // ADR-112 (Proposto) dec. 2: subscribing is how the UI opens a conversation. Never awaited.
+    this.detach(this.repairCustody(key))
     return () => set.delete(handler)
   }
 
@@ -1815,7 +1818,11 @@ export class MatrixGateway {
       // acontecem no nascimento de TODA sala cifrada, então sem este guard cada canal criado
       // emitiria member.changed de um membro que a UI não pode nem nomear.
       // ADR-083 dec. 5: a conta de sistema passa pelo mesmo guard, uma entrada para cada conta.
-      if (this.isCustodian(member.userId) || this.isSystemAccount(member.userId)) return
+      if (this.isCustodian(member.userId) || this.isSystemAccount(member.userId)) {
+        // ADR-112 dec. 3: the repair sees the custody enter here, before the guard drops the event.
+        if (this.custodyRepairs.has(member.roomId)) this.detach(this.discardOnceRepaired(member.roomId))
+        return
+      }
       this.reviewHeldGroupRoom(member.roomId)
       // A3-5: an agent joining, leaving or renamed moves the conversation's panels (filter and order);
       // A4-1: and its commands.
@@ -2183,6 +2190,8 @@ export class MatrixGateway {
     // parar o timer aqui é o teardown simétrico — nenhum interval órfão pós-disconnect).
     this.custodyInviteQueue.clear()
     this.stopCustodyDrainIfIdle()
+    this.custodyAttempted.clear()
+    this.custodyRepairs.clear()
     this.pendingDecrypt.clear()
     this.unavailableEmitted.clear()
     this.ownSendsAwaitingEcho.clear()
@@ -2635,8 +2644,10 @@ export class MatrixGateway {
   private async inviteCustodian(roomId: string): Promise<void> {
     const custodian = this.custodianMxid()
     if (!custodian) return this.signalUncovered(CUSTODY_SIGNAL_INVITE_FAILED)
+    this.custodyAttempted.add(roomId)
     try {
       await this.require().invite(roomId, custodian)
+      this.noteInviteAccepted(roomId)
     } catch (err) {
       // F11 (ratificado): o /invite do cofre consome o rc_message do CRIADOR — sob rajada
       // de createRoom o 429 é sistemático, não excepcional (6/12 salas sem cofre, §8.4).
@@ -2646,6 +2657,7 @@ export class MatrixGateway {
         this.deferCustodyInvite(roomId, err)
         return
       }
+      if (await this.custodyAlreadyIn(roomId, custodian, err)) return
       return this.signalUncovered(CUSTODY_SIGNAL_INVITE_FAILED)
     }
     // A espera é OBRIGATÓRIA, não otimização: o fan-out Megolm decide a cobertura no instante do
@@ -2662,10 +2674,62 @@ export class MatrixGateway {
   private async waitForCustodyMembership(roomId: string, custodian: string): Promise<boolean> {
     const deadline = Date.now() + CUSTODY_WAIT_MS
     for (;;) {
-      const membership = this.client?.getRoom(roomId)?.getMember(custodian)?.membership
-      if (membership === 'invite' || membership === 'join') return true
+      if (this.custodyPresent(roomId, custodian)) return true
       if (Date.now() >= deadline) return false
       await new Promise((r) => setTimeout(r, CUSTODY_POLL_MS))
+    }
+  }
+
+  private custodyPresent(roomId: string, custodian: string): boolean {
+    const membership = this.client?.getRoom(roomId)?.getMember(custodian)?.membership
+    return membership === 'invite' || membership === 'join'
+  }
+
+  // ── Repair on open (ADR-112, Proposto) ─────────────────────────────────────────────────────
+  // Rooms that went through inviteCustodian in this session: one invite each (birth, queue or repair).
+  private readonly custodyAttempted = new Set<string>()
+  // Rooms under repair → whether the server accepted the repair's invite.
+  private readonly custodyRepairs = new Map<string, boolean>()
+
+  // The local member list is complete (startClient does not lazy-load members), so absence is read
+  // from it, as of the last sync. The server's refusal is the net for a sync that is behind.
+  private async repairCustody(roomId: string): Promise<void> {
+    if (!this.live || this.sessionLost || this.custodyAttempted.has(roomId)) return
+    const room = this.client?.getRoom(roomId)
+    const custodian = this.custodianMxid()
+    if (!room || !custodian) return
+    if (room.getMyMembership() !== 'join' || !room.hasEncryptionStateEvent()) return
+    // The product's public channels (roomToChannel), which may carry encryption from before ADR-045.
+    if (room.getJoinRule() === JoinRule.Public || room.getCanonicalAlias() === this.orgChannelAlias()) return
+    if (this.custodyPresent(roomId, custodian)) return
+    this.custodyRepairs.set(roomId, false)
+    await this.inviteCustodian(roomId)
+  }
+
+  // The invite's answer and the member event come in either order; the second one discards.
+  private noteInviteAccepted(roomId: string): void {
+    if (!this.custodyRepairs.has(roomId)) return // birth: the outbound session is left alone
+    this.custodyRepairs.set(roomId, true)
+    this.detach(this.discardOnceRepaired(roomId))
+  }
+
+  // ADR-112 dec. 3: the next message is born in a session the custody receives from its first index.
+  private async discardOnceRepaired(roomId: string): Promise<void> {
+    const custodian = this.custodianMxid()
+    if (!custodian || !this.custodyRepairs.get(roomId) || !this.custodyPresent(roomId, custodian)) return
+    this.custodyRepairs.delete(roomId)
+    await this.client?.getCrypto()?.forceDiscardSession(roomId)
+  }
+
+  // Synapse answers "already in the room" and "not allowed to invite" with the same 403 M_FORBIDDEN, so
+  // the member's state on the server decides, not the wording of the error.
+  private async custodyAlreadyIn(roomId: string, custodian: string, err: unknown): Promise<boolean> {
+    if (!(err instanceof MatrixError) || err.errcode !== 'M_FORBIDDEN') return false
+    try {
+      const { membership } = await this.require().getStateEvent(roomId, EventType.RoomMember, custodian)
+      return membership === 'invite' || membership === 'join'
+    } catch {
+      return false
     }
   }
 
@@ -2719,6 +2783,7 @@ export class MatrixGateway {
         }
         try {
           await client.invite(roomId, custodian)
+          this.noteInviteAccepted(roomId)
           // Sucesso tardio: a espera de membership do caminho imediato NÃO se aplica — o
           // verbo já resolveu há muito. Sessões nascidas antes deste invite são aceitas
           // (backup cobre o caso normal; gap composto registrado no §3/F11).
@@ -2728,7 +2793,8 @@ export class MatrixGateway {
             this.deferCustodyInvite(roomId, err)
           } else {
             this.custodyInviteQueue.delete(roomId)
-            this.signalUncovered(CUSTODY_SIGNAL_INVITE_FAILED)
+            if (!(await this.custodyAlreadyIn(roomId, custodian, err)))
+              this.signalUncovered(CUSTODY_SIGNAL_INVITE_FAILED)
           }
         }
       }
@@ -2911,7 +2977,11 @@ export class MatrixGateway {
     // still be null right after createRoom). The membership check lives only on the cold m.direct
     // path below, to skip a DM left in a prior session.
     const memo = this.directRoomByUser.get(rawUser)
-    if (memo) return brandChannelId(memo)
+    if (memo) {
+      // ADR-112 dec. 1: the first attempt may have failed at the map write; the retry completes it.
+      if (!this.directRoomsFor(rawUser).includes(memo)) await this.addDirectRoom(rawUser, memo)
+      return brandChannelId(memo)
+    }
     for (const roomId of this.directRoomsFor(rawUser)) {
       if (client.getRoom(roomId)?.getMyMembership() === 'join') {
         this.directRoomByUser.set(rawUser, roomId)
@@ -2925,12 +2995,16 @@ export class MatrixGateway {
       initial_state: encryptedBirthState(),
     })
     this.directRoomByUser.set(rawUser, res.room_id)
-    await this.addDirectRoom(rawUser, res.room_id)
     // Um DM passa a ter TRÊS membros no protocolo (eu, o par, o cofre) e continuar sendo um 1:1 no
     // produto: o cofre é filtrado em getMembers/member.changed, e roomToChannel o exclui do nome,
-    // do avatar e do memberCount. m.direct segue mapeando só o par humano (addDirectRoom acima), o
+    // do avatar e do memberCount. m.direct segue mapeando só o par humano (addDirectRoom), o
     // que mantém isDm/dmPeerOf intocados.
-    await this.inviteCustodian(res.room_id)
+    // ADR-112 dec. 1: the invite does not depend on the map. Both settle before a map failure is rethrown.
+    const [mapWrite] = await Promise.allSettled([
+      this.addDirectRoom(rawUser, res.room_id),
+      this.inviteCustodian(res.room_id),
+    ])
+    if (mapWrite.status === 'rejected') throw mapWrite.reason
     return brandChannelId(res.room_id)
   }
 

@@ -300,6 +300,23 @@ function localpart(mxid: string): string {
   return m?.[1] ?? mxid.replace(/^@/, '')
 }
 
+// Removes the suffix " (@user:server)" from an already trimmed name, in one right-to-left pass. The
+// suffix starts at the LEFTMOST `(@` that qualifies, which is not always the last one (the user part may
+// itself hold `(@`): the first colon after it leaves a non-empty user part, and what lies between that
+// colon and the final `)` is non-empty and has no `)`.
+export function stripDisambiguation(name: string): string {
+  const close = name.length - 1
+  if (name[close] !== ')') return name
+  const previousClose = name.lastIndexOf(')', close - 1)
+  let colon = -1 // the first colon at or after i + 2
+  let open = -1
+  for (let i = close - 4; i >= 0; i--) {
+    if (name[i + 2] === ':') colon = i + 2 // right after `(@`, so it would leave the user part empty
+    else if (colon > previousClose && name[i] === '(' && name[i + 1] === '@') open = i
+  }
+  return open === -1 ? name : name.slice(0, open).trimEnd()
+}
+
 // Exported for the editable-profile snapshot (ADR-040): matrix-client reuses this EXACT cleaning so a
 // fullName snapshot can never be an mxid (mirrors selfToUser's posture). Pure string fn, no SDK.
 export function cleanDisplayName(raw: string | undefined, mxid: string): string {
@@ -308,7 +325,7 @@ export function cleanDisplayName(raw: string | undefined, mxid: string): string 
   // A name that IS an mxid → localpart. The SDK also appends a disambiguation suffix
   // " (@user:server)" to colliding names; strip it so the server never shows.
   if (/^@[^:]+:/.test(name)) return localpart(name)
-  return name.replace(/\s*\(@[^:]+:[^)]+\)\s*$/, '').trim() || localpart(mxid)
+  return stripDisambiguation(name).trim() || localpart(mxid)
 }
 
 // Channel display: "#name" for public/private, the peer's name for a DM. Strips any
@@ -338,7 +355,7 @@ function explicitDisplayName(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined
   const name = raw.trim()
   if (!name || /^@[^:]+:/.test(name)) return undefined
-  return name.replace(/\s*\(@[^:]+:[^)]+\)\s*$/, '').trim() || undefined
+  return stripDisambiguation(name).trim() || undefined
 }
 
 // The author's portrait at the event (Message.authorAt). The name comes from the event's sentinel

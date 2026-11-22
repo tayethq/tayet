@@ -1,7 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { Channel, ChannelId, Presence, UserId, UserProfile } from '@tayet/client'
-import { Button, Dialog } from '../primitives'
+import { Button, Dialog, ScreenHeader } from '../primitives'
 import { useMedia } from '../MediaContext'
+import { useCoveringScreen } from '../covering-screen'
+import { useStackBack } from '../stack'
+import { useMounted } from '../use-mounted'
 import { Lock } from '../icons'
 import { PrivateMarkSpace } from './ChannelLabel'
 import { t, GLYPH } from '../i18n'
@@ -33,6 +37,10 @@ import { AgentAvatar, agentColorOf } from './AgentAvatar'
 // barrel. O userId vive em JS (props/closure), NUNCA num atributo do DOM nem num aria-label (o
 // aria-label do header usa o nome limpo). O avatar resolve via useMedia (ref opaco → URL atrás do
 // barrel); cai pro monograma sem foto.
+//
+// Narrow window (`narrow`; manifest view-profile §8, PLANO-MOBILE M8): the same instance as a full screen of
+// the stack. "Enviar mensagem" and its failure line go to a fixed footer, which exists only with the verb
+// (P3); the back is never held while the verb runs (P4).
 
 // Presença (ADR-056): domínio → DOM. O atributo `data-presence` carrega o vocabulário do protótipo —
 // 'away' aterrissa como "ausente" (aliasing de valor do manifesto view-profile,
@@ -83,7 +91,12 @@ function chipLabel(channel: Channel) {
   )
 }
 
-export function UserProfileDialog({
+// One instance per person, wherever it is mounted: what is loaded, pending or late belongs to that person.
+export function UserProfileDialog(props: Parameters<typeof UserProfileCard>[0]) {
+  return <UserProfileCard key={props.userId} {...props} />
+}
+
+function UserProfileCard({
   userId,
   onLoadUserProfile,
   onLoadCommonChannels,
@@ -92,6 +105,9 @@ export function UserProfileDialog({
   onSubscribePresence,
   onOpenDirectMessage,
   onClose,
+  onNavigated,
+  narrow = false,
+  covered = false,
 }: {
   userId: UserId
   onLoadUserProfile: (user: UserId) => Promise<UserProfile>
@@ -113,6 +129,12 @@ export function UserProfileDialog({
   // identidade não é dele.
   onOpenDirectMessage?: (user: UserId) => Promise<void>
   onClose: () => void
+  // G1: the profile, still open, took the person to a conversation (the message or a channel's chip); what
+  // is under it closes too. Not called for a verb that settles after the profile was closed (P4).
+  onNavigated?: () => void
+  // Below the width breakpoint: a full screen; `covered` while another one is over it.
+  narrow?: boolean
+  covered?: boolean
 }) {
   const [profile, setProfile] = useState<UserProfile | null>(null) // null = carregando
   const [loadError, setLoadError] = useState(false)
@@ -130,6 +152,10 @@ export function UserProfileDialog({
   // monograma sem foto. P1: o mr_*/mxc fica aqui+ACL, nunca no DOM.
   const avatar = useMedia(profile?.avatar, 'thumbnail').url
   const agent = agentColorOf(profile ?? undefined)
+  const mounted = useMounted()
+  // The verb settles later: what navigating closes is read then.
+  const navigated = useRef(onNavigated)
+  navigated.current = onNavigated
 
   useEffect(() => {
     let active = true
@@ -186,20 +212,43 @@ export function UserProfileDialog({
     setDmError(false)
     try {
       await onOpenDirectMessage(userId)
+      // R4: a verb closes only the profile it started from, never another one opened meanwhile.
+      if (!mounted.current) return
+      navigated.current?.()
       onClose()
     } catch {
+      if (!mounted.current) return
       setDmError(true)
       setSubmitting(false)
     }
   }
 
+  const dmButton = onOpenDirectMessage && (
+    // P1: o rótulo é texto limpo e o userId viaja na closure — nunca num atributo.
+    <Button className="user-profile__dm" variant="fill" disabled={submitting} onClick={openDm}>
+      {t('profile.sendMessage')}
+    </Button>
+  )
+  const dmFailure = dmError && (
+    <p className="user-profile__error" role="alert">
+      {t('profile.openFailed')}
+    </p>
+  )
+
   return (
-    <Dialog
-      className="user-profile-dialog"
-      title={t('profile.viewTitle')}
-      ariaLabel={profile ? t('profile.viewLabel', { name: profile.displayName }) : undefined}
+    <ProfileShell
+      narrow={narrow}
+      covered={covered}
+      label={profile ? t('profile.viewLabel', { name: profile.displayName }) : undefined}
       onClose={onClose}
-      closeLabel={t('dialog.close')}
+      footer={
+        !loadError && profile && dmButton ? (
+          <>
+            {dmFailure}
+            {dmButton}
+          </>
+        ) : undefined
+      }
     >
       {/* ADR-056: data-presence na RAIZ, cascateando pros dois dots — fidelidade ao protótipo, que
           seta o atributo na raiz e resolve os estados por seletor descendente. Valores do protótipo
@@ -266,24 +315,10 @@ export function UserProfileDialog({
                     </span>
                   )}
                 </div>
-                {/* P1: o rótulo é texto limpo e o userId viaja na closure — nunca num atributo. */}
-                {onOpenDirectMessage && (
-                  <Button
-                    className="user-profile__dm"
-                    variant="fill"
-                    disabled={submitting}
-                    onClick={openDm}
-                  >
-                    {t('profile.sendMessage')}
-                  </Button>
-                )}
+                {!narrow && dmButton}
               </div>
             </div>
-            {dmError && (
-              <p className="user-profile__error" role="alert">
-                {t('profile.openFailed')}
-              </p>
-            )}
+            {!narrow && dmFailure}
             {/* Recado (ADR-053): a seção INTEIRA some quando não há recado — sem rótulo órfão, sem
                 espaço morto. Ausente = não informado, não uma promessa vazia. */}
             {profile.note && (
@@ -347,6 +382,7 @@ export function UserProfileDialog({
                         className="user-profile__chip"
                         onClick={() => {
                           onSelectChannel(c.id)
+                          onNavigated?.()
                           onClose()
                         }}
                       >
@@ -373,6 +409,52 @@ export function UserProfileDialog({
           </>
         )}
       </div>
+    </ProfileShell>
+  )
+}
+
+interface ShellProps {
+  label: string | undefined
+  onClose: () => void
+  children: ReactNode
+}
+
+function ProfileShell({
+  narrow,
+  covered,
+  footer,
+  ...shell
+}: ShellProps & { narrow: boolean; covered: boolean; footer?: ReactNode }) {
+  if (narrow) return <ProfileScreen covered={covered} footer={footer} {...shell} />
+  return (
+    <Dialog
+      className="user-profile-dialog"
+      title={t('profile.viewTitle')}
+      ariaLabel={shell.label}
+      onClose={shell.onClose}
+      closeLabel={t('dialog.close')}
+    >
+      {shell.children}
     </Dialog>
+  )
+}
+
+// §8.1: back and the title, the column that scrolls, the one action in the fixed footer.
+function ProfileScreen({
+  label,
+  covered,
+  onClose,
+  footer,
+  children,
+}: ShellProps & { covered: boolean; footer?: ReactNode }) {
+  const back = useStackBack(onClose)
+  const { backRef, screenProps } = useCoveringScreen(back, covered)
+  const title = t('profile.viewTitle')
+  return (
+    <section className="profile-screen" aria-label={label ?? title} {...screenProps}>
+      <ScreenHeader className="profile-screen__header" onBack={back} backRef={backRef} title={title} />
+      <div className="profile-screen__body">{children}</div>
+      {footer && <div className="profile-screen__footer">{footer}</div>}
+    </section>
   )
 }

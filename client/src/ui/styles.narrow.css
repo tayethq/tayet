@@ -20,6 +20,10 @@
   .workspace > .sidebar,
   .workspace > .search-screen,
   .workspace > .compose-screen,
+  .workspace > .account-screen,
+  .workspace > .group-screen,
+  .workspace > .profile-screen,
+  .workspace > .agent-form-screen,
   .workspace > .main,
   .workspace > .thread-panel {
     grid-area: 1 / 1;
@@ -315,6 +319,575 @@
   }
   .reset-access-banner__sweep {
     width: auto;
+  }
+}
+
+/* ── "Sua conta" and the screens above it (account-access.md §13.2, §13.3; edit-profile.md §9) ──────── */
+@media (width < 728px) {
+  .account-screen {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--color-surface);
+    --presence-ring: var(--color-surface);
+  }
+  .ui-screen-header.account-screen__header {
+    padding-right: var(--space-12);
+  }
+  .account-screen:has(.profile-editor) .ui-screen-header__title {
+    line-height: var(--font-line-height-title);
+  }
+  .account-screen__body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-20) var(--space-16) calc(var(--space-20) + env(safe-area-inset-bottom));
+  }
+  .account-screen__body:has(> .account-settings--access, > .profile-editor) {
+    padding: var(--space-16) var(--space-16) calc(var(--space-16) + env(safe-area-inset-bottom));
+  }
+  .account-screen .account-settings__appearance {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .account-screen .ui-segmented {
+    background: var(--color-surface-raised);
+  }
+  .account-screen .ui-segmented__segment {
+    padding: 0 var(--space-16);
+  }
+  .account-screen .account-settings__access-entry,
+  .account-screen .account-settings__reset {
+    min-height: var(--density-estreito-row-height);
+    background: var(--color-surface-raised);
+  }
+  .account-screen .account-settings__access-entry {
+    padding: var(--space-8) var(--space-12);
+  }
+  .account-screen .account-settings__reset {
+    padding: var(--space-12);
+  }
+  /* §23.1 item 6: no hover, --color-bg while pressed. */
+  .account-screen .account-settings__access-entry:hover,
+  .account-screen .account-settings__reset:hover {
+    border-color: var(--color-border);
+  }
+  .account-screen .account-settings__access-entry:active,
+  .account-screen .account-settings__reset:active {
+    background: var(--color-bg);
+  }
+  .account-screen .account-settings__access-entry:focus-visible,
+  .account-screen .account-settings__reset:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+  .account-screen .account-settings__access-entry-label,
+  .account-screen .account-settings__access-entry-summary {
+    line-height: var(--font-line-height-ui);
+  }
+  .account-screen .account-settings__access-entry-chevron {
+    display: inline-flex;
+    flex: none;
+    transform: rotate(-90deg);
+  }
+  .account-settings__desktop-only {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: var(--space-4) 0;
+  }
+  .account-screen .account-settings__signout {
+    align-self: stretch;
+  }
+  /* "Acessos à sua conta": the screen scrolls, not the list (§13.6 item 3). */
+  .account-screen .account-settings__list {
+    width: auto;
+    max-height: none;
+    margin: 0 calc(var(--space-4) * -1);
+    overflow: visible;
+  }
+  .account-screen .account-settings__access {
+    min-height: var(--density-estreito-row-height);
+    padding: var(--space-8) var(--space-12);
+  }
+  .account-screen .account-settings__access:not(.account-settings__access--current):hover {
+    background: transparent;
+  }
+  .account-screen .account-settings__access-mono {
+    background: var(--color-surface-raised);
+  }
+  .account-screen .account-settings__access--current .account-settings__access-mono {
+    background: var(--color-accent);
+  }
+  .account-screen .account-settings__access-mono--unknown {
+    background: transparent;
+  }
+  /* "Editar perfil": the body scrolls, the footer stays above the keyboard and the bottom safe area. */
+  .account-screen .profile-editor {
+    overflow: visible;
+  }
+  .account-screen .profile-editor > * {
+    flex: none;
+  }
+  .account-screen .profile-editor__loading,
+  .account-screen .profile-editor__load-error {
+    margin: 0;
+  }
+  .account-screen .profile-editor .ui-field__input::placeholder {
+    color: var(--color-muted);
+  }
+  /* On the input: on ::placeholder alone it has no effect. */
+  .account-screen .profile-editor .ui-field__input:placeholder-shown {
+    text-overflow: ellipsis;
+  }
+  .account-screen .profile-editor__org {
+    background: var(--color-surface-raised);
+  }
+  .account-screen .profile-editor__org-label {
+    flex: none;
+  }
+  .account-screen .profile-editor__org-value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .account-screen .profile-photo__monogram {
+    line-height: var(--font-line-height-display);
+  }
+  .account-screen .profile-photo__error {
+    line-height: var(--font-line-height-meta);
+  }
+  /* §9.1 item 3: while it sends, "Enviando…" stands in the place of both actions. */
+  .account-screen .profile-photo__actions > [data-variant='ghost']:disabled {
+    display: none;
+  }
+  .account-screen__footer {
+    flex: none;
+    padding: var(--space-12) var(--space-16);
+    padding-bottom: calc(var(--space-12) + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--color-border);
+  }
+  :root[data-keyboard] .account-screen__footer {
+    padding-bottom: var(--space-12);
+  }
+  .account-screen .profile-editor__footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+  .account-screen .profile-editor__status:not(:empty) {
+    margin-bottom: var(--space-8);
+    line-height: var(--font-line-height-meta);
+  }
+}
+
+/* ── Group details, profile and agent's form as screens (PLANO-MOBILE M8): the shared frame ─────────────── */
+@media (width < 728px) {
+  .group-screen,
+  .profile-screen,
+  .agent-form-screen {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--color-surface);
+    --presence-ring: var(--color-surface);
+  }
+  .ui-screen-header.group-screen__header,
+  .ui-screen-header.profile-screen__header,
+  .ui-screen-header.agent-form-screen__header {
+    padding-right: var(--space-12);
+  }
+  /* The form opens over whatever is on screen (a screen, a sheet, the viewer), and the profile also over a
+     dialog that was open when the window narrowed: what is under is neither painted nor reachable. */
+  .workspace:has(> .agent-form-screen) > :not(.agent-form-screen),
+  .workspace:has(> .profile-screen) > :not(.profile-screen, .agent-form-screen) {
+    visibility: hidden;
+  }
+  .group-screen__footer,
+  .profile-screen__footer,
+  .agent-form-screen__footer {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-12) var(--space-16);
+    padding-bottom: calc(var(--space-12) + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--color-border);
+  }
+  /* The keyboard covers the system's bar (K1). */
+  :root[data-keyboard] .group-screen__footer,
+  :root[data-keyboard] .profile-screen__footer,
+  :root[data-keyboard] .agent-form-screen__footer {
+    padding-bottom: var(--space-12);
+  }
+}
+
+/* ── Group details and the leave sheet (channel-management.md §11) ───────────────────────────────────── */
+@media (width < 728px) {
+  .group-screen {
+    font-size: var(--font-size-ui);
+    line-height: var(--font-line-height-ui);
+  }
+  .group-screen__body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-12) var(--space-4);
+  }
+  /* §11.1 item 2: the whole line is the target; §23.1 item 6: no hover, --color-bg while pressed. */
+  .group-screen .channel-management-panel__member,
+  .group-screen .channel-management-panel__member:hover {
+    padding: 0;
+    background: transparent;
+  }
+  .group-screen .channel-management-panel__member-open {
+    align-items: flex-start;
+    min-height: var(--density-touch-floor);
+    /* One line sits centred in the target; a second one grows it, the avatar staying on the first (§12). */
+    padding: calc((var(--density-touch-floor) - var(--density-gestao-avatar)) / 2) var(--space-12);
+    border-radius: var(--radius-md);
+  }
+  /* §12: the section's head lines its label up with the rows' avatars. */
+  .group-screen .channel-management-panel__roster-head {
+    padding: var(--space-4) var(--space-12) var(--space-8);
+  }
+  /* §12: the name is cut on its line and what follows it drops to a second one when it does not fit beside. */
+  .group-screen .channel-management-panel__member-name {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: var(--space-4);
+    padding-top: calc((var(--density-gestao-avatar) - var(--font-size-ui) * var(--font-line-height-ui)) / 2);
+  }
+  .group-screen .channel-management-panel__member-name > span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .group-screen .channel-management-panel__member-open:active {
+    background: var(--color-bg);
+  }
+  .group-screen .channel-management-panel__member-open:hover .channel-management-panel__member-name {
+    text-decoration: none;
+  }
+  .group-screen .channel-management-panel__member-open:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+  .leave-sheet {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    line-height: var(--font-line-height-ui);
+  }
+  .leave-sheet__title,
+  .leave-sheet__text {
+    margin: 0;
+  }
+  .leave-sheet__title {
+    font-size: var(--font-size-title);
+    font-weight: var(--font-weight-medium);
+  }
+  .leave-sheet__text {
+    font-size: var(--font-size-body);
+    line-height: var(--font-line-height-body);
+    color: var(--color-muted);
+  }
+  .leave-sheet__actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    margin-top: var(--space-8);
+  }
+}
+
+/* ── Someone's profile (view-profile.md §8) ──────────────────────────────────────────────────────────── */
+@media (width < 728px) {
+  .profile-screen__body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-20) var(--space-16);
+  }
+  .profile-screen__footer {
+    gap: var(--space-8);
+  }
+  .profile-screen .user-profile__name-stack {
+    max-width: 100%;
+  }
+  .profile-screen .user-profile__name {
+    line-height: var(--font-line-height-display);
+    overflow-wrap: anywhere;
+  }
+  /* The ring and the hollow dot sit on the screen's surface; the card is raised over it. */
+  .profile-screen .user-profile__presence-badge {
+    border-color: var(--color-surface);
+  }
+  .profile-screen [data-presence='ausente'] .user-profile__presence-badge,
+  .profile-screen [data-presence='ausente'] .user-profile__presence-dot {
+    background: var(--color-surface);
+  }
+  .profile-screen .user-profile__org-card {
+    background: var(--color-surface-raised);
+  }
+  .profile-screen .user-profile__avatar-monogram {
+    font-weight: var(--font-weight-medium);
+  }
+  .profile-screen .user-profile__section-label {
+    font-weight: var(--font-weight-regular);
+  }
+  /* §8.1 item 4: each chip a touch target, its pill drawn at 28 (§7 item 5) under the content. The target's
+     room takes the place of the gap between the label and the pills and between their lines. */
+  .profile-screen .user-profile__section:has(> .user-profile__chips) {
+    gap: 0;
+  }
+  .profile-screen .user-profile__chips {
+    row-gap: 0;
+  }
+  .profile-screen .user-profile__chip {
+    position: relative;
+    isolation: isolate;
+    min-height: var(--density-touch-floor);
+    padding: 0 calc(var(--space-12) + 1px);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  .profile-screen .user-profile__chip::before {
+    content: '';
+    position: absolute;
+    inset: calc((var(--density-touch-floor) - 28px) / 2) 0;
+    z-index: -1;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    background: var(--color-surface-raised);
+  }
+  .profile-screen .user-profile__chip--more::before {
+    background: transparent;
+  }
+  .profile-screen .user-profile__chip:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+}
+
+/* ── The agent's form (workspace.md §25.5 item 6, §25.7, §25.10 item 5, §27) ─────────────────────────── */
+@media (width < 728px) {
+  .agent-form-screen {
+    background: var(--color-bg);
+  }
+  .agent-form-screen__header .ui-screen-header__title {
+    line-height: var(--font-line-height-display);
+  }
+  .agent-form-screen .agent-form__body {
+    padding: var(--space-16) var(--space-12);
+  }
+  /* A column that scrolls: its rows keep their height. */
+  .agent-form-screen .agent-form__body > * {
+    flex: none;
+  }
+  .agent-form-screen .agent-form__context,
+  .agent-form-screen .agent-form__opt {
+    font-size: var(--font-size-body);
+    line-height: var(--font-line-height-body);
+  }
+  .agent-form-screen .ui-field__input {
+    background: var(--color-surface);
+  }
+  .agent-form-screen .agent-form__long {
+    min-height: 88px;
+  }
+  .agent-form-screen .agent-form__opt {
+    gap: var(--space-12);
+    min-height: var(--density-touch-floor);
+  }
+  .agent-form-screen .agent-form__mark {
+    width: 20px;
+    height: 20px;
+  }
+  .agent-form-screen .agent-form__opt[data-desc] {
+    /* stylelint-disable-next-line declaration-property-value-disallowed-list -- 6px adjudicado: opção com descrição no estreito, workspace.md §27, linha "(estreito)" */
+    padding: 6px 0;
+  }
+  .agent-form-screen .agent-form__opt[data-desc] > .agent-form__mark {
+    margin-top: 1px;
+  }
+  /* 264: six rows of the touch target (§27). */
+  .agent-form-screen .agent-form__list {
+    max-height: 264px;
+    padding: 0 var(--space-8);
+  }
+  .agent-form-screen .agent-form__group {
+    /* stylelint-disable-next-line declaration-property-value-disallowed-list -- 2px adjudicado: título do grupo no estreito, workspace.md §27, linha "(estreito)" */
+    padding: var(--space-12) 0 2px;
+    line-height: var(--font-line-height-body);
+  }
+  .agent-form-screen__footer {
+    gap: var(--space-4);
+    padding-right: var(--space-12);
+    padding-left: var(--space-12);
+    background: var(--color-surface);
+  }
+  .agent-form-screen__footer .agent-form__status {
+    flex: none;
+    line-height: var(--font-line-height-body);
+    text-align: center;
+  }
+}
+
+/* ── Reset sheet (account-access.md §13.2 item 5, §13.3) ─────────────────────────────────────────────── */
+@media (width < 728px) {
+  .reset-sheet {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+  }
+  .reset-sheet__title,
+  .reset-sheet__text,
+  .reset-sheet__caveat {
+    margin: 0;
+  }
+  .reset-sheet__title {
+    display: flex;
+    align-items: center;
+    font-size: var(--font-size-title);
+    font-weight: var(--font-weight-medium);
+  }
+  .reset-sheet__title .account-settings__confirm-dot {
+    align-self: center;
+    margin-top: 0;
+  }
+  .reset-sheet__text {
+    font-size: var(--font-size-body);
+    line-height: var(--font-line-height-body);
+    color: var(--color-muted);
+  }
+  .reset-sheet__text:focus {
+    outline: none;
+  }
+  .reset-sheet__caveat {
+    font-size: var(--font-size-meta);
+    line-height: var(--font-line-height-ui);
+    color: var(--color-muted);
+  }
+  .reset-sheet__sweep {
+    display: block;
+    margin: var(--space-8) 0;
+  }
+  .reset-sheet__actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    margin-top: var(--space-8);
+  }
+}
+
+/* ── Install sheet (login-onboarding.md §10.1 item 5, §10.2) ──────────────────────────────────────────── */
+@media (width < 728px) {
+  .ui-sheet[data-padding='form']:has(> .install-sheet) {
+    max-height: 100%;
+    overflow-y: auto;
+    padding: var(--space-24) var(--space-20) calc(var(--space-20) + env(safe-area-inset-bottom));
+  }
+  .install-sheet {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: var(--space-16);
+    text-align: left;
+  }
+  .install-sheet__head,
+  .install-sheet__step {
+    display: flex;
+    gap: var(--space-12);
+  }
+  .install-sheet__head {
+    align-items: center;
+  }
+  .install-sheet__app {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: var(--density-touch-floor);
+    height: var(--density-touch-floor);
+    border-radius: var(--radius-lg);
+    background: var(--color-accent);
+  }
+  .install-sheet__app::before {
+    content: '';
+    width: var(--space-12);
+    height: var(--space-12);
+    border-radius: var(--radius-full);
+    background: var(--color-accent-fg);
+  }
+  .install-sheet__title {
+    margin: 0;
+    font-size: var(--font-size-display);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--font-line-height-display);
+  }
+  .install-sheet__body {
+    margin: 0;
+    font-size: var(--font-size-body);
+    color: var(--color-muted);
+  }
+  .install-sheet__steps {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .install-sheet__step {
+    align-items: flex-start;
+  }
+  /* 28, 18 and the 2 of the text are constants of the component (§10.2). */
+  .install-sheet__number {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    background: var(--color-bg);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-meta);
+    font-weight: var(--font-weight-medium);
+  }
+  .install-sheet__text {
+    flex: 1;
+    min-width: 0;
+    padding-top: 2px;
+    font-size: var(--font-size-body);
+  }
+  .install-sheet__text strong {
+    font-weight: var(--font-weight-medium);
+  }
+  .install-sheet__icon {
+    width: 18px;
+    height: 18px;
+    vertical-align: -4px;
+  }
+  .ui-button.install-sheet__action {
+    border-color: var(--color-border);
+    background: var(--color-surface);
+    font-weight: var(--font-weight-medium);
+  }
+}
+
+/* ── Sign-in failures: the buttons stacked across the card (login-onboarding.md §10.1 items 3 and 4) ───── */
+@media (width < 728px) {
+  .boot-message[role='alert'] > button,
+  .boot-message[role='alert'] > .boot-message__actions {
+    align-self: stretch;
+  }
+  .boot-message[role='alert'] > .boot-message__actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 

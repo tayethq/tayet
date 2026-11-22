@@ -204,21 +204,21 @@ test('5. thread on screen, a message in the conversation notifies; back to the c
   await expectNoProtocolLeak(lev)
 })
 
-test('6. dialog: "Sua conta" open, back closes it and the list stays', async () => {
+test('6. screen: "Sua conta" open, back closes it and the list stays', async () => {
   await toList(lev)
   await lev.getByRole('button', { name: APP.account }).click()
-  const dialog = lev.getByRole('dialog', { name: APP.account })
-  await expect(dialog).toBeVisible()
+  const account = lev.getByRole('region', { name: APP.account })
+  await expect(account).toBeVisible()
   // The language row stacks: its field, on the touch floor, takes the width of the row.
-  const language = dialog.getByRole('combobox', { name: LANGUAGE.pt.control })
+  const language = account.getByRole('combobox', { name: LANGUAGE.pt.control })
   await expect(language).toBeVisible()
   const field = await language.boundingBox()
-  const languageRow = await dialog.locator('section', { has: lev.getByRole('combobox', { name: LANGUAGE.pt.control }) }).boundingBox()
+  const languageRow = await account.locator('section', { has: lev.getByRole('combobox', { name: LANGUAGE.pt.control }) }).boundingBox()
   expect(field!.height).toBeGreaterThanOrEqual(44)
   expect(Math.abs(field!.width - languageRow!.width)).toBeLessThanOrEqual(1)
   expect(await historyDepth(lev)).toBe(1)
   await lev.goBack()
-  await expect(dialog).toHaveCount(0)
+  await expect(account).toHaveCount(0)
   await expect(conversations(lev)).toBeVisible()
   expect(await historyDepth(lev)).toBe(0)
   await expectSameUrl(lev)

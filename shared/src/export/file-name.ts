@@ -45,6 +45,23 @@ function isUnsafe(ch: string): boolean {
   return RESERVED.has(ch) || cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f)
 }
 
+const SPACE_OR_DOT = /^[\s.]$/
+
+// The trims walk in from the ends, one character at a time: a pattern anchored only at the end retries
+// from every character of an inner run, which is quadratic.
+export function trimEndSpacesAndDots(s: string): string {
+  let end = s.length
+  while (end > 0 && SPACE_OR_DOT.test(s.charAt(end - 1))) end--
+  return s.slice(0, end)
+}
+
+export function trimSpacesAndDots(s: string): string {
+  const kept = trimEndSpacesAndDots(s)
+  let start = 0
+  while (start < kept.length && SPACE_OR_DOT.test(kept.charAt(start))) start++
+  return kept.slice(start)
+}
+
 /**
  * A file name safe to write inside the export folder. Strips path separators, control characters and
  * the characters Windows reserves; normalizes to NFC; drops the leading and trailing spaces and dots
@@ -52,10 +69,11 @@ function isUnsafe(ch: string): boolean {
  * `file`, with the extension of `mimetype` when that type is known.
  */
 export function sanitizeExportFileName(name: string, mimetype = ''): string {
-  const cleaned = Array.from(name.normalize('NFC'))
-    .filter((ch) => !isUnsafe(ch))
-    .join('')
-    .replace(/^[\s.]+|[\s.]+$/g, '')
+  const cleaned = trimSpacesAndDots(
+    Array.from(name.normalize('NFC'))
+      .filter((ch) => !isUnsafe(ch))
+      .join(''),
+  )
   if (cleaned === '') {
     const ext = extensionForMimetype(mimetype)
     return ext ? `file.${ext}` : 'file'
@@ -64,7 +82,7 @@ export function sanitizeExportFileName(name: string, mimetype = ''): string {
   if (chars.length <= MAX_NAME_LENGTH) return cleaned
   const dot = cleaned.lastIndexOf('.')
   const ext = dot > 0 ? Array.from(cleaned.slice(dot)) : []
-  if (ext.length === 0 || ext.length >= MAX_NAME_LENGTH / 2) return chars.slice(0, MAX_NAME_LENGTH).join('').replace(/[\s.]+$/, '')
-  const base = chars.slice(0, MAX_NAME_LENGTH - ext.length).join('').replace(/[\s.]+$/, '')
+  if (ext.length === 0 || ext.length >= MAX_NAME_LENGTH / 2) return trimEndSpacesAndDots(chars.slice(0, MAX_NAME_LENGTH).join(''))
+  const base = trimEndSpacesAndDots(chars.slice(0, MAX_NAME_LENGTH - ext.length).join(''))
   return base + ext.join('')
 }

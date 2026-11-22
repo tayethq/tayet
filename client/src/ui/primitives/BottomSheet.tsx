@@ -20,6 +20,7 @@ export function BottomSheet({
   padding = 'actions',
   panelRef,
   focus = 'button',
+  role = 'dialog',
   children,
 }: {
   ariaLabel: string
@@ -31,6 +32,8 @@ export function BottomSheet({
   panelRef?: { current: HTMLDivElement | null }
   // What takes the first focus and what Tab walks: the buttons (actions) or the fields and buttons (a form).
   focus?: 'button' | 'field'
+  // A confirmation that interrupts a destructive action is announced as an alert, as in the Dialog.
+  role?: 'dialog' | 'alertdialog'
   children: ReactNode
 }) {
   const ownRef = useRef<HTMLDivElement | null>(null)
@@ -57,7 +60,7 @@ export function BottomSheet({
         ref={setPanel}
         className="ui-sheet"
         data-padding={padding}
-        role="dialog"
+        role={role}
         aria-modal="true"
         aria-label={ariaLabel}
         onKeyDown={(e) => trapFocusKeyDown(e, ownRef.current, onClose, selector)}

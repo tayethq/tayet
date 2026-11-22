@@ -3065,6 +3065,9 @@ body {
 .ui-dialog.account-settings-dialog--main {
   padding: var(--space-20);
   gap: var(--space-20);
+  /* AccountModal's card: the whole card scrolls when the window does not hold it. */
+  max-height: 100%;
+  overflow-y: auto;
 }
 .ui-dialog.account-settings-dialog--access {
   gap: var(--space-16);
@@ -3843,7 +3846,8 @@ body {
   margin: 0;
   white-space: pre-wrap;
 }
-.agent-form__long {
+/* With the field's class: `.ui-field__input` comes later in this file and would take both values (§25.7). */
+.ui-field__input.agent-form__long {
   min-height: 64px;
   padding: var(--space-8);
   resize: vertical;
@@ -4155,6 +4159,29 @@ body {
 }
 .ui-button.data-export__download {
   align-self: flex-start;
+}
+
+/* "Abrir no celular" (account-access.md §13.1; PLANO-MOBILE M7 Q2): 200 raw, adjudicated. Always dark on
+   light: the dark appearance swaps which semantic token is the paper and which the module. */
+.open-on-phone__code {
+  flex: none;
+  align-self: center;
+  width: 200px;
+  height: 200px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  fill: var(--color-text);
+}
+[data-theme='dark'] .open-on-phone__code {
+  background: var(--color-text);
+  fill: var(--color-bg);
+}
+.open-on-phone__code svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 /* ── Editor de perfil (ADR-040) ── espelha o ritmo account-settings__* (mesma família de tokens de

@@ -301,6 +301,33 @@ PATH="$STUBS:$PATH" expect_abort_intact "check com TAYET_COMPOSE_OVERRIDE=/nao/e
   "TAYET_COMPOSE_OVERRIDE points to a file that does not exist" STUB_LOG="$log" TAYET_COMPOSE_OVERRIDE=/nao/existe.yaml -- check
 if [[ -s "$log" ]]; then fail "override inexistente: algum comando rodou"; else ok "override inexistente: nenhum docker/curl chamado"; fi
 
+echo "== 16. Postgres password"
+for cmd in render up db-password; do
+  c="$(new_case "16-$cmd")"
+  rm -f "$c/infra/deploy/secrets/postgres.password"
+  # No stack: the stubs answer nothing, so db-password must stop at "not running".
+  case "$cmd" in db-password) pattern="is not running";; *) pattern="run ./deploy.sh db-password";; esac
+  PATH="$STUBS:$PATH" expect_abort_intact "$cmd without postgres.password" "$c" "$pattern" STUB_LOG="$WORK/guard-16.log" -- "$cmd"
+done
+c="$(new_case 16-format)"
+printf 'not-hex\n' > "$c/infra/deploy/secrets/postgres.password"
+expect_abort_intact "render with a malformed postgres.password" "$c" "is not 64 lowercase hex" -- render
+c="$(new_case 16-secrets)"
+deploy="$c/infra/deploy"
+rm -rf "$deploy/secrets"; mkdir -p "$deploy/secrets"
+cp "$PRISTINE/infra/deploy/secrets/google-oauth.env" "$deploy/secrets/"
+set +e
+out="$(run_stubbed "$c" "$WORK/guard-16.log" "${BOOT[@]}" TAYET_DOMAIN=empresa.test -- secrets 2>&1)"
+rc=$?
+set -e
+value="$(cat "$deploy/secrets/postgres.password" 2>/dev/null || true)"
+if [[ "$rc" != 0 ]]; then fail "secrets: exit $rc"; printf '%s\n' "$out" >&2
+elif [[ ! "$value" =~ ^[0-9a-f]{64}$ ]]; then fail "secrets: postgres.password is not 64 hex"
+elif [[ "$(ls -ld "$deploy/secrets/postgres.password" | cut -c1-10)" != "-rw-------" ]]; then fail "secrets: postgres.password is not mode 600"
+elif ! grep -qF -- "$value" "$deploy/secrets/rendered/homeserver.yaml" || ! grep -qF -- "$value" "$deploy/secrets/rendered/mas-config.yaml"; then fail "secrets: a render lacks the password"
+elif grep -qF -- "$value" <<<"$out"; then fail "secrets: the output shows the password"
+else ok "secrets: postgres.password 64 hex, mode 600, in both renders, not printed"; fi
+
 if (( FAILS > 0 )); then
   echo "ERRO: $FAILS guarda(s) de domínio falharam (acima)." >&2
   exit 1

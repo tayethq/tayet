@@ -74,7 +74,17 @@ function optionalText(raw: unknown, max: number): string | null | undefined {
 const INTEGER = /^-?\d+$/
 const DECIMAL = /^-?\d+(\.\d+)?$/
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+// An address with no whitespace, exactly one `@`, a non-empty local part, and a dot inside the domain
+// (neither its first nor its last character). Linear in the length: a single pattern for the whole shape
+// backtracks over every dot of the domain.
+export function isEmail(v: string): boolean {
+  if (/\s/.test(v)) return false
+  const at = v.indexOf('@')
+  if (at < 1 || at !== v.lastIndexOf('@')) return false
+  const dot = v.indexOf('.', at + 2)
+  return dot !== -1 && dot <= v.length - 2
+}
 
 function isDate(v: string): boolean {
   const m = DATE.exec(v)
@@ -176,7 +186,7 @@ function readField(raw: unknown): FormField | undefined {
     }
     case 'email':
     case 'url': {
-      const ok = raw.kind === 'email' ? (v: string) => EMAIL.test(v) : isUrl
+      const ok = raw.kind === 'email' ? isEmail : isUrl
       if (initial !== undefined && (typeof initial !== 'string' || !ok(initial))) return undefined
       return { ...base, kind: raw.kind, ...box, ...(initial !== undefined && { initial: initial as string }) }
     }
@@ -365,7 +375,8 @@ function issueOf(field: Exclude<FormField, { kind: 'context' }>, raw: string | s
       return undefined
     }
     case 'email':
-      return EMAIL.test(raw as string) ? undefined : { code: 'email' }
+      // String(): a value that is not a string at run time fails the check instead of throwing.
+      return isEmail(String(raw)) ? undefined : { code: 'email' }
     case 'url':
       return isUrl(raw as string) ? undefined : { code: 'url' }
     case 'number': {

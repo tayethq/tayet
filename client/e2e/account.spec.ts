@@ -1,10 +1,10 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
 import { escapeRegExp, HS_URL } from '../test/support/stack-env'
 import { CID, DEB } from './fixtures/users'
-import { closeAccount, editProfile, openProfileEditor, openProfileOf, removePhoto, setPhoto, signInAgainSilently, signOutHere } from './support/account'
+import { accountSettings, closeAccount, editProfile, openProfileEditor, openProfileOf, removePhoto, setPhoto, signInAgainSilently, signOutHere } from './support/account'
 import { expectNoProtocolLeak, expectReadable, expectReadableWithin } from './support/assertions'
 import { AFTER_RELOGIN_404, BACKUP_LOOKUPS_WHY, backupLookupsCap, ConsoleLedger, FIRST_LOGIN_404, recognizedSet404 } from './support/console'
-import { ACCOUNT, COMPOSER, LIST, PROFILE, PROFILE_EDITOR, SESSION, THREAD, TIMELINE } from './support/labels'
+import { ACCOUNT, ACCOUNT_PHONE, COMPOSER, LIST, PROFILE, PROFILE_EDITOR, SESSION, THREAD, TIMELINE } from './support/labels'
 import { signIn } from './support/login'
 import { png } from './support/media'
 import { deleteSharedRooms } from './support/rooms'
@@ -415,5 +415,27 @@ test('account: messages sent while signed out are readable after the silent re-l
     await ctxA.close()
     await ctxB1.close()
     await ctxB2.close()
+  }
+})
+
+test('account: "Abrir no celular" opens, shows the code without writing the address, and closes', async ({ browser }) => {
+  const ctx = await browser.newContext()
+  try {
+    const page = await ctx.newPage()
+    await signIn(page, CID)
+    const account = await accountSettings(page)
+    await account.getByRole('button', { name: new RegExp(`^${ACCOUNT_PHONE.openOnPhone}`) }).click()
+    const dialog = page.getByRole('dialog', { name: ACCOUNT_PHONE.openOnPhone })
+    const code = dialog.getByRole('img', { name: ACCOUNT_PHONE.code })
+    await expect(code).toBeVisible()
+    const box = (await code.boundingBox())!
+    expect(Math.round(box.width)).toBe(Math.round(box.height))
+    expect(await dialog.innerHTML()).not.toContain(new URL(page.url()).host)
+    await expectNoProtocolLeak(page)
+    await dialog.getByRole('button', { name: ACCOUNT.close, exact: true }).last().click()
+    await expect(dialog).toHaveCount(0)
+    await expect(page.getByRole('dialog', { name: ACCOUNT.dialog })).toBeVisible()
+  } finally {
+    await ctx.close()
   }
 })

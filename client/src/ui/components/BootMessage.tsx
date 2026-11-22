@@ -8,7 +8,8 @@
 // toda variante dentro da superfície do manifesto login-onboarding (card, esqueleto, scrim, wordmark) e
 // a saída para o chat em overlay inerte — o único efeito do módulo é o timeout de segurança dessa saída.
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { InstallSheet } from './InstallSheet'
 import { t, APP_WORDMARK } from '../i18n'
 
 export type BootPhase =
@@ -32,6 +33,8 @@ type BootContentProps = {
   onSignOut?: () => void
   onTakeOver?: () => void
   waitedLong?: boolean
+  // The entry's button, for the focus when the install sheet over it closes.
+  entryRef?: (el: HTMLButtonElement | null) => void
 }
 
 const prefersReducedMotion = (): boolean =>
@@ -54,8 +57,15 @@ const motionMs = (name: string): number => {
 export function BootMessage({
   exiting = false,
   onExited,
+  install,
   ...content
-}: BootContentProps & { exiting?: boolean; onExited?: () => void }) {
+}: BootContentProps & {
+  exiting?: boolean
+  onExited?: () => void
+  // The install sheet over the entry (login-onboarding.md §10.1 item 5). Boot says when it exists.
+  install?: { onContinue: () => void; onClose: () => void }
+}) {
+  const [entry, setEntry] = useState<HTMLButtonElement | null>(null)
   useEffect(() => {
     if (!exiting || !onExited) return
     if (prefersReducedMotion()) {
@@ -85,8 +95,16 @@ export function BootMessage({
           <span className="boot-wordmark__dot" aria-hidden="true" />
           <span className="boot-wordmark__name">{APP_WORDMARK}</span>
         </div>
-        <BootContent key={content.variant} {...content} />
+        <BootContent key={content.variant} {...content} entryRef={setEntry} />
       </div>
+      {install && content.variant === 'no-session' && !exiting && (
+        <InstallSheet
+          action="install.continueInBrowser"
+          onAction={install.onContinue}
+          onClose={install.onClose}
+          returnFocus={entry}
+        />
+      )}
     </div>
   )
 }
@@ -99,6 +117,7 @@ function BootContent({
   onSignOut,
   onTakeOver,
   waitedLong,
+  entryRef,
 }: BootContentProps) {
   if (variant === 'connecting') {
     return (
@@ -172,7 +191,7 @@ function BootContent({
           <span className="boot-message__detail">{t('boot.signInDetail')}</span>
         </div>
         {onSignIn ? (
-          <button type="button" className="boot-message__sso boot-message__sso--provider" onClick={onSignIn}>
+          <button ref={entryRef} type="button" className="boot-message__sso boot-message__sso--provider" onClick={onSignIn}>
             {t('boot.continueWith', { provider: ssoLabel ?? t('boot.accountFallback') })}
           </button>
         ) : null}

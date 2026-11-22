@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { Channel, ChannelId, Presence, RosterEntry, UserId } from '@tayet/client'
-import { Avatar, Button, Field } from '../primitives'
+import { Avatar, BottomSheet, Button, Field, ScreenHeader } from '../primitives'
 import { AgentAvatar, agentColorOf } from './AgentAvatar'
 import { useMedia } from '../MediaContext'
+import { useCoveringScreen } from '../covering-screen'
+import { useStackBack, useStackDialog } from '../stack'
+import { useMounted } from '../use-mounted'
 import { ConfirmBody, ConfirmFooter, ConfirmTitle, ManageShell } from './ManageShell'
 import { GLYPH, t } from '../i18n'
 
@@ -16,6 +20,11 @@ import { GLYPH, t } from '../i18n'
 // now a channel, reconciled by channel.changed; after leaving, channel.removed drops it and clears the
 // selection, the path leaving a channel already takes); failure keeps the confirm open with the
 // inline error.
+//
+// Narrow window (`narrow`; §11, PLANO-MOBILE M8): the same instance as a full screen of the stack, with
+// leaving in a bottom sheet that is an entry of its own over it. Converting does not exist there (G2): a
+// convert confirm open when the window narrows is not shown. Closing the sheet while it waits closes the
+// sheet alone and leaving goes on; reopened, it shows where that stands (G3).
 //
 // P1 (ADR-007/ADR-008): only clean domain on screen — displayName, operatorName. The opaque ids live in
 // React keys and verb payloads, never in text, title or aria-label.
@@ -36,7 +45,12 @@ function ordered(members: RosterEntry[], participants: UserId[]): RosterEntry[] 
     .map(({ m }) => m)
 }
 
-export function GroupDetailsPanel({
+// One instance per group, wherever it is mounted: what is open, pending or late belongs to that group.
+export function GroupDetailsPanel(props: Parameters<typeof GroupDetails>[0]) {
+  return <GroupDetails key={props.channel.id} {...props} />
+}
+
+function GroupDetails({
   channel,
   members,
   onConvertToChannel,
@@ -44,6 +58,8 @@ export function GroupDetailsPanel({
   onOpenProfile,
   presenceOf,
   onClose,
+  narrow = false,
+  covered = false,
 }: {
   channel: Channel
   // The group's roster (useChat keys it on managing.id). The reader's entry (`self`, ADR-081) carries
@@ -57,12 +73,16 @@ export function GroupDetailsPanel({
   // omits it and no row gets a dot.
   presenceOf?: (user: UserId) => Presence
   onClose: () => void
+  // Below the width breakpoint: a full screen; `covered` while another one is over it.
+  narrow?: boolean
+  covered?: boolean
 }) {
   const [confirm, setConfirm] = useState<Confirm | undefined>(undefined)
   const [pending, setPending] = useState(false)
   const [failed, setFailed] = useState(false)
   const [name, setName] = useState('')
   const nameRef = useRef<HTMLInputElement>(null)
+  const mounted = useMounted()
 
   const rows = ordered(members, channel.participants ?? [])
   const canConvert = members.some((m) => m.self && m.role === 'admin')
@@ -74,15 +94,20 @@ export function GroupDetailsPanel({
 
   function openConfirm(next: Confirm) {
     setConfirm(next)
+    setName('')
+    // G3: the sheet reopens on where leaving stands; only a hidden convert confirm leaves nothing behind.
+    if (narrow && confirm !== 'convert') return
     setPending(false)
     setFailed(false)
-    setName('')
   }
   function closeConfirm() {
     setConfirm(undefined)
-    setPending(false)
     setFailed(false)
+    if (!narrow) setPending(false)
   }
+  // Both entries here, bottom first, so they push in that order when both open in one commit.
+  useStackDialog('group', narrow, onClose)
+  useStackDialog('group-leave', narrow && confirm === 'leave', closeConfirm)
 
   async function handleConfirm() {
     if (!confirm || pending) return
@@ -93,8 +118,11 @@ export function GroupDetailsPanel({
     try {
       if (confirm === 'convert') await onConvertToChannel(channel.id, trimmedName)
       else await onLeaveChannel(channel.id)
-      onClose()
+      // R4: a verb closes only the details it started from, never another group's opened meanwhile.
+      if (mounted.current) onClose()
     } catch {
+      // The panel may be gone by now: channel.removed can land before the verb rejects, or the person left it.
+      if (!mounted.current) return
       // Not in a finally: never setState after the success path unmounts the panel.
       setFailed(true)
       setPending(false)
@@ -106,6 +134,37 @@ export function GroupDetailsPanel({
       ? { title: t('group.convert'), body: t('group.convertBody'), action: t('group.convert') }
       : { title: t('group.leave'), body: t('group.leaveBody'), action: t('channel.leave') }
   const tone = confirm === 'convert' ? 'primary' : 'danger'
+  const participants = (
+    <section className="channel-management-panel__roster" aria-label={t('group.participants')}>
+      <div className="channel-management-panel__roster-head">
+        <h4 className="channel-management-panel__roster-title">
+          {t('group.participants')} {GLYPH.dot} {rows.length}
+        </h4>
+      </div>
+      <ul className="channel-management-panel__roster-list">
+        {rows.map((member) => (
+          <ParticipantRow
+            key={member.user.id}
+            member={member}
+            onOpenProfile={onOpenProfile}
+            presence={presenceOf?.(member.user.id)}
+          />
+        ))}
+      </ul>
+    </section>
+  )
+
+  if (narrow)
+    return (
+      <>
+        <GroupScreen covered={covered} onClose={onClose} onLeave={() => openConfirm('leave')}>
+          {participants}
+        </GroupScreen>
+        {confirm === 'leave' && (
+          <LeaveSheet pending={pending} failed={failed} onLeave={() => void handleConfirm()} onClose={closeConfirm} />
+        )}
+      </>
+    )
 
   return (
     <ManageShell
@@ -150,25 +209,7 @@ export function GroupDetailsPanel({
         </>
       }
     >
-      {confirm === undefined && (
-        <section className="channel-management-panel__roster" aria-label={t('group.participants')}>
-          <div className="channel-management-panel__roster-head">
-            <h4 className="channel-management-panel__roster-title">
-              {t('group.participants')} {GLYPH.dot} {rows.length}
-            </h4>
-          </div>
-          <ul className="channel-management-panel__roster-list">
-            {rows.map((member) => (
-              <ParticipantRow
-                key={member.user.id}
-                member={member}
-                onOpenProfile={onOpenProfile}
-                presence={presenceOf?.(member.user.id)}
-              />
-            ))}
-          </ul>
-        </section>
-      )}
+      {confirm === undefined && participants}
       {confirm !== undefined && (
         <ConfirmBody body={copy.body} failed={failed}>
           {confirm === 'convert' && (
@@ -202,6 +243,81 @@ export function GroupDetailsPanel({
         </ConfirmBody>
       )}
     </ManageShell>
+  )
+}
+
+// §11.1 items 1 to 3: back and the title, the participants that scroll, leaving in the fixed footer.
+function GroupScreen({
+  covered,
+  onClose,
+  onLeave,
+  children,
+}: {
+  covered: boolean
+  onClose: () => void
+  onLeave: () => void
+  children: ReactNode
+}) {
+  const back = useStackBack(onClose)
+  const { backRef, screenProps } = useCoveringScreen(back, covered)
+  return (
+    <section className="group-screen" aria-label={t('group.details')} {...screenProps}>
+      <ScreenHeader className="group-screen__header" onBack={back} backRef={backRef} title={t('group.details')} />
+      <div className="group-screen__body">{children}</div>
+      <div className="group-screen__footer">
+        <Button variant="danger" onClick={onLeave}>
+          {t('group.leave')}
+        </Button>
+      </div>
+    </section>
+  )
+}
+
+// §11.1 item 4, G3: the two actions stacked and the confirm's failure under them. The first focus is never
+// the danger, and it moves to Cancel while the danger waits disabled, so Esc is still heard.
+function LeaveSheet({
+  pending,
+  failed,
+  onLeave,
+  onClose,
+}: {
+  pending: boolean
+  failed: boolean
+  onLeave: () => void
+  onClose: () => void
+}) {
+  const [opener] = useState(() => document.activeElement as HTMLElement | null)
+  const panel = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    panel.current?.querySelector<HTMLElement>('[data-first-focus]')?.focus()
+  }, [pending])
+  return (
+    <BottomSheet
+      role="alertdialog"
+      ariaLabel={t('group.leave')}
+      onClose={onClose}
+      returnFocus={opener}
+      padding="form"
+      panelRef={panel}
+    >
+      <div className="leave-sheet">
+        <h2 className="leave-sheet__title">{t('group.leave')}</h2>
+        <p className="leave-sheet__text">{t('group.leaveBody')}</p>
+        <div className="leave-sheet__actions">
+          <Button variant="danger-fill" onClick={onLeave} disabled={pending} aria-busy={pending || undefined}>
+            {pending ? t('channel.working') : t('channel.leave')}
+          </Button>
+          <Button variant="secondary" data-first-focus="" onClick={onClose}>
+            {t('channel.cancel')}
+          </Button>
+        </div>
+        {failed && (
+          <p className="manage-dialog__error" role="alert">
+            {t('channel.failed')}
+          </p>
+        )}
+      </div>
+    </BottomSheet>
   )
 }
 
@@ -242,7 +358,7 @@ function ParticipantRow({
             />
           )}
           <span className="channel-management-panel__member-name">
-            {user.displayName}
+            <span className="channel-management-panel__member-label">{user.displayName}</span>
             {self && <span className="channel-management-panel__member-you"> {t('channel.you')}</span>}
             {agent !== undefined && user.operatorName !== undefined && (
               <span className="channel-management-panel__member-you" data-agent-operator="">
