@@ -113,6 +113,7 @@ function fakeAcl(): { acl: Acl; emit: (e: DomainEvent) => void; acked: AccessId[
     subscribeChannel: () => () => {},
     sendMessage: async () => 'm' as never,
     answerApproval: async () => {},
+    watchAwaitingApprovals: () => () => {},
     submitForm: async () => ({ ok: true }),
     closeForm: () => {},
     listPanels: async () => [],

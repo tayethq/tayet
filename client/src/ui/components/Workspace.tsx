@@ -16,6 +16,7 @@ import type {
   NewAgent,
   AgentPatch,
   AgentColor,
+  AwaitingApproval,
   Person,
   PersonInvite,
   Presence,
@@ -32,6 +33,8 @@ import { historyOf, textBodyHTML } from '../composer/history'
 import { ChannelList } from './ChannelList'
 import { SearchField } from './SearchField'
 import { SearchResults } from './SearchResults'
+import { AwaitingRow, AwaitingScreen } from './AwaitingScreen'
+import { awaitingSummary } from '../useAwaiting'
 import type { ResolvedHit } from '../useSearch'
 import { ChannelLabel, bareName, manageLabel } from './ChannelLabel'
 import { AgentAvatar } from './AgentAvatar'
@@ -90,6 +93,20 @@ export interface SearchProps {
   // open (a screen of the stack, between the list and the conversation) and what opens it.
   open?: boolean
   onOpen?: () => void
+}
+
+// "Aguardando você" on the narrow window (workspace.md §23.2 item 5, §23.4; PLANO-MOBILE §0.20), as App
+// shapes it: the ACL's list (undefined before its first read, V7), what the open screen holds (V3), whether it
+// is open (a screen of the stack between the list and the conversation, V2) and its verbs.
+export interface AwaitingProps {
+  items?: AwaitingApproval[]
+  shown: AwaitingApproval[]
+  open: boolean
+  onOpen: () => void
+  // The back where there is no history stack (the harness).
+  onClose: () => void
+  // The origin line: the conversation opens with the card marked.
+  onPick: (item: AwaitingApproval) => void
 }
 
 // Pure presentational shell: channel list + timeline + composer. All data arrives as props, so
@@ -169,6 +186,7 @@ export function Workspace({
   language,
   notificationsPrompt,
   search,
+  awaiting,
   jump,
   agentForm,
   highlight,
@@ -284,6 +302,7 @@ export function Workspace({
   // Local message search (ADR-074; manifest workspace.md §4.7/§8). App wires it from useSearch; the
   // bare harness omits it and the sidebar has no field.
   search?: SearchProps
+  awaiting?: AwaitingProps
   // Search jump (§8 items 9–10): in flight → the timeline pill; the row reached → highlighted in the
   // timeline or in the open thread, whichever holds it.
   jump?: { target: MessageId; failed: boolean }
@@ -397,12 +416,15 @@ export function Workspace({
   const threadOpen = Boolean(threadRoot && onCloseThread && onSendThread)
   const threadInFront = threadOpen && threadRoot?.channelId === selectedChannelId
   const searchOpen = narrow && search?.open === true
+  const awaitingOpen = narrow && awaiting?.open === true && !searchOpen
   const screen: Screen | undefined = !narrow
     ? undefined
     : selectedChannelId === undefined
       ? searchOpen
         ? 'search'
-        : 'list'
+        : awaitingOpen
+          ? 'awaiting'
+          : 'list'
       : threadInFront
         ? 'thread'
         : 'chat'
@@ -420,10 +442,20 @@ export function Workspace({
   const backToList = useStackBack(() => onBackToList?.())
   const backFromThread = useStackBack(() => onCloseThread?.())
   const backFromSearch = useStackBack(() => search?.onClear())
+  const backFromAwaiting = useStackBack(() => awaiting?.onClose())
   const chatBackRef = useRef<HTMLButtonElement>(null)
   const threadBackRef = useRef<HTMLButtonElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
-  useStackFocus(screen, searchOpen, { search: searchInputRef, chat: chatBackRef, thread: threadBackRef })
+  const awaitingBackRef = useRef<HTMLButtonElement>(null)
+  useStackFocus(screen, searchOpen || awaitingOpen, {
+    search: searchInputRef,
+    awaiting: awaitingBackRef,
+    chat: chatBackRef,
+    thread: threadBackRef,
+  })
+  // V4: the row and the subtitle count the ACL's list only.
+  const awaitingCount = awaiting?.items?.length ?? 0
+  const awaitingLine = awaiting?.items && awaitingCount > 0 ? awaitingSummary(awaiting.items, usersById) : undefined
   // On a narrow window each open dialog takes a history entry, and the system's back closes it. "Nova
   // conversa" is a full screen of its own there (PLANO-MOBILE M6) and keeps the same entry (ADR-106 dec. 11);
   // so is "Sua conta", which takes its own entries, one per screen and sheet (AccountSettings, M7 H1), as a
@@ -618,6 +650,11 @@ export function Workspace({
           onSelect={onSelectChannel}
           presenceOf={presenceOf}
           notificationsPrompt={notificationsPrompt}
+          awaiting={
+            narrow && awaiting && awaitingLine !== undefined ? (
+              <AwaitingRow count={awaitingCount} summary={awaitingLine} onOpen={awaiting.onOpen} />
+            ) : undefined
+          }
           results={
             search?.active && !narrow ? (
               <SearchResults
@@ -696,6 +733,23 @@ export function Workspace({
           </div>
           {search.active && search.partial && <p className="sidebar__coverage">{t('search.partial')}</p>}
         </section>
+      )}
+      {awaitingOpen && awaiting && (
+        // "Aguardando você" (§23.4): mounted while it is on the stack, so its cards and scroll survive the
+        // conversation opened from it.
+        <AwaitingScreen
+          shown={awaiting.shown}
+          summary={awaitingLine}
+          channels={archivedChannels ? [...channels, ...archivedChannels] : channels}
+          usersById={usersById}
+          selfId={currentUser?.id}
+          onAnswer={onAnswerApproval}
+          onPick={awaiting.onPick}
+          onBack={backFromAwaiting}
+          backRef={awaitingBackRef}
+          strip={connectionStrip}
+          covered={screen !== 'awaiting' || screenOver}
+        />
       )}
       <main className="main" {...stackProps('chat')}>
         {narrow ? (
@@ -1053,17 +1107,18 @@ function PinnedPanelSlot({
   )
 }
 
-type Screen = 'list' | 'search' | 'chat' | 'thread'
+type Screen = 'list' | 'search' | 'awaiting' | 'chat' | 'thread'
 
 // The stack's focus: a screen pushed takes the focus on its back (the search, on its field); a screen
-// popped gives it back to the control that opened it. A width change moves nothing.
+// popped gives it back to the control that opened it. A width change moves nothing. `under` is a screen
+// between the list and the conversation (the search or "Aguardando você").
 function useStackFocus(
   screen: Screen | undefined,
-  searchOpen: boolean,
-  targets: Record<'search' | 'chat' | 'thread', { current: HTMLElement | null }>,
+  under: boolean,
+  targets: Record<Exclude<Screen, 'list'>, { current: HTMLElement | null }>,
 ): void {
-  const base = searchOpen ? 1 : 0
-  const depth = screen === 'thread' ? base + 2 : screen === 'chat' ? base + 1 : screen === 'search' ? 1 : 0
+  const base = under ? 1 : 0
+  const depth = screen === 'thread' ? base + 2 : screen === 'chat' ? base + 1 : screen === 'search' || screen === 'awaiting' ? 1 : 0
   const lastFocus = useRef<HTMLElement | null>(null)
   const openers = useRef<(HTMLElement | null)[]>([])
   const prev = useRef({ depth, screen, narrow: screen !== undefined })
@@ -1084,7 +1139,7 @@ function useStackFocus(
     if (pushed) {
       openers.current[was.depth + 1] = lastFocus.current
       for (let d = was.depth + 2; d <= depth; d++) openers.current[d] = null
-      if (screen === 'search' || screen === 'chat' || screen === 'thread') targets[screen].current?.focus()
+      if (screen && screen !== 'list') targets[screen].current?.focus()
     } else {
       const opener = openers.current[depth + 1]
       if (opener?.isConnected) opener.focus()

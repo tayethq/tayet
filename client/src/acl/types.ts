@@ -114,6 +114,10 @@ export type DomainEvent =
   // gets it), and later its state moved. Channel stream (and global).
   | { t: 'form.opened'; channelId: ChannelId; form: AgentForm }
   | { t: 'form.changed'; channelId: ChannelId; form: AgentForm }
+  // ADR-099: the approval cards that wait for this person, across conversations: the WHOLE list, newest
+  // first, at most 200. Only while watchAwaitingApprovals has an observer: once when the first read ends
+  // (empty too), then when the list changes. Global stream only.
+  | { t: 'approvals.awaiting'; items: AwaitingApproval[] }
 
 // ── Inbound (domain→SDK) ─────────────────────────────────────────────────────────────────
 // INVARIANTE (P1 / ADR-007): uma única variante `attachment` — o cliente NUNCA nomeia um
@@ -202,6 +206,11 @@ export type SearchHit = {
   channel: ChannelId
   excerpt: { before: string; match: string; after: string }
 }
+
+// ── Approvals awaiting the person — ADR-099 ──────────────────────────────────────────────
+// One item of approvals.awaiting. `message` is the translated card with its state already read (the
+// author and the instant come from it); `channel` is where it lives.
+export type AwaitingApproval = { message: Message; channel: ChannelId }
 
 // ── D3 fail-closed (contract-level) ──────────────────────────────────────────────────────
 // AclMode, ConceptKind and AclTelemetry live in @tayet/shared (src/acl-types.ts, ADR-088).
@@ -395,6 +404,14 @@ export interface Acl {
   // Read through the conversation's anchor, in the background; updates arrive as commands.changed. Rejects
   // ('channel not found') like listPanels.
   listCommands(channelId: ChannelId): Promise<AgentCommand[]>
+
+  // ADR-099: observe the approval cards that still take this person's answer, in every conversation;
+  // the list arrives as approvals.awaiting on the global stream (subscribe before calling). The first
+  // observer starts the read and the last one to leave stops it; with none it costs nothing. A further
+  // observer joins the same read and gets the next change, not a replay. Reads again when the connection
+  // returns. A card whose state could not be read is not listed. answerApproval takes any item's id,
+  // its conversation open or not.
+  watchAwaitingApprovals(): Unsubscribe
 
   // Outbound event stream (multicast)
   subscribe(handler: (e: DomainEvent) => void): Unsubscribe // global, cross-channel

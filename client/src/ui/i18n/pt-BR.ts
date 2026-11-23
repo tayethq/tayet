@@ -249,6 +249,13 @@ export const ptBR = {
     needs: 'Pede {n} respostas',
     progress: '{k} de {n} respostas',
   },
+  // "Aguardando você" (workspace.md §23.2 item 5, §23.4, §23.11; PLANO-MOBILE §0.20 V5, V6 e V8).
+  awaiting: {
+    title: 'Aguardando você',
+    summary: { one: '{n} pedido de {agents}', other: '{n} pedidos de {agents}' },
+    inChannel: 'em {channel}',
+    inConversationWith: 'em conversa com {agent}',
+  },
   // ADR-103 (Proposto): o formulário do agente (workspace.md §25.5, §25.8, §26, §27). "Enviando…", "Não
   // enviado", "Tentar de novo" e "Você" são as chaves de `timeline`; "Fechar" é a de `dialog`. Título,
   // rótulos, dicas, opções, textos de contexto, erros do agente e o rótulo do envio são do agente.

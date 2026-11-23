@@ -130,6 +130,7 @@ function makeAcl(channels: Channel[], initialMembers: Record<string, Member[]> =
     },
     sendMessage: async () => mid('x'),
     answerApproval: async () => {},
+    watchAwaitingApprovals: () => () => {},
     submitForm: async () => ({ ok: true }),
     closeForm: () => {},
     listPanels: async () => [],

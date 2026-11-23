@@ -55,7 +55,13 @@ export interface ApprovalPorts {
   changed(roomId: string, cardId: string): void
   // Detached work is tracked by the gateway (disconnect waits / drops it).
   detach(work: Promise<unknown>): void
+  // ADR-099: a card observed by the awaiting list is never evicted.
+  held?(cardId: string): boolean
+  // ADR-099: a read of the card ended (or failed) and what it shows did not move.
+  settled?(roomId: string, cardId: string): void
 }
+
+export type ApprovalReads = Pick<ApprovalPorts, 'fetchPage' | 'fetchEditPage'>
 
 interface Entry {
   roomId: string
@@ -78,6 +84,10 @@ interface Entry {
   firstClose: number | null | undefined
   liveClose: number | undefined
   editsLoading: boolean
+  // ADR-099, refresh: the generation of the one under way; and whether one found the card edited, which
+  // a later translation of an older copy of the event must not undo.
+  refreshing: number | undefined
+  editSeen: boolean
   // What the card last showed, to emit only when it moves.
   shown: string
 }
@@ -103,6 +113,8 @@ export class ApprovalAggregator {
   // Answer event id → the card it answers (live decrypts and deletions name only the answer).
   private readonly byAnswer = new Map<string, string>()
   private generation = 0
+  // Deletions seen during each refresh under way: its pages may still carry the deleted answer.
+  private readonly goneDuringRefresh = new Set<Set<string>>()
 
   constructor(private readonly ports: ApprovalPorts) {}
 
@@ -112,38 +124,93 @@ export class ApprovalAggregator {
     const key = keyOf(roomId, cardId)
     let entry = this.entries.get(key)
     if (!entry) {
-      entry = {
-        roomId,
-        cardId,
-        paged: [],
-        live: [],
-        facts,
-        complete: false,
-        next: undefined,
-        loading: undefined,
-        loaded: false,
-        firstClose: undefined,
-        liveClose: undefined,
-        editsLoading: false,
-        shown: '',
-      }
-      this.entries.set(key, entry)
-      this.trim()
+      entry = this.create(roomId, cardId, facts)
       if (facts.edited) this.readEdits(entry)
-      entry.shown = JSON.stringify(fallback(facts))
       this.read(entry)
       return fallback(facts)
     }
     // LRU touch.
     this.entries.delete(key)
     this.entries.set(key, entry)
-    entry.facts = facts
+    entry.facts = entry.editSeen ? { ...facts, edited: true } : facts
+    // An entry only a refresh created so far: the timeline does not wait for that one.
+    if (!entry.loaded && entry.loading === undefined) this.read(entry)
     if (facts.edited && entry.firstClose === undefined && entry.liveClose === undefined && !entry.editsLoading) this.readEdits(entry)
     const state = this.ready(entry) ? this.resolve(entry) : fallback(facts)
     entry.shown = JSON.stringify(state)
     // A close (or an edit) can make the rule want answers past where the read stopped.
     if (this.ready(entry) && !approvalSettled(state) && !entry.complete && entry.loading === undefined) this.read(entry)
     return state
+  }
+
+  // ADR-099: read the card from the start, awaited: its close first when it is edited, then its answers.
+  // Nothing changes until both land, and then they replace what the cache had, which a gap of the sync may
+  // have left behind. Rejects when a request fails; false when a newer refresh or an eviction overtook it.
+  async refresh(roomId: string, cardId: string, facts: ApprovalCardFacts, reads: ApprovalReads): Promise<boolean> {
+    const key = keyOf(roomId, cardId)
+    const entry = this.entries.get(key) ?? this.create(roomId, cardId, facts)
+    const gen = ++this.generation
+    entry.refreshing = gen
+    const current = (): boolean => entry.refreshing === gen && this.entries.get(key) === entry
+    const gone = new Set<string>()
+    this.goneDuringRefresh.add(gone)
+    try {
+      const edited = facts.edited || entry.facts.edited
+      const close = edited ? await this.findFirstClose(entry, reads, current) : null
+      if (close === undefined || !current()) return false
+      // A close once seen stays (dec. 7).
+      const firstClose = close ?? entry.firstClose ?? null
+      const probe: Entry = { ...entry, facts: { ...facts, edited }, paged: [], live: [], firstClose }
+      const liveBefore = new Set(entry.live.map((a) => a.eventId))
+      let next: string | undefined
+      do {
+        const page = await reads.fetchPage(roomId, cardId, next)
+        if (!current()) return false
+        for (const a of page.answers) if (!replaceInPlace(probe.paged, a)) probe.paged.push(a)
+        next = page.next
+      } while (next !== undefined && !approvalSettled(this.resolve(probe)))
+
+      const complete = next === undefined
+      const inPages = new Set(probe.paged.map((a) => a.eventId))
+      entry.paged = probe.paged.filter((a) => !gone.has(a.eventId))
+      // A live answer older than a complete read and absent from it was deleted meanwhile.
+      entry.live = entry.live.filter((a) => !inPages.has(a.eventId) && !(complete && liveBefore.has(a.eventId)))
+      for (const a of entry.paged) this.byAnswer.set(a.eventId, key)
+      entry.facts = { ...facts, edited: edited || entry.facts.edited }
+      if (edited) {
+        entry.editSeen = true
+        entry.firstClose = firstClose
+      }
+      // A read that began before this one is dropped; one that began after it (the session's own answer
+      // was accepted) runs again over what this one brought.
+      const readAgain = entry.loading !== undefined && entry.loading > gen
+      entry.loading = undefined
+      entry.refreshing = undefined
+      entry.next = next
+      entry.complete = complete && !readAgain
+      entry.loaded = true
+      if (readAgain) this.read(entry)
+      this.settle(entry)
+      return true
+    } finally {
+      this.goneDuringRefresh.delete(gone)
+      if (current()) {
+        entry.refreshing = undefined
+        if (!entry.loaded && entry.loading === undefined) this.entries.delete(key)
+      }
+    }
+  }
+
+  // ADR-099: the card's state when it was read, never the provisional one. 'reading' while a read that
+  // may move it runs. Starts nothing.
+  peek(roomId: string, cardId: string): ApprovalState | 'reading' | undefined {
+    const entry = this.entries.get(keyOf(roomId, cardId))
+    if (!entry?.loaded) return undefined
+    if (this.closeKnown(entry)) {
+      const state = this.resolve(entry)
+      if (entry.complete || approvalSettled(state)) return state
+    }
+    return entry.loading !== undefined || entry.editsLoading ? 'reading' : undefined
   }
 
   // A live edit of the card by its author (the caller checked the author, PLANO-AGENTES §8.30). The first
@@ -188,6 +255,7 @@ export class ApprovalAggregator {
 
   // A deletion. True when the deleted event was an answer this cache knows (so it is no message).
   forgetAnswer(answerId: string): boolean {
+    for (const gone of this.goneDuringRefresh) gone.add(answerId)
     const key = this.byAnswer.get(answerId)
     if (key === undefined) return false
     this.byAnswer.delete(answerId)
@@ -208,6 +276,29 @@ export class ApprovalAggregator {
     this.entries.clear()
     this.byAnswer.clear()
     this.generation += 1
+  }
+
+  private create(roomId: string, cardId: string, facts: ApprovalCardFacts): Entry {
+    const entry: Entry = {
+      roomId,
+      cardId,
+      paged: [],
+      live: [],
+      facts,
+      complete: false,
+      next: undefined,
+      loading: undefined,
+      loaded: false,
+      firstClose: undefined,
+      liveClose: undefined,
+      editsLoading: false,
+      refreshing: undefined,
+      editSeen: false,
+      shown: JSON.stringify(fallback(facts)),
+    }
+    this.entries.set(keyOf(roomId, cardId), entry)
+    this.trim()
+    return entry
   }
 
   // The answers are read and, for an edited card, the instant of its first close is known.
@@ -245,7 +336,10 @@ export class ApprovalAggregator {
       return
     }
     const shown = JSON.stringify(state)
-    if (shown === entry.shown) return
+    if (shown === entry.shown) {
+      this.ports.settled?.(entry.roomId, entry.cardId)
+      return
+    }
     entry.shown = shown
     this.ports.changed(entry.roomId, entry.cardId)
   }
@@ -282,7 +376,8 @@ export class ApprovalAggregator {
       run().catch(() => {
         // A failed read leaves the card as it shows (open/closed); its next translation retries.
         if (entry.loading === gen) entry.loading = undefined
-        if (!entry.loaded) this.entries.delete(key)
+        if (!entry.loaded && entry.refreshing === undefined) this.entries.delete(key)
+        this.ports.settled?.(entry.roomId, entry.cardId)
       }),
     )
   }
@@ -292,20 +387,9 @@ export class ApprovalAggregator {
     entry.editsLoading = true
     const key = keyOf(entry.roomId, entry.cardId)
     const run = async (): Promise<void> => {
-      let from: string | undefined
-      let found: number | null = null
-      for (;;) {
-        const page = await this.ports.fetchEditPage(entry.roomId, entry.cardId, from)
-        if (this.entries.get(key) !== entry) return
-        const first = page.edits.find((e) => e.closed && e.sender === entry.facts.author)
-        if (first) {
-          found = first.ts
-          break
-        }
-        if (page.next === undefined) break
-        from = page.next
-      }
-      entry.firstClose = found
+      const found = await this.findFirstClose(entry, this.ports, () => this.entries.get(key) === entry)
+      if (found === undefined) return
+      entry.firstClose = found ?? entry.firstClose ?? null
       entry.editsLoading = false
       this.settle(entry)
     }
@@ -313,15 +397,28 @@ export class ApprovalAggregator {
       run().catch(() => {
         // Unread edits leave the card on its fallback; its next translation retries.
         entry.editsLoading = false
+        this.ports.settled?.(entry.roomId, entry.cardId)
       }),
     )
   }
 
+  // The instant of the author's first closing edit; null when there is none; undefined when overtaken.
+  private async findFirstClose(entry: Entry, reads: ApprovalReads, current: () => boolean): Promise<number | null | undefined> {
+    let from: string | undefined
+    do {
+      const page = await reads.fetchEditPage(entry.roomId, entry.cardId, from)
+      if (!current()) return undefined
+      const first = page.edits.find((e) => e.closed && e.sender === entry.facts.author)
+      if (first) return first.ts
+      from = page.next
+    } while (from !== undefined)
+    return null
+  }
+
   private trim(): void {
-    while (this.entries.size > APPROVAL_CACHE_CAP) {
-      const oldest = this.entries.keys().next().value
-      if (oldest === undefined) return
-      this.entries.delete(oldest)
+    for (const [key, entry] of this.entries) {
+      if (this.entries.size <= APPROVAL_CACHE_CAP) return
+      if (!this.ports.held?.(entry.cardId)) this.entries.delete(key)
     }
   }
 }

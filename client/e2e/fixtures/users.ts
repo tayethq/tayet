@@ -19,7 +19,8 @@
 // login.narrow.spec.ts; lin only to language.spec.ts; nel and oli only to timeline.narrow.spec.ts; pat and ros
 // only to copy-text.spec.ts; ted and ula only to actions.narrow.spec.ts; ivy and joe only to composer.narrow.spec.ts; kit and lou only to
 // search.narrow.spec.ts; max and ned only to compose.narrow.spec.ts; gael, iris and noe only to
-// group-profile.narrow.spec.ts; bia and caio only to agent-form.narrow.spec.ts.
+// group-profile.narrow.spec.ts; bia and caio only to agent-form.narrow.spec.ts; luz and rui only to
+// awaiting.narrow.spec.ts.
 export interface E2eUser {
   /** Login no form do Dex (password DB: o campo é o email). */
   email: string
@@ -125,6 +126,8 @@ export const NOE: E2eUser = { email: 'noe@tayet.local', password: 'noepass123' }
 // caio fills its form at 390×844.
 export const BIA: E2eUser = { email: 'bia@tayet.local', password: 'biapass123' }
 export const CAIO: E2eUser = { email: 'caio@tayet.local', password: 'caiopass123' }
+export const LUZ: E2eUser = { email: 'luz@tayet.local', password: 'luzpass123' }
+export const RUI: E2eUser = { email: 'rui@tayet.local', password: 'ruipass123' }
 // The iPhone's Safari as it names itself (PLANO-MOBILE M7 I1), for the specs of the install sheet.
 export const IPHONE_SAFARI_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1'

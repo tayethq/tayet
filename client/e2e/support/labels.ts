@@ -159,6 +159,13 @@ export const APPROVAL = {
   progress: (k: number, n: number) => `${k} de ${n} respostas`,
 } as const
 
+// "Aguardando você" on the narrow window (workspace.md §23.2 item 5, §23.4). Fonte: AwaitingScreen.tsx.
+export const AWAITING = {
+  title: 'Aguardando você',
+  summary: (n: number, agents: string) => (n === 1 ? `1 pedido de ${agents}` : `${n} pedidos de ${agents}`),
+  inChannel: (channel: string) => `em ${channel}`,
+} as const
+
 // The pinned panel (ADR-091, Proposto, dec. 12). Fonte: PinnedPanel.tsx:103 (section name), Timeline.tsx
 // updatedOf ("atualizado às" on the same day).
 export const PANEL = {

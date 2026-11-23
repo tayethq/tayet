@@ -181,7 +181,8 @@ export interface ChatState {
   // `highlight` is the row to mark — `seq` restarts the animation when the same row is reached again.
   jump: { target: MessageId; failed: boolean } | undefined
   highlight: { id: MessageId; seq: number } | undefined
-  jumpTo: (hit: SearchHit) => void
+  // Opens the conversation (and the thread) with the message marked: a search hit, or a card of "Aguardando você".
+  jumpTo: (hit: Pick<SearchHit, 'message' | 'channel'>) => void
   // Forgets a failed jump's line (the narrow search screen closing, PLANO-MOBILE M6 B1).
   dismissJump: () => void
   clearHighlight: () => void
@@ -1008,7 +1009,7 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
   // its thread, the same walk over the thread's pages. markRead is untouched (U6): selecting the
   // conversation already marks it, as a click on the list does.
   const jumpTo = useCallback(
-    (hit: SearchHit) => {
+    (hit: Pick<SearchHit, 'message' | 'channel'>) => {
       const channel = hit.channel
       const target = hit.message.id
       const rootId = hit.message.threadParent

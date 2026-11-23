@@ -177,6 +177,7 @@ function fakeAcl(
     subscribeChannel: () => () => {},
     sendMessage: async () => 'm' as never,
     answerApproval: async () => {},
+    watchAwaitingApprovals: () => () => {},
     submitForm: async () => ({ ok: true }),
     closeForm: () => {},
     listPanels: async () => [],

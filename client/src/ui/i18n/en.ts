@@ -233,6 +233,13 @@ export const en: Catalog = {
     needs: 'Needs {n} answers',
     progress: '{k} of {n} answers',
   },
+  // "Waiting on you" (workspace.md §23.2 item 5, §23.4, §23.11; PLANO-MOBILE §0.20 V5, V6 and V8).
+  awaiting: {
+    title: 'Waiting on you',
+    summary: { one: '{n} request from {agents}', other: '{n} requests from {agents}' },
+    inChannel: 'in {channel}',
+    inConversationWith: 'in conversation with {agent}',
+  },
   form: {
     cancel: 'Cancel',
     noAnswer: "{agent} didn't respond",

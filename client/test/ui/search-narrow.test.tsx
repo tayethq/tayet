@@ -65,6 +65,8 @@ function fakeAcl(opts: Opts = {}) {
       return () => globals.delete(fn)
     },
     subscribeChannel: () => () => {},
+    // The narrow shell observes "Aguardando você" (M9b V1); nothing pending here.
+    watchAwaitingApprovals: () => () => {},
     markRead: async () => {},
   } as unknown as Acl
   const emit = (e: DomainEvent) => act(() => globals.forEach((fn) => fn(e)))

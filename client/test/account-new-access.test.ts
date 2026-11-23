@@ -72,6 +72,7 @@ describe('account.newAccess — union member (ADR-018 §2.1)', () => {
         case 'account.accessRecognized':
         case 'search.state':
         case 'people.changed':
+        case 'approvals.awaiting':
           return 'account'
         // ADR-056: global per-person fact — channel-less like the account bucket, but about
         // ANOTHER user, not this account.

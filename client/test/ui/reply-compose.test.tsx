@@ -97,6 +97,7 @@ function fakeAcl(): { acl: Acl; sendOpts: () => Array<SendOpts | undefined> } {
       return id
     },
     answerApproval: async () => {},
+    watchAwaitingApprovals: () => () => {},
     submitForm: async () => ({ ok: true }),
     closeForm: () => {},
     listPanels: async () => [],

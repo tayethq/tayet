@@ -97,6 +97,7 @@ function fakeAcl(): Acl {
       return id
     },
     answerApproval: async () => {},
+    watchAwaitingApprovals: () => () => {},
     submitForm: async () => ({ ok: true }),
     closeForm: () => {},
     listPanels: async () => [],

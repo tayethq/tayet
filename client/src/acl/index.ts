@@ -64,6 +64,7 @@ export type {
   AgentPatch, // ADR-086: input de updateAgent (nome, cor).
   PageCursor,
   Page,
+  AwaitingApproval, // ADR-099: one item of approvals.awaiting, for the "Aguardando você" screen (M9b).
   SearchHit, // ADR-074: resultado da busca local (Message + canal + trecho), consumido pela UI de busca no PR 2.
   Unsubscribe,
   ConnectionState,

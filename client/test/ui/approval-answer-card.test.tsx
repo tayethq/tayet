@@ -166,6 +166,7 @@ function fakeAcl(initial: Message, answer: Acl['answerApproval']): { acl: Acl; e
     },
     sendMessage: async () => mid('x'),
     answerApproval: answer,
+    watchAwaitingApprovals: () => () => {},
     submitForm: async () => ({ ok: true }),
     closeForm: () => {},
     listPanels: async () => [],

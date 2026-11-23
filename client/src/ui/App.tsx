@@ -6,6 +6,7 @@ import { useLanguage } from './useLanguage'
 import { useNotificationsPrompt } from './useNotificationsPrompt'
 import { useSearch } from './useSearch'
 import { useAgentForm } from './useAgentForm'
+import { useAwaitingApprovals, useAwaitingScreen } from './useAwaiting'
 import { Workspace } from './components/Workspace'
 import { MediaProvider } from './MediaContext'
 import { useNarrowWindow } from './narrow'
@@ -42,14 +43,28 @@ function Shell({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
     if (!narrow) setSearchOpen(false)
     wasNarrow.current = narrow
   }, [narrow, search.active])
+  // "Aguardando você" (PLANO-MOBILE §0.20): the ACL's list, observed only while the window is narrow (V1),
+  // and the screen, between the list and the conversation (V2), which holds the cards it showed (V3). A wide
+  // window closes it, as there is no wide screen yet; reached with nothing pending, it goes back (V4).
+  const awaitingItems = useAwaitingApprovals(acl, narrow)
+  const [awaitingOpen, setAwaitingOpen] = useState(false)
+  useEffect(() => {
+    if (!narrow) setAwaitingOpen(false)
+  }, [narrow])
+  const awaitingShown = useAwaitingScreen(acl, awaitingItems, narrow && awaitingOpen, () => setAwaitingOpen(false))
   useStackScreens({
     narrow,
     search: searchOpen,
+    awaiting: awaitingOpen,
     chat: chat.selectedId !== undefined,
     thread: chat.threadRoot !== undefined && chat.threadRoot.channelId === chat.selectedId,
     onPopSearch: () => {
       setSearchOpen(false)
       clearSearch()
+      chat.dismissJump()
+    },
+    onPopAwaiting: () => {
+      setAwaitingOpen(false)
       chat.dismissJump()
     },
     onPopChat: chat.deselect,
@@ -168,8 +183,17 @@ function Shell({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
           // ⌘K from a conversation trades it for the search (the order is list, search, conversation).
           onOpen: () => {
             if (chat.selectedId !== undefined) chat.deselect()
+            setAwaitingOpen(false)
             setSearchOpen(true)
           },
+        }}
+        awaiting={{
+          items: awaitingItems,
+          shown: awaitingShown,
+          open: awaitingOpen,
+          onOpen: () => setAwaitingOpen(true),
+          onClose: () => setAwaitingOpen(false),
+          onPick: (item) => chat.jumpTo(item),
         }}
         jump={chat.jump}
         agentForm={agentForm}

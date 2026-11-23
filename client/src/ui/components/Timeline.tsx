@@ -1,4 +1,4 @@
-import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type AnimationEvent, type CSSProperties } from 'react'
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type AnimationEvent, type CSSProperties, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import type { AgentColor, Message, MessageBody, MessageId, Presence, RichDoc, User, UserId } from '@tayet/client'
 import { QuickReact, Reactions } from './Reactions'
@@ -251,7 +251,7 @@ function FileBody({ body }: { body: Extract<MessageBody, { kind: 'file' }> }) {
   )
 }
 
-type ApprovalBody = Extract<MessageBody, { kind: 'approval' }>
+export type ApprovalBody = Extract<MessageBody, { kind: 'approval' }>
 type ApprovalOptionStyle = ApprovalBody['options'][number]['style']
 
 // Manifest workspace.md §17.3: the option's style → the Button primitive's role.
@@ -267,12 +267,14 @@ const APPROVAL_VARIANT: Record<NonNullable<ApprovalOptionStyle>, ButtonVariant> 
 // group first (programmatic, no ring — the account-settings subtitle's precedent); from the click on, the
 // footer is a polite live region, so the new state is announced without taking the focus. Only after
 // the viewer's own click: a card resolving on load (or by someone else) is not announced.
-function ApprovalCard({
+// Also the card of "Aguardando você" (§23.4), where `origin` is the line on its top.
+export function ApprovalCard({
   body,
   usersById,
   selfId,
   onAnswer,
   formReply,
+  origin,
 }: {
   body: ApprovalBody
   usersById: Record<string, User>
@@ -280,6 +282,7 @@ function ApprovalCard({
   onAnswer?: (option: string) => void
   // ADR-103 (Proposto): who answered a form the agent opened from this card (§26 item 8).
   formReply?: Message['formReply']
+  origin?: ReactNode
 }) {
   const labelId = useId()
   const groupRef = useRef<HTMLDivElement>(null)
@@ -373,6 +376,7 @@ function ApprovalCard({
   }
   return (
     <div className="approval" role="group" aria-labelledby={labelId} ref={groupRef} tabIndex={-1}>
+      {origin}
       <span className="approval__label" id={labelId}>
         {t('approval.title')}
       </span>

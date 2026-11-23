@@ -410,3 +410,13 @@ staticPasswords:
     username: "caio"
     userID: "tayet-caio-0078"
     hash: "$2y$12$krrJOH2tElSZTJKbiFdBqOL3Emh.FYI8316Gbym/6Gs3KXWyCIFd."
+  # luz and rui: the pair of awaiting.narrow.spec.ts only (phone project), passwords luzpass123 and
+  # ruipass123, hashes by the recipe above. luz is an org admin (dev-stack.sh `up`).
+  - email: "luz@tayet.local"
+    username: "luz"
+    userID: "tayet-luz-0079"
+    hash: "$2y$12$wLmlCsQJUHchsLOCMXzPveZHYpWQRGH413xXL/zEa/L.BE0gR77PO"
+  - email: "rui@tayet.local"
+    username: "rui"
+    userID: "tayet-rui-0080"
+    hash: "$2y$12$mB9eWXUfZWRXPbI7LvnOwOgQLsIJLOOaZkl672Bt0.Qcyt...eaEm"

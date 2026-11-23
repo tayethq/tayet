@@ -17,9 +17,9 @@ import type { ReactNode } from 'react'
 // - A reload in the middle of the stack lands on the list: at start, an entry of ours deeper than the
 //   root is gone back over, so the next back leaves the app.
 
-// The screens that are pushed above the root (the list). The search sits between the list and the
-// conversation (PLANO-MOBILE M6 B1).
-export type StackScreen = 'search' | 'chat' | 'thread' | 'dialog'
+// The screens that are pushed above the root (the list). The search and "Aguardando você" sit between the
+// list and the conversation (PLANO-MOBILE M6 B1, M9b V2).
+export type StackScreen = 'search' | 'awaiting' | 'chat' | 'thread' | 'dialog'
 
 export interface StackHistoryState {
   tayet: 'stack'
@@ -243,36 +243,43 @@ function useLatest<T>(value: T): { current: T } {
   return ref
 }
 
-// The screens of the stack: the search, the conversation and its thread, while the window is narrow.
+// The screens of the stack: the search or "Aguardando você", the conversation and its thread, while the
+// window is narrow.
 export function useStackScreens({
   narrow,
   search = false,
+  awaiting = false,
   chat,
   thread,
   onPopSearch = () => {},
+  onPopAwaiting = () => {},
   onPopChat,
   onPopThread,
 }: {
   narrow: boolean
   search?: boolean
+  awaiting?: boolean
   chat: boolean
   thread: boolean
   onPopSearch?: () => void
+  onPopAwaiting?: () => void
   onPopChat: () => void
   onPopThread: () => void
 }): void {
   const stack = useContext(StackContext)
-  const pops = useLatest({ onPopSearch, onPopChat, onPopThread })
+  const pops = useLatest({ onPopSearch, onPopAwaiting, onPopChat, onPopThread })
   const withSearch = narrow && search
+  const withAwaiting = narrow && awaiting && !search
   const depth = !narrow || !chat ? 0 : thread ? 2 : 1
   useEffect(() => {
     if (!stack) return
     const list: StackEntry[] = []
     if (withSearch) list.push({ key: 'search', screen: 'search', onPop: () => pops.current.onPopSearch() })
+    if (withAwaiting) list.push({ key: 'awaiting', screen: 'awaiting', onPop: () => pops.current.onPopAwaiting() })
     if (depth >= 1) list.push({ key: 'chat', screen: 'chat', onPop: () => pops.current.onPopChat() })
     if (depth >= 2) list.push({ key: 'thread', screen: 'thread', onPop: () => pops.current.onPopThread() })
     stack.set('screens', 0, list)
-  }, [stack, withSearch, depth, pops])
+  }, [stack, withSearch, withAwaiting, depth, pops])
 }
 
 let dialogOrder = 0

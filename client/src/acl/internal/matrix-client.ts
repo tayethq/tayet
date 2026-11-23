@@ -65,6 +65,7 @@ import type {
   PageCursor,
   ResetOutcome,
   SearchHit,
+  AwaitingApproval,
   NewChannel,
   ChannelPatch,
   RosterEntry,
@@ -218,6 +219,7 @@ import {
   undecryptedArrival,
 } from '@tayet/shared/internal'
 import { ApprovalAggregator, PendingAnswers, answerFactOf, answeredCardOf, editFactOf, fetchAnswerPage, fetchEditPage, takesAnswer, type PendingAnswer } from './approval-state'
+import { AwaitingApprovals } from './awaiting-approvals'
 import { PanelAggregator, fetchPanelPage } from './panel-state'
 import { CommandAggregator, fetchCommandsPage } from './command-state'
 import { FormReplies, FormSession, fetchFormPage, formRelatedOf, realClock, type FormClock, type SubmitOutcome } from './form-state'
@@ -399,6 +401,7 @@ function channelKeyOf(e: DomainEvent): string | undefined {
     case 'account.accessRecognized':
     case 'device.attention':
     case 'people.changed':
+    case 'approvals.awaiting':
       return undefined
     // ADR-056: presence is a fact of the person, not of any membership — global stream only,
     // same posture as the account events above.
@@ -689,7 +692,7 @@ export class MatrixGateway {
   // ADR-091: the approval cards' aggregated state (approval-state.ts). The read of a card's
   // answers runs in the background; when it (or a live answer, decrypt or deletion) moves what the card
   // shows, the card is re-translated and re-emitted as message.edited.
-  private readonly approvals = new ApprovalAggregator({
+  private readonly approvals: ApprovalAggregator = new ApprovalAggregator({
     fetchPage: (roomId, cardId, from) => fetchAnswerPage(this.require(), roomId, cardId, from),
     fetchEditPage: (roomId, cardId, from) => fetchEditPage(this.require(), roomId, cardId, from),
     accounts: () => {
@@ -698,6 +701,8 @@ export class MatrixGateway {
     },
     changed: (roomId, cardId) => this.emitApprovalCard(roomId, cardId),
     detach: (work) => this.detach(work),
+    held: (cardId) => this.awaiting.holds(cardId),
+    settled: (_roomId, cardId) => this.awaiting.update(cardId),
   })
   // The card events this session translated, for the re-emission when the room no longer holds them (a
   // /messages page, a thread page). Bounded like readTargets.
@@ -705,6 +710,23 @@ export class MatrixGateway {
   // ADR-091 dec. 14 (A3-2): this session's own answer per card while it is in flight or not sent. Folded
   // into the card's state (sending/failed) only while the aggregated state is open. Cleared on disconnect.
   private readonly pendingAnswers = new PendingAnswers()
+  // ADR-099: the cards awaiting this person (awaiting-approvals.ts). Every hook below is a no-op while
+  // nobody observes the list.
+  private readonly awaiting: AwaitingApprovals = new AwaitingApprovals({
+    client: () => (this.live && !this.sessionLost ? this.client : undefined),
+    approvals: this.approvals,
+    search: () => this.search,
+    heldCards: () => this.approvalCards.values(),
+    hold: (id, event) => this.holdApprovalCard(id, event),
+    drop: (id) => {
+      this.approvalCards.delete(id)
+      this.search?.remove(id)
+    },
+    translate: (room, event, stateFor) => eventToMessage(event, { ...this.observedCtx(room), approvalStateFor: stateFor }),
+    overlay: (roomId, id, state) => this.pendingAnswers.overlay(roomId, id, state, this.client?.getUserId() ?? undefined),
+    emit: (items: AwaitingApproval[]) => this.emit({ t: 'approvals.awaiting', items }),
+    detach: (work) => this.detach(work),
+  })
   // ADR-091 dec. 12 (A3-5): the pinned panels per conversation (panel-state.ts), read through
   // the anchor's relations; reloaded by a live panel event, its late decrypt or removal, recomputed when an
   // agent joins or leaves. panels.changed only when the list moves. Cleared on disconnect.
@@ -758,6 +780,10 @@ export class MatrixGateway {
     return () => this.globalSubs.delete(handler)
   }
 
+  watchAwaitingApprovals(): Unsubscribe {
+    return this.awaiting.watch()
+  }
+
   subscribeChannel(id: ChannelId, handler: (e: DomainEvent) => void): Unsubscribe {
     const key = channelIdToRaw(id)
     let set = this.channelSubs.get(key)
@@ -779,6 +805,7 @@ export class MatrixGateway {
       const set = this.channelSubs.get(key)
       if (set) for (const h of set) h(e)
     }
+    if (e.t === 'channel.removed') this.awaiting.updateAll()
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────────────────
@@ -1033,6 +1060,7 @@ export class MatrixGateway {
     // From here on, encrypted events arriving on the timeline are the LIVE tail — their
     // settled decrypts may emit on the stream (§4.3). Initial-sync history settles silently.
     this.live = true
+    this.awaiting.start()
 
     // ADR-074 dec. 3: the search backfill starts once the client is ready. Not awaited and not
     // `detach`ed (it lives as long as the session); each request it makes is tracked instead.
@@ -1588,6 +1616,10 @@ export class MatrixGateway {
       // Before the live-only filter: a Thread fills from /relations with non-live insertions (§8.37).
       this.settleReadTarget(event, room)
       if (toStartOfTimeline || data?.liveEvent === false) return
+      if (event.getType() === EventType.RoomRedaction && hasServerId(event)) {
+        const target = event.getAssociatedId()
+        if (target) this.awaiting.redacted(target)
+      }
       // A3-5: an edit of a panel (A4-1: or of a commands manifest), read or not (its relation is in clear)
       // — before the decrypt deferral below, which a settled failure skips.
       this.noteAnchoredEdit(event, room)
@@ -1666,6 +1698,7 @@ export class MatrixGateway {
       if (!realId || !room) return
       const wasPending = this.pendingDecrypt.delete(realId)
       const upgradeStableId = this.unavailableEmitted.get(realId)
+      if (!wasPending) this.awaiting.decrypted(event, room)
       if (!wasPending && upgradeStableId === undefined) {
         this.noteAnchoredDecrypt(event, room)
         return
@@ -1927,7 +1960,9 @@ export class MatrixGateway {
     // Connection state (P4 hook).
     const onSync = (state: SyncState): void => {
       const cs = toConnectionState(state)
-      if (cs) this.emit({ t: 'connection.changed', state: cs })
+      if (!cs) return
+      this.emit({ t: 'connection.changed', state: cs })
+      this.awaiting.connection(cs === 'connected')
     }
 
     // ADR-056 dec. 3: presence EDUs → user.presence, backed by the ACL-side map. We listen on
@@ -2051,8 +2086,10 @@ export class MatrixGateway {
       }
       const edited = editToMessage(editEvent, stableMessageId(original), ctx, original)
       this.emit({ t: 'message.edited', channelId: edited.channelId, message: edited })
+      this.awaiting.edited(targetRealId, editEvent)
       return
     }
+    this.awaiting.edited(targetRealId, editEvent)
     const client = this.client
     if (!client) return
     this.detach(
@@ -2082,6 +2119,9 @@ export class MatrixGateway {
     this.rememberReadTarget(event)
     this.noteApprovalCard(msg, event)
     this.emit({ t: 'message.received', channelId: msg.channelId, message: msg })
+    if (msg.body.kind !== 'approval') return
+    const room = this.client?.getRoom(channelIdToRaw(msg.channelId))
+    if (room) this.awaiting.arrived(event, room)
   }
 
   // §8.37 D1: keep every delivered event as a read target. Resolving at delivery time is not enough:
@@ -2157,6 +2197,7 @@ export class MatrixGateway {
     this.roomWired = new WeakSet<Room>()
     this.threadSummaryEmitted.clear()
     this.pagedThreadLatest.clear()
+    this.awaiting.reset()
     this.approvals.clear()
     this.approvalCards.clear()
     this.pendingAnswers.clear()
@@ -2511,22 +2552,34 @@ export class MatrixGateway {
   // A card's state moved: re-translate it and emit it in place (message.edited — the UI applies it only
   // to a message it holds). The card comes from the room, else from what this session translated.
   private emitApprovalCard(roomId: string, cardId: string): void {
+    this.awaiting.update(cardId)
     const room = this.client?.getRoom(roomId)
     if (!room) return
     const card = room.findEventById(cardId) ?? this.approvalCards.get(cardId) ?? this.readTargets.get(cardId)
     if (!card) return
-    const msg = eventToMessage(card, this.ctx(room))
+    const msg = eventToMessage(card, this.awaiting.holds(cardId) ? this.observedCtx(room) : this.ctx(room))
     if (msg?.body.kind === 'approval') this.emit({ t: 'message.edited', channelId: msg.channelId, message: msg })
+  }
+
+  // ADR-099: an observed card is translated with what is cached only; a form reply's read would run
+  // outside the awaiting read's limit. A card the UI shows already has that reply cached.
+  private observedCtx(room: Room): Ctx {
+    return { ...this.ctx(room), formReplyFor: (id) => this.formReplies.peek(room.roomId, id) }
   }
 
   private noteApprovalCard(msg: Message, event: MatrixEvent): void {
     const id = event.getId()
     if (msg.body.kind !== 'approval' || !id) return
+    this.holdApprovalCard(id, event)
+  }
+
+  // Past the cap the oldest goes, except a card the awaiting list observes (ADR-099).
+  private holdApprovalCard(id: string, event: MatrixEvent): void {
     this.approvalCards.delete(id)
     this.approvalCards.set(id, event)
-    if (this.approvalCards.size > READ_TARGET_CAP) {
-      const oldest = this.approvalCards.keys().next().value
-      if (oldest !== undefined) this.approvalCards.delete(oldest)
+    for (const key of this.approvalCards.keys()) {
+      if (this.approvalCards.size <= READ_TARGET_CAP) break
+      if (!this.awaiting.holds(key)) this.approvalCards.delete(key)
     }
   }
 

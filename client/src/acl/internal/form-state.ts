@@ -302,6 +302,11 @@ export class FormReplies {
     return undefined
   }
 
+  // The cached reply alone, for a translation that must start no read (ADR-099).
+  peek(roomId: string, anchorId: string): { by: string; at: number } | undefined {
+    return this.entries.get(keyOf(roomId, anchorId))?.reply
+  }
+
   // Watch an anchor before any translation asked for it: this session's own command message, whose
   // translation carries a send id until the server's echo, so the translator never asks.
   watch(roomId: string, anchorId: string, anchor: FormAnchorFacts): void {

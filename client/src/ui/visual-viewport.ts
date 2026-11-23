@@ -12,6 +12,8 @@
 // On a narrow window the focused field is kept in sight (PLANO-MOBILE §8.21, R3): when the keyboard opens or
 // grows (it can open in steps) and when the focus moves with it open, the field scrolls to the nearest edge of
 // the container it scrolls in. A field with no such container (the composer, the search's) is left where it is.
+// A field inside the `Field` primitive brings the whole box (label, control, error and hint), also when its
+// error shows or changes with the focus in it (PLANO-MOBILE §0.20 W6; the trigger lives in `Field`).
 import { NARROW_QUERY } from './narrow'
 
 export const VIEWPORT_VAR = '--visual-viewport-height'
@@ -22,16 +24,20 @@ export const KEYBOARD_MIN = 120
 
 const FIELDS = 'input,textarea,select,[contenteditable]'
 
-function revealField(win: Window): void {
+export function revealField(win: Window = window): void {
   const field = win.document.activeElement as HTMLElement | null
   if (!field?.matches(FIELDS) || win.matchMedia?.(NARROW_QUERY).matches !== true) return
-  for (let box = field.parentElement; box && box !== win.document.body; box = box.parentElement) {
+  const target = field.closest<HTMLElement>('.ui-field') ?? field
+  for (let box = target.parentElement; box && box !== win.document.body; box = box.parentElement) {
     if (/auto|scroll/.test(win.getComputedStyle(box).overflowY)) {
-      field.scrollIntoView({ block: 'nearest' })
+      target.scrollIntoView({ block: 'nearest' })
       return
     }
   }
 }
+
+// The keyboard is open (the root carries the mark while it is).
+export const keyboardOpen = (win: Window = window): boolean => win.document.documentElement.hasAttribute(KEYBOARD_ATTR)
 
 export function trackVisualViewport(win: Window = window, root: HTMLElement = win.document.documentElement): () => void {
   const vv = win.visualViewport

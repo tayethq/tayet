@@ -22,6 +22,7 @@ import {
   PEOPLE,
   AGENTS,
   APPROVAL,
+  AWAITING,
   PANEL,
   COMMANDS,
   FORMS,
@@ -230,6 +231,10 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
     expect(APPROVAL.progress(1, 2)).toBe(fill(copy.approval.progress, { k: 1, n: 2 }))
     const { answered: _a, needs: _nd, progress: _pg, ...approval } = APPROVAL
     expect(approval).toEqual({ title: copy.approval.title, closed: copy.approval.closed, you: copy.timeline.you })
+    expect(AWAITING.title).toBe(copy.awaiting.title)
+    expect(AWAITING.summary(1, 'Ana')).toBe(fill(copy.awaiting.summary.one, { n: 1, agents: 'Ana' }))
+    expect(AWAITING.summary(2, 'Ana')).toBe(fill(copy.awaiting.summary.other, { n: 2, agents: 'Ana' }))
+    expect(AWAITING.inChannel('#obra')).toBe(fill(copy.awaiting.inChannel, { channel: '#obra' }))
     expect(PANEL.section('Ana')).toBe(fill(copy.panel.section, { agent: 'Ana' }))
     expect(PANEL.updatedAt('09:05')).toBe(fill(copy.panel.updatedAt, { time: '09:05' }))
     expect(COMMANDS.popup).toBe(copy.composer.commands)

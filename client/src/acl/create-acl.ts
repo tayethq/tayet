@@ -52,6 +52,9 @@ export function createAcl(opts: AclOptions): Acl {
     // ADR-093 (Proposto): os comandos `/` da conversa, lista plana já filtrada e ordenada — pass-through.
     listCommands: (channelId) => gateway.listCommands(channelId),
 
+    // ADR-099: the observed read of the cards awaiting the person — pass-through.
+    watchAwaitingApprovals: () => gateway.watchAwaitingApprovals(),
+
     // Stream (multicast; reconciliation happens in the gateway, never in the UI).
     subscribe: (handler) => gateway.subscribe(handler),
     subscribeChannel: (id, handler) => gateway.subscribeChannel(id, handler),

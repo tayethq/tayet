@@ -1132,11 +1132,14 @@ cmd_up() {
   provision_user tai taipass123
   # bia: admin only for agent-form.narrow.spec.ts (PLANO-MOBILE M8), for the same reason as mel.
   provision_user bia biapass123
+  # luz: admin only for awaiting.narrow.spec.ts (PLANO-MOBILE M9b), for the same reason as mel.
+  provision_user luz luzpass123
   promote_org_admin alice
   promote_org_admin mel
   promote_org_admin rae
   promote_org_admin tai
   promote_org_admin bia
+  promote_org_admin luz
   # FASE 2 — agente de custódia. Sem node_modules no host (caso CI: o runner não roda
   # `npm ci` em agent/) o serviço fica FORA do up, com aviso — nunca um container em
   # crash-loop mudo nem um up vermelho por dep de dev local.

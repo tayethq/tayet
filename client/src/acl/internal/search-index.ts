@@ -184,6 +184,11 @@ export class SearchIndex {
     return this.entries.get(eventId)
   }
 
+  // ADR-099: the approval cards the index holds. Only candidates: their snapshot's state is stale.
+  approvals(): SearchEntry[] {
+    return [...this.entries.values()].filter((e) => e.snapshot.body.kind === 'approval')
+  }
+
   // Idempotent by event id (dec. 2): re-indexing replaces.
   upsert(entries: SearchEntry[]): void {
     if (entries.length === 0) return

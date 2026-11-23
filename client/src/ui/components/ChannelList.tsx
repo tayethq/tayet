@@ -54,6 +54,7 @@ export function ChannelList({
   presenceOf,
   notificationsPrompt,
   results,
+  awaiting,
   archived,
   onRestore,
 }: {
@@ -70,6 +71,8 @@ export function ChannelList({
   // Search results (manifest workspace.md §8 item 4): while there is a query they replace the sections,
   // in the same scroll; the notice above stays.
   results?: ReactNode
+  // "Aguardando você" on the narrow list (workspace.md §23.2 items 2 and 5): under the notice, above the sections.
+  awaiting?: ReactNode
   // ADR-076: archived channels (§9 — a third section after the DMs, replaced by results like the
   // others) and the Restore verb. Absent/empty → no section.
   archived?: Channel[]
@@ -97,6 +100,7 @@ export function ChannelList({
           </button>
         </div>
       )}
+      {awaiting}
       {results ?? (
         <>
           {sections().map(({ key, label, addLabel, intent, inGroup }) => {

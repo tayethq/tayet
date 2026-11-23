@@ -69,6 +69,7 @@ function fakeAcl(): Acl {
     subscribeChannel: () => noopUnsub,
     sendMessage: async () => mid('$x'),
     answerApproval: async () => {},
+    watchAwaitingApprovals: () => () => {},
     submitForm: async () => ({ ok: true }),
     closeForm: () => {},
     listPanels: async () => [],

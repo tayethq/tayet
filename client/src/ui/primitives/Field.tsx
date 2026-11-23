@@ -1,6 +1,7 @@
-import { useId } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import type { InputHTMLAttributes, ReactNode, Ref } from 'react'
 import { t } from '../i18n'
+import { keyboardOpen, revealField } from '../visual-viewport'
 
 // Field (leaf, ADR-036). The labeled form row: a caption stacked above a control. Two shapes:
 //   - labeled input  — pass `htmlFor` (+ optional `inputProps`/`inputRef`). Field renders the
@@ -16,6 +17,8 @@ import { t } from '../i18n'
 //   - `hint`     — a muted line under the control (and under the error, which comes first); it wraps.
 //   Error and hint are tied to the control by aria-describedby. Without them nothing changes for the
 //   current consumers (an `inputProps['aria-invalid']` of theirs is kept as it is).
+// Narrow window, keyboard open (PLANO-MOBILE §0.20 W6): an error that shows or changes while the focus is in
+// the row brings the whole box into sight (visual-viewport.ts).
 // Consumes only semantic tokens.
 
 export interface FieldA11y {
@@ -61,8 +64,12 @@ export function Field({
     </>
   )
   const ownDescribed = [inputProps?.['aria-describedby'], describedBy].filter(Boolean).join(' ') || undefined
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (error && keyboardOpen() && box.current?.contains(document.activeElement)) revealField()
+  }, [error])
   return (
-    <div className="ui-field" data-error={error ? '' : undefined}>
+    <div className="ui-field" data-error={error ? '' : undefined} ref={box}>
       {htmlFor ? (
         <label className="ui-field__label" id={labelId} htmlFor={htmlFor}>
           {caption}
