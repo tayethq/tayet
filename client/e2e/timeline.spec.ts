@@ -5,7 +5,7 @@ import { ConsoleLedger, FIRST_LOGIN_404, recognizedSet404 } from './support/cons
 import { signIn } from './support/login'
 import { setHidden, VISIBILITY_SHIM } from './support/visibility'
 import { png } from './support/media'
-import { createChannel, deleteSharedRooms } from './support/rooms'
+import { closePicker, createChannel, deleteSharedRooms } from './support/rooms'
 import { channelRow, conversations, dmWith, messages, row, send, threadPanel } from './support/workspace'
 import { APP, COMPOSER, LIST, MANAGE, NEW_CONVERSATION, THREAD, TIMELINE } from './support/labels'
 
@@ -229,7 +229,9 @@ test('a DM with an image opens at its latest message; a thread reply shows on th
       await channelRow(pageB, channelName).click()
       await pageB.getByRole('button', { name: MANAGE.open(`#${channelName}`) }).click()
       await pageB.getByRole('button', { name: MANAGE.addMember }).click()
-      await pageB.getByRole('dialog', { name: MANAGE.addMember }).getByRole('button', { name: MIA_NAME, exact: true }).click()
+      const mia = pageB.getByRole('dialog', { name: MANAGE.addMember }).getByRole('button', { name: MIA_NAME, exact: true })
+      await mia.click()
+      await closePicker(pageB, mia)
       await expect(pageB.getByRole('region', { name: MANAGE.members })).toContainText(MIA_NAME)
       await pageB.getByRole('button', { name: MANAGE.close }).click()
 

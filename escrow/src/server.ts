@@ -1,29 +1,23 @@
-// Superfície HTTP do escrow (ADR-017 / PLANO §3.2): node:http, três endpoints de segredo
-// 4S + o par de custódia de sessão /v1/sessions (ADR-057 dec. 5) + a revogação dos outros
-// acessos /v1/account/revoke-others (ADR-082 dec. 3) + o provisionamento /v1/people (ADR-083) +
-// os agentes /v1/agents (ADR-086; PATCH nome/cor na fatia 3), limites e erros.
-// Invariantes de contrato, todos provados por teste:
-//   - identidade SÓ do token (não existe userId do chamador em path/query/corpo; corpo com campo
-//     desconhecido é malformado → 400); o userId de DELETE /v1/people e de /v1/agents/:userId é o
-//     ALVO, não a identidade;
-//   - 401 indistinguível entre causas, decidido ANTES de tocar o storage;
-//   - 503 quando o IdP não responde (o escrow não decide sem o MAS);
-//   - nenhum material de segredo (nem token, nem sujeito) em resposta de erro ou log. A única
-//     resposta com token é o 201 de /v1/agents (e do reissue): devolvido uma vez, nunca gravado.
+// HTTP surface of the escrow: node:http, three 4S secret endpoints, the session custody pair
+// /v1/sessions and the revocation of the other sign-ins /v1/account/revoke-others, with limits and
+// errors. People and agents belong to the org service.
+// Contract invariants, each proven by a test:
+//   - identity ONLY from the token (no caller userId in path, query or body; a body with an unknown
+//     field is malformed → 400);
+//   - 401 indistinguishable between causes, decided BEFORE touching the storage;
+//   - 503 when the IdP does not answer (the escrow does not decide without MAS);
+//   - no secret material (no token, no subject) in an error response or a log.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { IdpUnavailableError, rfc7662Introspector, type Introspector } from './auth.ts'
-import { errorReason, jsonlAudit, type AuditLog } from './audit.ts'
+import { jsonlAudit, type AuditLog } from './audit.ts'
 import { etagOf, importOrgKey, open, seal } from './crypto.ts'
 import { fileSessionStore, type SessionStore } from './custody-store.ts'
 import { masAdmin, OriginUnknownError, type AccessAdmin } from './mas-admin.ts'
-import { createAgents, DEFAULT_AGENT_COLOR, isAgentColor, type AgentColor, type AgentPatch, type Agents } from './agents.ts'
-import { createPeople, randomLocalpart, systemWriter, type InviteRequest, type People } from './people.ts'
 import { fileStore, type SecretStore } from './store.ts'
-import { homeserver } from './synapse.ts'
 
 export const MAX_BODY_BYTES = 1024 // §3.2: corpo do PUT até 1 KiB → 413 acima disso
 // Limite próprio do depósito de sessão (ADR-057 dec. 5): a entry do export Megolm é
@@ -42,10 +36,6 @@ export interface EscrowDeps {
   // ADR-082 dec. 3. Ausente (deployment sem o client admin) → revoke-others responde 503: o reset
   // termina não-concluído, sem burn; os demais endpoints não dependem dele.
   accessAdmin?: AccessAdmin
-  // ADR-083. Ausente (deployment sem o client admin) → as rotas /v1/people não existem.
-  people?: People
-  // ADR-086. Mesmo regime: ausente → as rotas /v1/agents não existem.
-  agents?: Agents
 }
 
 function send(
@@ -135,60 +125,6 @@ function parseSessionDeposit(raw: Buffer): SessionDeposit | null {
   return { roomId: room_id, sessionId: session_id, addressed: addressed as string[], session: s }
 }
 
-// Shape exato { email, name, kind }, allowlist estrita no padrão do parseSecret. O email vai em
-// minúsculas: é o `subject` do vínculo (ADR-083 dec. 1) e o match do MAS é exato.
-function parseInvite(raw: Buffer): InviteRequest | null {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw.toString('utf8'))
-  } catch {
-    return null
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
-  if (Object.keys(parsed).sort().join(',') !== 'email,kind,name') return null
-  const { email, name, kind } = parsed as { email: unknown; name: unknown; kind: unknown }
-  if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+$/.test(email)) return null
-  if (typeof name !== 'string' || name.trim().length === 0) return null
-  // `agent` nunca entra por aqui (ADR-086 dec. 4): nasce só por POST /v1/agents.
-  if (kind !== 'member' && kind !== 'guest') return null
-  return { email: email.toLowerCase(), name: name.trim(), kind }
-}
-
-// Shape { name, color? }. O nome é o display name do agente e o `name` do evento em #all; a cor é
-// uma das 10 (ausente → `areia`; desconhecida → 400).
-function parseAgent(raw: Buffer): { name: string; color: AgentColor } | null {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw.toString('utf8'))
-  } catch {
-    return null
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
-  const keys = Object.keys(parsed)
-  if (!keys.includes('name') || keys.some((k) => k !== 'name' && k !== 'color')) return null
-  const { name, color } = parsed as { name: unknown; color?: unknown }
-  if (typeof name !== 'string' || name.trim().length === 0) return null
-  if (color !== undefined && !isAgentColor(color)) return null
-  return { name: name.trim(), color: color ?? DEFAULT_AGENT_COLOR }
-}
-
-// PATCH: { name?, color? }, pelo menos um; nada além (kind e operator não são editáveis).
-function parseAgentPatch(raw: Buffer): AgentPatch | null {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw.toString('utf8'))
-  } catch {
-    return null
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
-  const keys = Object.keys(parsed)
-  if (keys.length === 0 || keys.some((k) => k !== 'name' && k !== 'color')) return null
-  const { name, color } = parsed as { name?: unknown; color?: unknown }
-  if (name !== undefined && (typeof name !== 'string' || name.trim().length === 0)) return null
-  if (color !== undefined && !isAgentColor(color)) return null
-  return { ...(name !== undefined ? { name: name.trim() } : {}), ...(color !== undefined ? { color } : {}) }
-}
-
 // Chave de armazenamento e subject (AAD) andam juntos por construção: o AAD amarra o
 // blob à chave — swap de arquivo entre sessões falha no open (teste obrigatório).
 const sessionKeyOf = (roomId: string, sessionId: string): string => `${roomId}\n${sessionId}`
@@ -201,7 +137,7 @@ function bearerToken(req: IncomingMessage): string | null {
 }
 
 export function createEscrowServer(deps: EscrowDeps): Server {
-  const { store, introspector, orgKey, audit, sessionStore, custodyUsername, accessAdmin, people, agents } = deps
+  const { store, introspector, orgKey, audit, sessionStore, custodyUsername, accessAdmin } = deps
 
   // ── Custódia de sessão (ADR-057 dec. 5): PUT/GET /v1/sessions ──────────────────────
   // Rotas ADITIVAS: os handlers de /v1/secret abaixo não mudam. Identidade SÓ do token
@@ -369,149 +305,6 @@ export function createEscrowServer(deps: EscrowDeps): Server {
     }
   }
 
-  // ── Pessoas (ADR-083): GET /v1/people/me, POST /v1/people, DELETE /v1/people/:userId ───
-  // O chamador vem SÓ do token; ser admin da org quem decide é o people.ts. :userId é o mxid do alvo,
-  // o id que o client tem (state_key de io.tayet.member). 502 cobre MAS ou Synapse fora.
-  async function peopleActor(
-    verb: 'people.me' | 'people.invite' | 'people.remove' | 'agents.create' | 'agents.remove' | 'agents.reissue' | 'agents.update',
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<{ sub: string; username: string } | null> {
-    const token = bearerToken(req)
-    let identity: { sub: string; username: string } | null = null
-    if (token !== null) {
-      try {
-        identity = await introspector.identityOf(token)
-      } catch (err) {
-        if (err instanceof IdpUnavailableError) {
-          fail(res, 503, 'idp_unavailable')
-          return null
-        }
-        throw err
-      }
-    }
-    if (identity === null) {
-      await audit.record({ verb, outcome: 'unauthorized' })
-      fail(res, 401, 'unauthorized')
-    }
-    return identity
-  }
-
-  async function handlePeopleMe(service: People, req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const verb = 'people.me'
-    const actor = await peopleActor(verb, req, res)
-    if (actor === null) return
-    try {
-      const result = await service.me(actor)
-      send(res, result.status, result.body)
-    } catch (err) {
-      await audit.record({ sub: actor.sub, actor: actor.username, verb, outcome: 'error', reason: errorReason(err) })
-      fail(res, 502, 'admin_unavailable')
-    }
-  }
-
-  async function handlePeople(
-    service: People,
-    target: string | null,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const verb = target === null ? 'people.invite' : 'people.remove'
-    const actor = await peopleActor(verb, req, res)
-    if (actor === null) return
-    const badRequest = async (): Promise<void> => {
-      await audit.record({ sub: actor.sub, actor: actor.username, verb, outcome: 'error' })
-      fail(res, 400, 'bad_request')
-    }
-    try {
-      if (target !== null) {
-        const raw = await readBody(req)
-        if (raw === 'too_large' || raw.length > 0) {
-          await badRequest()
-          return
-        }
-        const result = await service.removePerson(target, actor)
-        send(res, result.status, result.body)
-        return
-      }
-      const raw = await readBody(req)
-      if (raw === 'too_large' || req.headers['content-type']?.split(';')[0]?.trim() !== 'application/json') {
-        await badRequest()
-        return
-      }
-      const invite = parseInvite(raw)
-      if (invite === null) {
-        await badRequest()
-        return
-      }
-      const result = await service.invitePerson(invite, actor)
-      send(res, result.status, result.body)
-    } catch (err) {
-      // Falha antes de qualquer escrita (autorização, consulta): nada a reexecutar além da chamada.
-      await audit.record({ sub: actor.sub, actor: actor.username, verb, outcome: 'error', reason: errorReason(err) })
-      fail(res, 502, 'admin_unavailable')
-    }
-  }
-
-  // ── Agentes (ADR-086): POST /v1/agents, DELETE /v1/agents/:userId, POST /v1/agents/:userId/reissue ──
-  // Mesmo regime de /v1/people: chamador SÓ do token, :userId é o mxid do alvo, 502 com MAS/Synapse fora.
-  async function handleAgents(
-    service: Agents,
-    route:
-      | { verb: 'agents.create' }
-      | { verb: 'agents.remove' | 'agents.reissue' | 'agents.update'; target: string },
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const { verb } = route
-    const actor = await peopleActor(verb, req, res)
-    if (actor === null) return
-    const badRequest = async (): Promise<void> => {
-      await audit.record({ sub: actor.sub, actor: actor.username, verb, outcome: 'error' })
-      fail(res, 400, 'bad_request')
-    }
-    try {
-      const raw = await readBody(req)
-      if (raw === 'too_large') {
-        await badRequest()
-        return
-      }
-      const isJson = req.headers['content-type']?.split(';')[0]?.trim() === 'application/json'
-      if (route.verb === 'agents.update') {
-        const patch = isJson ? parseAgentPatch(raw) : null
-        if (patch === null) {
-          await badRequest()
-          return
-        }
-        const result = await service.updateAgent(route.target, patch, actor)
-        send(res, result.status, result.body)
-        return
-      }
-      if (route.verb !== 'agents.create') {
-        if (raw.length > 0) {
-          await badRequest()
-          return
-        }
-        const result =
-          route.verb === 'agents.remove'
-            ? await service.removeAgent(route.target, actor)
-            : await service.reissueAgent(route.target, actor)
-        send(res, result.status, result.body, result.headers)
-        return
-      }
-      const agent = isJson ? parseAgent(raw) : null
-      if (agent === null) {
-        await badRequest()
-        return
-      }
-      const result = await service.createAgent(agent.name, agent.color, actor)
-      send(res, result.status, result.body)
-    } catch (err) {
-      await audit.record({ sub: actor.sub, actor: actor.username, verb, outcome: 'error', reason: errorReason(err) })
-      fail(res, 502, 'admin_unavailable')
-    }
-  }
-
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://escrow.invalid')
 
@@ -529,43 +322,6 @@ export function createEscrowServer(deps: EscrowDeps): Server {
     if (req.method === 'POST' && url.pathname === '/v1/account/revoke-others') {
       await handleRevokeOthers(req, res)
       return
-    }
-
-    if (people !== undefined) {
-      if (req.method === 'GET' && url.pathname === '/v1/people/me') {
-        await handlePeopleMe(people, req, res)
-        return
-      }
-      if (req.method === 'POST' && url.pathname === '/v1/people') {
-        await handlePeople(people, null, req, res)
-        return
-      }
-      const removal = /^\/v1\/people\/([^/]+)$/.exec(url.pathname)
-      if (req.method === 'DELETE' && removal) {
-        await handlePeople(people, decodeURIComponent(removal[1]!), req, res)
-        return
-      }
-    }
-
-    if (agents !== undefined) {
-      if (req.method === 'POST' && url.pathname === '/v1/agents') {
-        await handleAgents(agents, { verb: 'agents.create' }, req, res)
-        return
-      }
-      const one = /^\/v1\/agents\/([^/]+)$/.exec(url.pathname)
-      if (req.method === 'DELETE' && one) {
-        await handleAgents(agents, { verb: 'agents.remove', target: decodeURIComponent(one[1]!) }, req, res)
-        return
-      }
-      if (req.method === 'PATCH' && one) {
-        await handleAgents(agents, { verb: 'agents.update', target: decodeURIComponent(one[1]!) }, req, res)
-        return
-      }
-      const reissue = /^\/v1\/agents\/([^/]+)\/reissue$/.exec(url.pathname)
-      if (req.method === 'POST' && reissue) {
-        await handleAgents(agents, { verb: 'agents.reissue', target: decodeURIComponent(reissue[1]!) }, req, res)
-        return
-      }
     }
 
     const verb =
@@ -710,16 +466,12 @@ export function createEscrowServer(deps: EscrowDeps): Server {
 }
 
 // ── Entry point (PF-3): `node --experimental-strip-types src/server.ts` ──────────────
-// Env (§3.1): ESCROW_PORT (0 = porta efêmera), ESCROW_BIND (default 127.0.0.1),
-// ESCROW_STORE_DIR, ESCROW_ORG_KEY (32 bytes base64, env-only — JAMAIS commitada),
-// ESCROW_INTROSPECTION_URL, ESCROW_CLIENT_ID, ESCROW_CLIENT_SECRET,
-// ESCROW_CUSTODY_USERNAME (opcional, default `cofre` — F3/ADR-057 dec. 5),
-// ESCROW_MAS_ADMIN_URL + ESCROW_MAS_ADMIN_CLIENT_ID + ESCROW_MAS_ADMIN_CLIENT_SECRET (opcionais,
-// tudo-ou-nada — ADR-082 dec. 3: listener interno do MAS e client admin), com eles ESCROW_HS_URL,
-// ESCROW_SERVER_NAME e ESCROW_PEOPLE_PROVIDER_ID (ADR-083: Synapse pela rede interna, server_name e
-// id do provider do vínculo). Pronto = UMA
-// linha JSON {"listening": porta} no stdout (readback de porta do harness);
-// localhost-only por default, sem TLS (forma operacional deferida — ADR-017).
+// Env: ESCROW_PORT (0 = ephemeral port), ESCROW_BIND (default 127.0.0.1), ESCROW_STORE_DIR,
+// ESCROW_ORG_KEY (32 bytes base64, env only, NEVER committed), ESCROW_INTROSPECTION_URL,
+// ESCROW_CLIENT_ID, ESCROW_CLIENT_SECRET, ESCROW_CUSTODY_USERNAME (optional, default `cofre`),
+// ESCROW_MAS_ADMIN_URL + ESCROW_MAS_ADMIN_CLIENT_ID + ESCROW_MAS_ADMIN_CLIENT_SECRET (optional, all or
+// none: MAS internal listener and admin client). Ready = ONE JSON line {"listening": port} on stdout
+// (the harness reads the port back); localhost only by default, no TLS.
 
 function envOrThrow(name: string): string {
   const value = process.env[name]
@@ -746,14 +498,6 @@ if (isMain) {
     : undefined
   const audit = jsonlAudit(join(storeDir, 'audit.jsonl'))
   const custodyUsername = process.env.ESCROW_CUSTODY_USERNAME ?? 'cofre'
-  // Pessoas e agentes dividem o Synapse e a escrita do `system` (o alias resolve uma vez por boot).
-  const org = admin
-    ? (() => {
-        const synapse = homeserver({ url: envOrThrow('ESCROW_HS_URL') })
-        const serverName = envOrThrow('ESCROW_SERVER_NAME')
-        return { synapse, serverName, asSystem: systemWriter({ masAdmin: admin, synapse, serverName }) }
-      })()
-    : undefined
   const server = createEscrowServer({
     store: fileStore(storeDir),
     introspector: rfc7662Introspector({
@@ -767,25 +511,7 @@ if (isMain) {
     // audit.jsonl no mesmo nível do store dir.
     sessionStore: fileSessionStore(join(storeDir, 'sessions')),
     custodyUsername,
-    ...(admin && org
-      ? {
-          accessAdmin: admin,
-          people: createPeople({
-            masAdmin: admin,
-            ...org,
-            audit,
-            randomId: randomLocalpart,
-            providerId: envOrThrow('ESCROW_PEOPLE_PROVIDER_ID'),
-            custodyUsername,
-          }),
-          agents: createAgents({ masAdmin: admin, ...org, audit, randomId: randomLocalpart }),
-        }
-      : {}),
-  })
-  // Best-effort e fora do caminho do listen: MAS ainda subindo não segura o boot, e a próxima
-  // reinicialização recolhe o que sobrou.
-  admin?.reapExpiredSystemSessions().catch(() => {
-    console.error('escrow: expired system sessions not reaped')
+    ...(admin ? { accessAdmin: admin } : {}),
   })
   // ESCROW_BIND: default 127.0.0.1 preserva a postura localhost-only do uso host-process
   // (harness/units — ADR-017). O dev-stack conteinerizado seta 0.0.0.0: bind em loopback do

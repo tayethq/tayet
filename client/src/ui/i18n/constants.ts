@@ -13,6 +13,8 @@ export const GLYPH = {
   close: '×',
   clear: '✕',
   back: '‹',
+  // "← Voltar às conversas" of the Admin shell (organization-admin.md §2.1 item 1).
+  arrowBack: '←',
   chevron: '›',
   plus: '+',
   check: '✓',

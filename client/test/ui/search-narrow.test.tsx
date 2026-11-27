@@ -49,6 +49,8 @@ function fakeAcl(opts: Opts = {}) {
       { user: rita, role: 'member', state: 'active' as const, self: false },
     ],
     getPresence: () => 'offline' as const,
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     getDevices: async () => [],
     currentUser: async () => me,
     getMyProfile: async () => ({ fullName: me.displayName }),

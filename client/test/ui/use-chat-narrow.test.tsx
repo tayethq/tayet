@@ -39,6 +39,8 @@ function fakeAcl(): Acl {
     listPanels: async () => [],
     listCommands: async () => [],
     getPresence: () => 'offline' as const,
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     subscribe: () => () => {},
     subscribeChannel: () => () => {},
     markRead: async () => {},

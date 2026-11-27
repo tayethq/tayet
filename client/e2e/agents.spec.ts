@@ -1,11 +1,11 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
 import { RAE, SAM } from './fixtures/users'
-import { accountSettings } from './support/account'
+import { adminNav, openAdmin, personRow, rowAction } from './support/admin'
 import { expectNoProtocolLeak } from './support/assertions'
 import { AGENT_PROFILE_403, ConsoleLedger, FIRST_LOGIN_404, recognizedSet404 } from './support/console'
-import { ACCOUNT, AGENTS, LIST, MANAGE, NEW_CONVERSATION, PEOPLE, PROFILE } from './support/labels'
+import { ACCOUNT, ADMIN, AGENTS, LIST, MANAGE, NEW_CONVERSATION, PEOPLE, PROFILE } from './support/labels'
 import { signIn } from './support/login'
-import { addMember, createChannel, deleteSharedRooms, openManage } from './support/rooms'
+import { addMember, closePicker, createChannel, deleteSharedRooms, openManage } from './support/rooms'
 import { agentCredentialWorks } from './support/server-facts'
 import { channelRow, conversations, orgChannel } from './support/workspace'
 
@@ -22,9 +22,7 @@ const suffix = Math.random().toString(36).slice(2, 8)
 const NAME = `Relatórios ${suffix}`
 const RENAMED = `Resumos ${suffix}`
 
-const peoplePanel = (page: Page): Locator => page.getByRole('dialog', { name: PEOPLE.title })
-const agentRow = (page: Page, name: string): Locator =>
-  peoplePanel(page).getByRole('listitem').filter({ hasText: name })
+const agentRow = (page: Page, name: string): Locator => personRow(page, name)
 
 // The credential is shown once, inside the dialog: read it from there, as the admin would copy it. It
 // sits inside the whole command (§11.5), whose --server is the page's own origin, and appears exactly
@@ -83,17 +81,13 @@ test('agents: create with a colour, credential once, edit, reissue, remove; the 
       await expect(channelRow(pageB, channel)).toBeVisible({ timeout: 60_000 })
     })
 
-    const openPeople = async (): Promise<void> => {
-      const account = await accountSettings(pageA)
-      await expect(account.getByText(PEOPLE.section)).toBeVisible({ timeout: 30_000 })
-      await account.getByRole('button', { name: new RegExp(`^${PEOPLE.title}`) }).click()
-      await expect(peoplePanel(pageA)).toBeVisible()
-    }
+    // Slice 1c: "Pessoas" lives in the Admin, opened from "Sua conta".
+    const openPeople = (): Promise<void> => openAdmin(pageA)
 
     let first = ''
     await test.step('2. rae creates the agent choosing Malva; the credential shows once', async () => {
       await openPeople()
-      await peoplePanel(pageA).getByRole('button', { name: AGENTS.add }).click()
+      await pageA.getByRole('button', { name: AGENTS.add }).click()
       const dialog = pageA.getByRole('dialog', { name: AGENTS.createTitle })
       await expect(dialog.locator('.agent-dialog__body')).toHaveClass(/(^|\s)compose-dialog__fields(\s|$)/)
       await dialog.getByLabel(AGENTS.fieldName).fill(NAME)
@@ -125,7 +119,7 @@ test('agents: create with a colour, credential once, edit, reissue, remove; the 
     })
 
     await test.step('4. Editar changes the name and the colour', async () => {
-      await agentRow(pageA, NAME).getByRole('button', { name: AGENTS.edit(NAME) }).click()
+      await rowAction(pageA, NAME, AGENTS.editItem)
       const dialog = pageA.getByRole('dialog', { name: AGENTS.editTitle })
       await dialog.getByLabel(AGENTS.fieldName).fill(RENAMED)
       await dialog.getByRole('radio', { name: AGENTS.colors.ardosia }).click()
@@ -139,7 +133,7 @@ test('agents: create with a colour, credential once, edit, reissue, remove; the 
 
     let second = ''
     await test.step('5. Reemitir shows a new credential; the previous one stops working', async () => {
-      await agentRow(pageA, RENAMED).getByRole('button', { name: AGENTS.edit(RENAMED) }).click()
+      await rowAction(pageA, RENAMED, AGENTS.editItem)
       await pageA.getByRole('dialog', { name: AGENTS.editTitle }).getByRole('button', { name: AGENTS.reissueCredential }).click()
       await pageA.getByRole('alertdialog').getByRole('button', { name: AGENTS.reissue, exact: true }).click()
       const reissued = pageA.getByRole('dialog', { name: AGENTS.reissuedTitle })
@@ -153,11 +147,9 @@ test('agents: create with a colour, credential once, edit, reissue, remove; the 
     })
 
     await test.step('6. rae adds the agent through the UI; only rae, its operator, is offered it', async () => {
-      // Leave the People panel and "Sua conta" (Escape steps back through the drill-in until none is open).
-      await expect(async () => {
-        if ((await pageA.getByRole('dialog').count()) > 0) await pageA.keyboard.press('Escape')
-        await expect(pageA.getByRole('dialog')).toHaveCount(0, { timeout: 1_000 })
-      }).toPass({ timeout: 15_000 })
+      // Leave the Admin: back to the conversations.
+      await pageA.getByRole('button', { name: ADMIN.back }).click()
+      await expect(adminNav(pageA)).toHaveCount(0)
       // ADR-090: rae operates the agent, so it is among her candidates, marked; added the way sam was
       // in step 1. The agent stays `invite` (no process here), which the roster lists.
       await openManage(pageA, channel)
@@ -167,6 +159,7 @@ test('agents: create with a colour, credential once, edit, reissue, remove; the 
       await expect(candidate).toBeVisible({ timeout: 30_000 })
       await expect(candidate.locator('[data-agent-avatar]')).toHaveCount(1)
       await candidate.click()
+      await closePicker(pageA, candidate)
       await expect(pageA.getByRole('region', { name: MANAGE.members })).toContainText(RENAMED, { timeout: 30_000 })
       await pageA.getByRole('button', { name: MANAGE.close }).click()
 
@@ -220,7 +213,7 @@ test('agents: create with a colour, credential once, edit, reissue, remove; the 
       const row = agentRow(pageA, RENAMED)
       await expect(row).toContainText(AGENTS.operatedBy('rae'), { timeout: 30_000 })
       await expect(row).not.toContainText(PEOPLE.pending)
-      await agentRow(pageA, RENAMED).getByRole('button', { name: AGENTS.remove(RENAMED) }).click()
+      await rowAction(pageA, RENAMED, AGENTS.removeItem)
       await pageA.getByRole('alertdialog').getByRole('button', { name: AGENTS.removeConfirm, exact: true }).click()
       await expect(agentRow(pageA, RENAMED)).toHaveCount(0, { timeout: 60_000 })
       await expectRevoked(second)

@@ -12,7 +12,7 @@
   --color-border: #D2CCBE; /** Separação padrão. */
   --color-border-strong: #B0A998; /** Separação enfática / inputs. */
   --color-text: #221F18; /** Texto primário. */
-  --color-muted: #88806F; /** Secundário; reusado por 'enviando' e 'presence-away'. */
+  --color-muted: #6B6456; /** Secundário; reusado por 'enviando' e 'presence-away'. */
   --color-accent: #3B4A82; /** Acento semântico (não-lido/menção/selecionado/ação). */
   --color-accent-pressed: #2D3960; /** Estado pressionado da ação. */
   --color-accent-wash: #EDEFF8; /** Fundo lavado do acento (linha selecionada, bg de badge). */
@@ -20,7 +20,9 @@
   --color-highlight-wash: #DCE0F2; /** Realce de "está aqui" — linha-alvo de um salto da busca e o termo em <mark> (workspace.md §6.1). Mesma rampa do acento, um degrau acima do wash: difere de "selecionado" em intensidade, não em matiz. */
   --color-danger: #9C4A3A; /** Funcional (falhou) — autorado, sem rampa. Calmo, sem alarme. */
   --color-danger-wash: #F3E3DF; /** Fundo lavado de falha — autorado. */
-  --color-presence-online: #4F7E5C; /** Presença online (sálvia) — autorado, não é acento. */
+  --color-warning: #765A1C; /** Atenção (não é falha) — autorado, sem rampa (organization-admin.md §5 item 1). Primeiro uso: a marca "Sem acesso válido" de Pessoas da Admin. */
+  --color-warning-wash: #F5EEDC; /** Fundo lavado de atenção — autorado. */
+  --color-presence-online: #4D7B5A; /** Presença online (sálvia) — autorado, não é acento. */
   --color-agent-mark: #3E7CB1; /** Indicador de agente (azul exclusivo) — ≠ acento, ≠ presença. */
   --color-agent-areia-bg: #F2EFE7;
   --color-agent-areia-border: #D2CCBE;
@@ -105,14 +107,16 @@
   --color-border: #35463F;
   --color-border-strong: #495C56;
   --color-text: #E9EEEB;
-  --color-muted: #647871;
+  --color-muted: #8A9C95;
   --color-accent: #8A93D6; /** Acento clareado pro contraste no chão petróleo. */
-  --color-accent-pressed: #6571B6;
+  --color-accent-pressed: #BFC6E8;
   --color-accent-wash: #232A40; /** Autorado — não há stop de índigo que sirva de wash sobre petróleo. */
-  --color-accent-fg: #2D3960; /** texto/ícone sobre preenchimento de acento */
+  --color-accent-fg: #14201E; /** texto/ícone sobre preenchimento de acento */
   --color-highlight-wash: #2D3960; /** Realce de "está aqui" (workspace.md §6.1) — autorado no degrau índigo 700, um passo mais forte que o accent-wash no chão petróleo. */
-  --color-danger: #CE7E6C; /** Autorado — falha calma no chão noturno. */
+  --color-danger: #D08473; /** Autorado — falha calma no chão noturno. */
   --color-danger-wash: #2C211D; /** Autorado. */
+  --color-warning: #DCC79A; /** Autorado — atenção no chão noturno (organization-admin.md §5 item 1). */
+  --color-warning-wash: #2F2919; /** Autorado. */
   --color-presence-online: #7FB089; /** Autorado — sálvia clareada. */
   --color-agent-mark: #6FA8D6; /** Indicador de agente (azul exclusivo) — ≠ acento, ≠ presença. */
   --color-agent-areia-bg: #2A2721;

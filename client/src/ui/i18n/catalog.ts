@@ -48,7 +48,12 @@ function interpolate(text: string, params: Params | undefined): string {
 }
 
 export function t(key: Key, params?: Params): string {
-  const locale = getLocale()
+  return tIn(getLocale(), key, params)
+}
+
+// The same lookup in a given language, for code that runs outside the page's resolved locale (the service worker,
+// which reads the language the page wrote for it).
+export function tIn(locale: Locale, key: Key, params?: Params): string {
   let node: Leaf | Messages | undefined = CATALOGS[locale]
   for (const part of key.split('.')) node = (node as Messages | undefined)?.[part]
   if (typeof node === 'string') return interpolate(node, params)

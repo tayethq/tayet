@@ -5,11 +5,11 @@ import { ConsoleLedger, FIRST_LOGIN_404, recognizedSet404 } from './support/cons
 import { signIn } from './support/login'
 import { NotificationStub } from './support/notifications'
 import { setHidden, VISIBILITY_SHIM } from './support/visibility'
-import { conversations, dmWith, messages, orgChannel, send, title } from './support/workspace'
+import { conversations, dmWith, highlighted, messages, orgChannel, row, send, threadPanel, title } from './support/workspace'
 import { expectNoProtocolLeak } from './support/assertions'
 import { deleteSharedRooms } from './support/rooms'
 import { countedInDirectMessage } from './support/server-facts'
-import { COMPOSER, LIST, NEW_CONVERSATION } from './support/labels'
+import { COMPOSER, LIST, NEW_CONVERSATION, THREAD, TIMELINE } from './support/labels'
 
 // ADR-073: notifications from the live tab. oto (A) writes; pia (B) is the one notified — the spec's own
 // Dex pair (fixtures/users.ts, one pair per spec). The system notification and the browser's prompt are not
@@ -21,7 +21,9 @@ import { COMPOSER, LIST, NEW_CONVERSATION } from './support/labels'
 // reload; cleared and granted, it goes away too. Then the app's decision: a DM to a hidden tab notifies once
 // with the name and the text; the click on that notification focuses the window, selects the DM and closes
 // the notification (dec. 4); the open DM in a visible and focused tab does not notify, a channel message
-// without mention does not, a mention does ("oto em #all") — and the tab title counts what notifies.
+// without mention does not, a mention does ("oto em #all") — and the tab title counts what notifies. Last, a
+// thread reply in the DM notifies, and the click on its notification opens the thread on the reply, marked
+// (ADR-073 addendum, 23/Nov/2026).
 // Headless Chromium reports document.hasFocus() === true on every page, so visibility (VISIBILITY_SHIM) is
 // the knob of the suppression (dec. 4).
 
@@ -58,7 +60,7 @@ test.beforeAll(async () => {
   await deleteSharedRooms('oto', 'pia')
 })
 
-test('web notifications: permission by gesture, denied without error, DM to a hidden tab notifies, its click brings the DM, title counts', async ({
+test('web notifications: permission by gesture, denied without error, DM to a hidden tab notifies, its click brings the DM, title counts, a thread reply\'s click opens the thread', async ({
   browser,
 }) => {
   test.setTimeout(240_000)
@@ -197,6 +199,36 @@ test('web notifications: permission by gesture, denied without error, DM to a hi
       expect(shown[1]!.title).toBe(`${OTO_NAME} em #all`)
       expect(shown[1]!.body).toContain(n4)
       expectCleanNotification(shown[1]!)
+      await expectNoProtocolLeak(pageB)
+    })
+
+    await test.step('9. pia hidden on the org channel: oto replies in a thread of the DM; the click on that notification opens the thread on the reply', async () => {
+      const t1 = `t-1 ${ts}`
+      const t2 = `t-2 ${ts}`
+      await dmWith(pageA, PIA_NAME).click()
+      await send(pageA, t1)
+      await expect.poll(() => shown.length).toBe(3)
+      const root = row(pageA, t1)
+      await root.hover()
+      await root.getByRole('button', { name: TIMELINE.replyInThread }).click()
+      const panelA = threadPanel(pageA)
+      await panelA.getByRole('textbox', { name: COMPOSER.editor, exact: true }).fill(t2)
+      await panelA.getByRole('button', { name: COMPOSER.send }).click()
+      await expect(panelA.getByRole('log', { name: THREAD.replies })).toContainText(t2)
+      await expect.poll(() => shown.length).toBe(4)
+      const reply = shown[3]!
+      expect({ title: reply.title, body: reply.body }).toEqual({ title: OTO_NAME, body: t2 })
+      expectCleanNotification(reply)
+      const focusesBefore = stub.focuses
+      await stub.click(pageB, reply)
+      await expect(dmWith(pageB, OTO_NAME)).toHaveAttribute('aria-current', 'true')
+      const panelB = threadPanel(pageB)
+      await expect(panelB).toBeVisible({ timeout: 30_000 })
+      await expect(highlighted(pageB)).toContainText(t2, { timeout: 30_000 })
+      await expect(panelB.getByRole('log', { name: THREAD.replies })).toContainText(t2)
+      expect(stub.focuses).toBe(focusesBefore + 1)
+      await expect.poll(() => reply.closed).toBe(true)
+      await setHidden(pageB, false)
       await expectNoProtocolLeak(pageB)
     })
 

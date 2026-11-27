@@ -25,11 +25,13 @@ export function roleOf(powerLevel: number, kind: UserKind): Role {
   }
 }
 
-// Role → power level (PLANO-MEMBERSHIP-CANAIS / ADR-026 §0.2). Inversa explícita do
-// limiar acima: admin → 50, member → 0. NÃO modela o tier owner (PL 100) — decisão do
-// owner: ignorar no demo. Consequência: os guardrails de PL do Matrix viram REJEIÇÃO
-// LEGÍTIMA em setRole (um admin/50 não promove acima de 50 nem rebaixa o criador/100).
-// Isso é comportamento CORRETO — a falha rejeita honesto, não se conserta.
+// Role → power level (PLANO-MEMBERSHIP-CANAIS / ADR-026 §0.2). The explicit inverse of the
+// threshold above: admin → 50, member → 0. It does NOT model the owner tier (PL 100) — the
+// owner's decision: ignore it in the demo. Measured in PR #508 (ADR-026 addendum): the server
+// refuses EVERY role change made at PL 50, not only promoting above 50 or demoting the
+// creator/100 — changing the power levels needs PL 100, so only the channel's creator changes
+// roles. The screen no longer offers the control to whoever the server would refuse (ADR-115);
+// a refusal still rejects honestly and is never worked around.
 export function roleToPowerLevel(role: 'admin' | 'member'): number {
   return role === 'admin' ? 50 : 0
 }

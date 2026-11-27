@@ -31,3 +31,18 @@ export function useNarrowWindow(): boolean {
   }, [])
   return narrow
 }
+
+// Coarse pointer, following changes (a tablet that docks a mouse). Where the narrow window still gives the
+// fine pointer what the wide one has (issue #421, P3 a: the export opens as a dialog).
+export function useCoarsePointer(): boolean {
+  const [coarse, setCoarse] = useState(isCoarsePointer)
+  useEffect(() => {
+    if (!hasMatchMedia()) return
+    const mql = window.matchMedia('(pointer: coarse)')
+    const onChange = (): void => setCoarse(mql.matches)
+    onChange()
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
+  return coarse
+}

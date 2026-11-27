@@ -3,6 +3,7 @@ import { MatrixError } from 'matrix-js-sdk'
 import { MatrixGateway } from '../src/acl/internal/matrix-client'
 import { RateLimitedError } from '../src/acl'
 import type { AclTelemetry, ChannelId, UserId } from '../src/acl'
+import { directInviteHttp } from './support/direct-invite'
 
 // Unit: the addMember seam maps the server's rate limit (M_LIMIT_EXCEEDED, e.g. rc_invites.per_user)
 // to the payload-free domain error RateLimitedError, in the fake-client idiom of auto-join-invite.
@@ -17,7 +18,8 @@ const U = '@u:server' as unknown as UserId
 function gatewayWithInvite(invite: () => Promise<unknown>): MatrixGateway {
   const gateway = new MatrixGateway({ mode: 'strict', telemetry: noopTelemetry, serverUrl: 'http://x' })
   // getRoom: the ADR-094 group check reads the room first; unknown here, so a channel.
-  ;(gateway as unknown as { client: unknown }).client = { invite, getRoom: () => null }
+  // The ACL invites by a direct call (ADR-057, addendum of 24/Nov/2026).
+  ;(gateway as unknown as { client: unknown }).client = { http: directInviteHttp(invite), getRoom: () => null }
   return gateway
 }
 

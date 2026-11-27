@@ -21,6 +21,7 @@ export function BottomSheet({
   panelRef,
   focus = 'button',
   role = 'dialog',
+  under = false,
   children,
 }: {
   ariaLabel: string
@@ -34,6 +35,9 @@ export function BottomSheet({
   focus?: 'button' | 'field'
   // A confirmation that interrupts a destructive action is announced as an alert, as in the Dialog.
   role?: 'dialog' | 'alertdialog'
+  // Another sheet is over this one: it stays mounted (its stack entry, the focus it returns) but neither it nor
+  // its scrim is painted (channel-management.md §13.2 item 8).
+  under?: boolean
   children: ReactNode
 }) {
   const ownRef = useRef<HTMLDivElement | null>(null)
@@ -55,11 +59,12 @@ export function BottomSheet({
   }
   return (
     <>
-      <div className="ui-sheet__scrim" role="presentation" onClick={onClose} />
+      <div className="ui-sheet__scrim" role="presentation" data-under={under || undefined} onClick={onClose} />
       <div
         ref={setPanel}
         className="ui-sheet"
         data-padding={padding}
+        data-under={under || undefined}
         role={role}
         aria-modal="true"
         aria-label={ariaLabel}

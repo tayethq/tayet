@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
-import type { Channel, ChannelId, ChannelPatch, Presence, Role, RosterEntry, User, UserId } from '@tayet/client'
+import type { Channel, ChannelAbilities, ChannelId, ChannelPatch, Presence, Role, RosterEntry, User, UserId } from '@tayet/client'
 import { RateLimitedError } from '@tayet/client'
-import { Avatar, Button } from '../primitives'
-import { ConfirmBody, ConfirmFooter, ConfirmTitle, ManageShell } from './ManageShell'
+import { BottomSheet, Button, ScreenHeader, Segmented } from '../primitives'
+import { ConfirmBody, ConfirmFooter, ConfirmSheet, ConfirmTitle, ManageShell, MemberAvatar, MemberName } from './ManageShell'
 import type { ConfirmTone } from './ManageShell'
-import { AgentAvatar, agentColorOf } from './AgentAvatar'
-import { useMedia } from '../MediaContext'
+import { PeopleFilter, matchesName } from './PeopleFilter'
 import { ChannelLabel, manageLabel } from './ChannelLabel'
+import { useCoveringScreen } from '../covering-screen'
+import { useStackBack, useStackDialog } from '../stack'
+import { useMounted } from '../use-mounted'
 import { Lock } from '../icons'
 import { GLYPH, t } from '../i18n'
 
@@ -26,18 +28,27 @@ import { GLYPH, t } from '../i18n'
 // The verbs' Promises are owned here — useChat hands them through without a .catch (ADR-029 §2).
 //
 // P1 (ADR-007/ADR-008): this renders ONLY clean domain (channel.name / channel.topic /
-// member.displayName / member.role). The opaque ids (channel.id, user.id) live ONLY in verb
-// payloads and React keys, never on screen; copy and aria-labels carry no protocol vocabulary.
+// member.displayName / member.role / operatorName). The opaque ids (channel.id, user.id) live ONLY in
+// verb payloads and React keys, never on screen; copy and aria-labels carry no protocol vocabulary.
 //
 // Member roster (Track U/U2, ADR-029). The managed channel's members, with the three membership
 // mutations driven by the operator's own token (P1, client-side). Each mutation is await-and-close:
 // success closes its surface and lets the member.changed stream reconcile the roster; failure shows
 // an inline error and the roster is left intact (never mutated optimistically). The roster entry
 // carries `self` (ADR-081): the own row reads "· você" and offers no mutation on oneself.
+//
+// What the session may do (ADR-115; channel-management.md §15 item 1): each control follows its own answer
+// from `abilities`, not the role of the reader's own row — the name field (rename), the topic field
+// (editTopic), "+ Adicionar" and the picker (addPeople), the role control (setRoles), Remove (removePeople,
+// never on the own row) and archive (archive). Until the answers are read, everything is closed: name and
+// topic as text, no add, no role control, no Remove, no archive; the roster, the profile and leaving stay.
+// The answer is per channel: the server may still refuse a verb against one person, shown where it ran.
+//
+// Narrow window (`narrow`; §13.2): the same instance as a full screen of the stack. The picker is a screen
+// over it; the person's sheet and each confirm are sheets; each is an entry of its own, so the system's
+// back closes the top one. Closing a sheet while its verb runs closes the sheet and the verb goes on
+// (§14 item 3); a verb that settles closes only the surface it started from (R4).
 
-// Confirmation target (Track U/U1 + U2). archive/leave carry no payload; remove-member carries the
-// User so the dialog body can interpolate the displayName (NEVER user.id — P1) and handleConfirm can
-// pass the id to the verb.
 type Field = 'name' | 'topic'
 
 type Confirm =
@@ -54,21 +65,24 @@ const roleLabel = (): Record<Role, string> => ({
   guest: t('channel.roleGuest'),
 })
 
-const confirmCopyOf = (): Record<'archive' | 'leave', { title: string; body: string; action: string }> => ({
-  archive: {
-    title: t('channel.archiveTitle'),
-    body: t('channel.archiveBody'),
-    action: t('channel.archive'),
-  },
-  leave: {
-    title: t('channel.leaveTitle'),
-    body: t('channel.leaveBody'),
-    action: t('channel.leave'),
-  },
-})
+// The role is settable on someone active who is not a guest nor oneself (§4.3); someone who has not
+// connected yet shows it read-only.
+const settableRole = (m: RosterEntry): boolean => m.role !== 'guest' && m.state === 'active' && !m.self
+
+// ADR-115: nothing is offered until the answers are read.
+const NO_ABILITIES: ChannelAbilities = {
+  rename: false,
+  editTopic: false,
+  addPeople: false,
+  removePeople: false,
+  setRoles: false,
+  archive: false,
+}
+
+const keyOf = (c: Confirm): string => (c.kind === 'remove-member' ? `remove:${c.user.id}` : c.kind)
 
 // Dialog copy for the active confirmation. remove-member interpolates the clean displayName (P1 —
-// never user.id); archive/leave read confirmCopyOf above.
+// never user.id).
 function confirmCopy(c: Confirm): { title: string; body: string; action: string } {
   if (c.kind === 'remove-member')
     return {
@@ -76,12 +90,15 @@ function confirmCopy(c: Confirm): { title: string; body: string; action: string 
       body: t('channel.removeBody', { name: c.user.displayName }),
       action: t('channel.remove'),
     }
-  return confirmCopyOf()[c.kind]
+  if (c.kind === 'archive')
+    return { title: t('channel.archiveTitle'), body: t('channel.archiveBody'), action: t('channel.archive') }
+  return { title: t('channel.leaveTitle'), body: t('channel.leaveBody'), action: t('channel.leave') }
 }
 
 export function ChannelManagementPanel({
   channel,
   members,
+  abilities,
   onUpdateChannel,
   onArchiveChannel,
   onLeaveChannel,
@@ -92,37 +109,38 @@ export function ChannelManagementPanel({
   onOpenProfile,
   presenceOf,
   onClose,
+  narrow = false,
+  covered = false,
 }: {
   channel: Channel
   // Track U/U2: the managed channel's roster (already keyed on managing.id in useChat). Read-only
   // here — mutations go through the handlers below and reconcile via the member.changed stream.
   members: RosterEntry[]
+  // ADR-115: what the session may do in this channel. Absent = not read yet: read-only.
+  abilities?: ChannelAbilities
   onUpdateChannel: (id: ChannelId, patch: ChannelPatch) => Promise<void>
   onArchiveChannel: (id: ChannelId) => Promise<void>
   onLeaveChannel: (id: ChannelId) => Promise<void>
   // Membership mutations (Track U/U2, ADR-029 §2), await-and-close. REQUIRED: a panel mounted without
   // a membership verb is irrepresentable (the Workspace mount-guard narrows the optional Workspace
-  // props to these — the U1 pattern). A wiring regression in App fails loud (panel does not mount /
-  // gate breaks), never degrades silently into a missing affordance.
+  // props to these — the U1 pattern).
   onSetRole: (id: ChannelId, user: UserId, role: 'admin' | 'member') => Promise<void>
   onRemoveMember: (id: ChannelId, user: UserId) => Promise<void>
   onAddMember: (id: ChannelId, user: UserId) => Promise<void>
   loadCandidates: () => Promise<User[]>
-  // Perfil-de-outro (ADR-043, Slice 2 PR-2): abre o perfil do membro a partir da sua linha no roster.
-  // Optional — App liga via Workspace; o harness bare o omite (o click vira no-op). Recebe o UserId
-  // opaco (member.user.id); as ações de gestão (setRole/remove) seguem intactas.
+  // Perfil-de-outro (ADR-043): abre o perfil do membro a partir da sua linha. Optional — o harness bare o
+  // omite (o click vira no-op). Recebe o UserId opaco.
   onOpenProfile?: (user: UserId) => void
-  // Presença de linha no roster + picker (ADR-056 rollout, §8.4; cluster 22 herdado por referência —
-  // new-conversation.md §2). Leitura síncrona composta pelo Workspace (mapa ?? point read). Opcional:
-  // o harness bare a omite → Avatar sem a prop, DOM byte-idêntico. Um invited sem conexão resolve
-  // 'offline' → sem dot, correto por construção (sem special-case).
+  // Presença de linha no roster + picker (ADR-056). Opcional: o harness bare a omite → Avatar sem a prop.
   presenceOf?: (user: UserId) => Presence
   onClose: () => void
+  // Below the width breakpoint: a full screen; `covered` while another one is over it.
+  narrow?: boolean
+  covered?: boolean
 }) {
   // Form seeded from props. The mount site keys this component on channel.id, so switching the
-  // managed channel remounts it with fresh state — no reset effect needed. The name is seeded WITHOUT
-  // the kind mark (Channel.name is '#'+name; the field edits the name, §8.66) and saved as typed: the
-  // read side normalizes one leading '#', so a typed '#x' still reads '#x'.
+  // managed channel remounts it with fresh state. The name is seeded WITHOUT the kind mark and saved
+  // as typed: the read side normalizes one leading '#'.
   const bareName = channel.name.replace(/^#/, '')
   const [name, setName] = useState(bareName)
   const [topic, setTopic] = useState(channel.topic ?? '')
@@ -135,8 +153,10 @@ export function ChannelManagementPanel({
   const commits = useRef(Promise.resolve())
 
   const [confirm, setConfirm] = useState<Confirm | undefined>(undefined)
-  const [pending, setPending] = useState(false)
-  const [confirmError, setConfirmError] = useState(false)
+  // The confirm whose verb is in flight, and the one whose verb failed (by key): a narrow sheet reopened
+  // shows where its verb stands.
+  const [running, setRunning] = useState<Confirm | undefined>(undefined)
+  const [failed, setFailed] = useState<string | undefined>(undefined)
 
   // Add-member picker (seam B1). Lazy: candidates load only when the picker opens. The empty-state
   // copy is shown ONLY on a successful empty load (distinguished from a load failure via pickerError).
@@ -146,15 +166,42 @@ export function ChannelManagementPanel({
   const [pickerError, setPickerError] = useState(false)
   const [adding, setAdding] = useState(false)
   const [rateLimited, setRateLimited] = useState(false)
+  const [filter, setFilter] = useState('')
+
+  // The person's sheet (narrow, §13.2 item 4), read fresh from the roster: someone removed meanwhile closes it.
+  const [personId, setPersonId] = useState<UserId | undefined>(undefined)
+  const mounted = useMounted()
+
+  // ADR-115; §15 items 1 and 2: each control by its answer, all closed until the answers are read. On the
+  // narrow window the person's sheet opens only if it has something to offer (the role pair or Remove).
+  const can = abilities ?? NO_ABILITIES
+  const sheet = can.setRoles || can.removePeople
+  const person = sheet && personId !== undefined ? members.find((m) => m.user.id === personId && !m.self) : undefined
+  const confirmShown =
+    confirm &&
+    (confirm.kind === 'leave' || (confirm.kind === 'archive' ? can.archive : can.removePeople))
+      ? confirm
+      : undefined
+  const pickerShown = picker && can.addPeople
 
   const nameRef = useRef<HTMLInputElement>(null)
+  const rosterRef = useRef<HTMLElement>(null)
+  const nameFocused = useRef(false)
 
-  // a11y: focus enters the panel on open — land on the name field. The confirm/picker are view-states
-  // of the same Dialog (ADR-036/ADR-038), which owns the focus trap + Esc; initial focus inside them
-  // rides `autoFocus` on the non-destructive control (Cancel / Close), since Button is not ref-forwarded.
+  // a11y: focus enters the panel on open — the name field once the gate opens, else the ✕ (the Dialog's
+  // trap and Esc listen inside it). The confirm/picker are view-states of the same Dialog (ADR-038);
+  // their initial focus rides `autoFocus` on the non-destructive control. Narrow: the screen's back.
   useEffect(() => {
-    nameRef.current?.focus()
-  }, [])
+    if (narrow || nameFocused.current) return
+    if (can.rename) {
+      const active = document.activeElement
+      if (active === document.body || active?.classList.contains('ui-dialog__close')) {
+        nameFocused.current = true
+        nameRef.current?.focus()
+      }
+    } else if (!rosterRef.current?.closest('.ui-dialog')?.contains(document.activeElement))
+      rosterRef.current?.closest('.ui-dialog')?.querySelector<HTMLElement>('.ui-dialog__close')?.focus()
+  }, [can.rename, narrow])
 
   const trimmedName = name.trim()
 
@@ -186,7 +233,7 @@ export function ChannelManagementPanel({
       e.preventDefault()
       commit(field, value)
     } else if (e.key === 'Escape' && value !== accepted.current[field]) {
-      e.stopPropagation() // the Dialog's Esc closes the panel; this one only undoes the edit
+      e.stopPropagation() // the Dialog's (or the screen's) Esc closes; this one only undoes the edit
       onFieldChange(field, accepted.current[field])
     }
   }
@@ -208,35 +255,41 @@ export function ChannelManagementPanel({
 
   function openConfirm(next: Confirm) {
     setConfirm(next)
-    setConfirmError(false)
-    setPending(false)
+    if (narrow) return
+    setFailed(undefined)
+    setRunning(undefined)
   }
   function closeConfirm() {
     setConfirm(undefined)
-    setConfirmError(false)
-    setPending(false)
+    if (narrow) return
+    setFailed(undefined)
+    setRunning(undefined)
   }
 
   async function handleConfirm() {
-    if (!confirm || pending) return
-    setPending(true)
-    setConfirmError(false)
+    const ran = confirmShown
+    if (!ran || running) return
+    setRunning(ran)
+    setFailed(undefined)
     try {
-      if (confirm.kind === 'remove-member') {
-        await onRemoveMember(channel.id, confirm.user.id)
-        // Success: close the dialog only — the panel stays open and the roster reconciles via the
-        // member.changed stream (never an optimistic splice).
-        closeConfirm()
+      if (ran.kind === 'remove-member') {
+        await onRemoveMember(channel.id, ran.user.id)
+        if (!mounted.current) return
+        // Success: close the confirm and that person's sheet only — the panel stays open and the roster
+        // reconciles via the member.changed stream (never an optimistic splice).
+        setRunning(undefined)
+        setConfirm((c) => (c && keyOf(c) === keyOf(ran) ? undefined : c))
+        setPersonId((p) => (p === ran.user.id ? undefined : p))
         return
       }
-      const verb = confirm.kind === 'archive' ? onArchiveChannel : onLeaveChannel
-      await verb(channel.id)
-      onClose() // success: close. The list reconciles via the channel.removed stream (useChat).
+      await (ran.kind === 'archive' ? onArchiveChannel : onLeaveChannel)(channel.id)
+      // R4: close only the details this verb started from. The list reconciles via channel.removed.
+      if (mounted.current) onClose()
     } catch {
-      // Inline error in the dialog; it stays open and the channel/member remains. Reset pending here
-      // (not in a finally) so we never setState after the success path unmounts the panel.
-      setConfirmError(true)
-      setPending(false)
+      if (!mounted.current) return
+      // Not in a finally: never setState after the success path unmounts the panel.
+      setFailed(keyOf(ran))
+      setRunning(undefined)
     }
   }
 
@@ -244,17 +297,19 @@ export function ChannelManagementPanel({
   // visible channels' members minus this roster (useChat) — no directory verb, resolveUser untouched.
   async function openPicker() {
     setPicker(true)
+    setFilter('')
     setPickerLoading(true)
     setPickerError(false)
     setRateLimited(false)
     setAdding(false)
     setCandidates([])
     try {
-      setCandidates(await loadCandidates())
+      const loaded = await loadCandidates()
+      if (mounted.current) setCandidates(loaded)
     } catch {
-      setPickerError(true)
+      if (mounted.current) setPickerError(true)
     } finally {
-      setPickerLoading(false)
+      if (mounted.current) setPickerLoading(false)
     }
   }
   function closePicker() {
@@ -272,118 +327,63 @@ export function ChannelManagementPanel({
     setRateLimited(false)
     try {
       await onAddMember(channel.id, user.id)
-      closePicker() // success: the roster reconciles via member.changed (no optimistic insert).
+      if (!mounted.current) return
+      // §9 item 5, I4: the picker stays open and the person leaves the list; the roster reconciles via
+      // member.changed (no optimistic insert).
+      setCandidates((list) => list.filter((u) => u.id !== user.id))
+      setAdding(false)
     } catch (e) {
-      // P1: classify on the domain error TYPE (instanceof) — never sniff the SDK's raw error shape
-      // here; the gateway already mapped it to a domain type below the barrel. RateLimitedError gets
-      // its own copy that does NOT push the user straight back into the same limit; any other
-      // failure → the generic inline error.
+      if (!mounted.current) return
+      // P1: classify on the domain error TYPE (instanceof) — never sniff the SDK's raw error shape.
+      // RateLimitedError gets its own copy; any other failure → the generic inline error.
       if (e instanceof RateLimitedError) setRateLimited(true)
       else setPickerError(true) // inline error; the picker stays open and the roster is untouched.
       setAdding(false)
     }
   }
 
+  function openRow(member: RosterEntry) {
+    if (member.self) return
+    // §15 item 2: the person's sheet if it has the role pair or Remove to offer; otherwise the profile.
+    if (sheet) setPersonId(member.user.id)
+    else onOpenProfile?.(member.user.id)
+  }
+
+  // The stack's entries, bottom first, so they push in that order when several open in one commit.
+  useStackDialog('channel', narrow, onClose)
+  useStackDialog('channel-picker', narrow && pickerShown, closePicker)
+  useStackDialog('channel-person', narrow && person !== undefined, () => setPersonId(undefined))
+  useStackDialog('channel-confirm', narrow && confirmShown !== undefined, closeConfirm)
+
+  const pending = running !== undefined
+  const confirmError = confirmShown !== undefined && failed === keyOf(confirmShown)
+  const tone: ConfirmTone = confirmShown?.kind === 'archive' ? 'primary' : 'danger'
+
+  // The name's mark is the header's (ChannelLabel): the lock on a private channel, never '#'.
+  const mark =
+    channel.kind === 'private' ? (
+      <span className="channel-management-panel__input-mark" role="img" aria-label={t('channel.privateMark')}>
+        <Lock />
+      </span>
+    ) : (
+      <span className="channel-management-panel__input-mark" aria-hidden="true">
+        {GLYPH.hash}
+      </span>
+    )
+
   const nameStatus = fieldStatus('name')
   const topicStatus = fieldStatus('topic')
-
-  // View-state machine (ADR-038, Fork A): the confirm and the add-member picker are no longer
-  // nested Dialogs — they are sub-views of THIS one Dialog (one scrim/trap/Esc). Opening a
-  // confirm/picker swaps the body/title/footer; it never overlays. Esc is view-aware via onClose:
-  // in `main` it closes the panel; in `confirm`/`picker` it steps back to `main`. The casca and the
-  // confirm are shared with the group's details panel (ManageShell).
-  const view: 'main' | 'confirm' | 'picker' = confirm ? 'confirm' : picker ? 'picker' : 'main'
-  // §9 items 1–3, §6.1: archive is reversible → primary (accent dot, fill); leave and remove → danger.
-  const tone: ConfirmTone = confirm?.kind === 'archive' ? 'primary' : 'danger'
-  const dialog: { title: ReactNode; ariaLabel: string | undefined; onClose: () => void; closeLabel: string | undefined } =
-    view === 'confirm'
-      ? {
-          title: <ConfirmTitle tone={tone}>{confirmCopy(confirm!).title}</ConfirmTitle>,
-          ariaLabel: confirmCopy(confirm!).title,
-          onClose: closeConfirm,
-          closeLabel: undefined,
-        }
-      : view === 'picker'
-        ? { title: t('channel.addMember'), ariaLabel: undefined, onClose: closePicker, closeLabel: undefined }
-        : {
-            title: <ChannelLabel channel={channel} />,
-            ariaLabel: manageLabel(channel),
-            onClose,
-            closeLabel: t('channel.closeManage'),
-          }
-
-  return (
-    <ManageShell
-      main={view === 'main'}
-      title={dialog.title}
-      ariaLabel={dialog.ariaLabel}
-      onClose={dialog.onClose}
-      closeLabel={dialog.closeLabel}
-      footer={
-        view === 'confirm' ? (
-          <ConfirmFooter
-            tone={tone}
-            action={confirmCopy(confirm!).action}
-            pending={pending}
-            onCancel={closeConfirm}
-            onConfirm={() => void handleConfirm()}
-          />
-        ) : view === 'picker' ? (
-          // autoFocus: focus enters on Close (the first enabled control while candidates load).
-          <Button
-            variant="secondary"
-            size="gestao"
-            autoFocus
-            onClick={closePicker}
-            disabled={adding}
-          >
-            {t('channel.close')}
-          </Button>
-        ) : undefined
-      }
-      actions={
-        // High-consequence verbs: confirmation-gated, pinned to the modal foot. Only on the main view.
-        <>
-          <Button
-            variant="secondary"
-            size="gestao"
-            className="channel-management-panel__footer-action"
-            onClick={() => openConfirm({ kind: 'archive' })}
-          >
-            {t('channel.archiveTitle')}
-          </Button>
-          <Button
-            variant="danger"
-            size="gestao"
-            className="channel-management-panel__footer-action"
-            onClick={() => openConfirm({ kind: 'leave' })}
-          >
-            {t('channel.leaveTitle')}
-          </Button>
-        </>
-      }
-    >
-        {view === 'main' && (
-          <>
+  // §15 item 1: name and topic each by its own answer — one may be a field and the other text. As text
+  // (§13.1 item 5): a label and the value, no box; an empty topic has no line.
+  const fields = (
+    <>
+      {can.rename ? (
         <div className="channel-management-panel__field">
           <label className="channel-management-panel__label" htmlFor="manage-name">
             {t('channel.name')}
           </label>
           <div className="channel-management-panel__input-wrap">
-            {/* The field's mark is the header's (ChannelLabel): the lock on a private channel, never '#'. */}
-            {channel.kind === 'private' ? (
-              <span
-                className="channel-management-panel__input-mark"
-                role="img"
-                aria-label={t('channel.privateMark')}
-              >
-                <Lock />
-              </span>
-            ) : (
-              <span className="channel-management-panel__input-mark" aria-hidden="true">
-                {GLYPH.hash}
-              </span>
-            )}
+            {mark}
             <input
               id="manage-name"
               ref={nameRef}
@@ -397,7 +397,16 @@ export function ChannelManagementPanel({
           </div>
           {nameStatus}
         </div>
-
+      ) : (
+        <div className="channel-management-panel__field">
+          <span className="channel-management-panel__label">{t('channel.name')}</span>
+          <p className="channel-management-panel__value">
+            {mark}
+            {bareName}
+          </p>
+        </div>
+      )}
+      {can.editTopic ? (
         <div className="channel-management-panel__field">
           <label className="channel-management-panel__label" htmlFor="manage-topic">
             {t('channel.topic')}
@@ -414,110 +423,393 @@ export function ChannelManagementPanel({
           </div>
           {topicStatus}
         </div>
-
-        {/* Member roster (Track U/U2). Read-only here; P1 renders ONLY displayName + the role label —
-            user.id lives only in the React key, never on screen. */}
-        <section className="channel-management-panel__roster" aria-label={t('channel.members')}>
-          <div className="channel-management-panel__roster-head">
-            <h4 className="channel-management-panel__roster-title">
-              {t('channel.membersCount', { n: members.length })}
-            </h4>
-            <button
-              type="button"
-              className="channel-management-panel__add-member"
-              aria-label={t('channel.addMember')}
-              onClick={() => void openPicker()}
-            >
-              {t('channel.add')}
-            </button>
+      ) : (
+        channel.topic && (
+          <div className="channel-management-panel__field">
+            <span className="channel-management-panel__label">{t('channel.topic')}</span>
+            <p className="channel-management-panel__value">{channel.topic}</p>
           </div>
-          <ul className="channel-management-panel__roster-list">
-            {members.map((member) => (
-              <MemberRow
-                key={member.user.id}
-                member={member}
-                channelId={channel.id}
-                onSetRole={onSetRole}
-                onRequestRemove={(user) => openConfirm({ kind: 'remove-member', user })}
-                onOpenProfile={onOpenProfile}
-                presence={presenceOf?.(member.user.id)}
-              />
+        )
+      )}
+    </>
+  )
+
+  // Member roster (Track U/U2). P1 renders ONLY displayName + the role label — user.id lives only in the
+  // React key, never on screen.
+  const roster = (
+    <section ref={rosterRef} className="channel-management-panel__roster" aria-label={t('channel.members')}>
+      <div className="channel-management-panel__roster-head">
+        <h4 className="channel-management-panel__roster-title">{t('channel.membersCount', { n: members.length })}</h4>
+        {can.addPeople && (
+          <button
+            type="button"
+            className="channel-management-panel__add-member"
+            aria-label={t('channel.addMember')}
+            onClick={() => void openPicker()}
+          >
+            {t('channel.add')}
+          </button>
+        )}
+      </div>
+      <ul className="channel-management-panel__roster-list">
+        {members.map((member) =>
+          narrow ? (
+            <NarrowMemberRow
+              key={member.user.id}
+              member={member}
+              onOpen={() => openRow(member)}
+              presence={presenceOf?.(member.user.id)}
+            />
+          ) : (
+            <MemberRow
+              key={member.user.id}
+              member={member}
+              setRoles={can.setRoles}
+              removePeople={can.removePeople}
+              channelId={channel.id}
+              onSetRole={onSetRole}
+              onRequestRemove={(user) => openConfirm({ kind: 'remove-member', user })}
+              onOpenProfile={onOpenProfile}
+              presence={presenceOf?.(member.user.id)}
+            />
+          ),
+        )}
+      </ul>
+    </section>
+  )
+
+  const footerActions = (
+    <>
+      {can.archive && (
+        <Button
+          variant="secondary"
+          size={narrow ? undefined : 'gestao'}
+          className="channel-management-panel__footer-action"
+          onClick={() => openConfirm({ kind: 'archive' })}
+        >
+          {t('channel.archiveTitle')}
+        </Button>
+      )}
+      <Button
+        variant="danger"
+        size={narrow ? undefined : 'gestao'}
+        className="channel-management-panel__footer-action"
+        onClick={() => openConfirm({ kind: 'leave' })}
+      >
+        {t('channel.leaveTitle')}
+      </Button>
+    </>
+  )
+
+  // The picker's body (§9 items 4–6, §13.2 item 6): the filter fixed under the header, the list that scrolls.
+  // P1: candidates render by displayName only — user.id lives in the React key + the onAddMember payload.
+  const offered = candidates.filter(matchesName(filter))
+  const pickerBody = (
+    <>
+      <div className="channel-management-panel__picker-filter">
+        <PeopleFilter value={filter} onChange={setFilter} />
+      </div>
+      <div className="channel-management-panel__picker-scroll">
+        {pickerLoading ? (
+          <p className="channel-management-panel__picker-empty">{t('channel.loading')}</p>
+        ) : offered.length > 0 ? (
+          <ul className="channel-management-panel__picker-list">
+            {offered.map((user) => (
+              <li key={user.id}>
+                <button
+                  type="button"
+                  className="channel-management-panel__picker-option"
+                  onClick={() => void addCandidate(user)}
+                  disabled={adding}
+                >
+                  <MemberAvatar user={user} presence={presenceOf?.(user.id)} photo={false} />
+                  <MemberName user={user} />
+                </button>
+              </li>
             ))}
           </ul>
-        </section>
-          </>
+        ) : (
+          // Neutral empty states — only on a successful load (never on a load error). No directory
+          // affordance (the ADR-029 §3 trigger is not fired).
+          !pickerError &&
+          !rateLimited && (
+            <p className="channel-management-panel__picker-empty">
+              {candidates.length === 0 ? t('channel.noCandidates') : t('people.noResults', { term: filter.trim() })}
+            </p>
+          )
         )}
-
-        {/* Confirm view (archive / leave / remove-member): same Dialog, body swapped. The footer
-            (Cancel + the action) rides the Dialog's footer slot above. */}
-        {view === 'confirm' && <ConfirmBody body={confirmCopy(confirm!).body} failed={confirmError} />}
-
-        {/* Add-member picker view (seam B1): same Dialog, body swapped. P1: candidates render by
-            displayName only — user.id lives in the React key + the onAddMember payload, never on screen. */}
-        {view === 'picker' && (
-          <>
-            {pickerLoading ? (
-              <p className="channel-management-panel__picker-empty">{t('channel.loading')}</p>
-            ) : (
-              <>
-                {candidates.length > 0 && (
-                  <ul className="channel-management-panel__picker-list">
-                    {candidates.map((user) => (
-                      <li key={user.id}>
-                        <button
-                          type="button"
-                          className="channel-management-panel__picker-option"
-                          onClick={() => void addCandidate(user)}
-                          disabled={adding}
-                        >
-                          {agentColorOf(user) !== undefined ? (
-                            <AgentAvatar color={agentColorOf(user)!} size="gestao" />
-                          ) : (
-                            <Avatar size="gestao" label={user.displayName.slice(0, 1)} presence={presenceOf?.(user.id)} />
-                          )}
-                          <span className="channel-management-panel__member-name">
-                            {user.displayName}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {/* Neutral empty state — only on a successful empty load (never on a load error).
-                    No search/directory affordance (the ADR-029 §3 trigger is not fired). */}
-                {!pickerError && !rateLimited && candidates.length === 0 && (
-                  <p className="channel-management-panel__picker-empty">
-                    {t('channel.noCandidates')}
-                  </p>
-                )}
-              </>
-            )}
-            {pickerError && (
-              <p className="manage-dialog__error" role="alert">
-                {t('channel.failed')}
-              </p>
-            )}
-            {rateLimited && (
-              <p className="manage-dialog__error" role="alert">
-                {t('channel.rateLimited')}
-              </p>
-            )}
-          </>
+        {pickerError && (
+          <p className="manage-dialog__error channel-management-panel__picker-empty" role="alert">
+            {t('channel.failed')}
+          </p>
         )}
+        {rateLimited && (
+          <p className="manage-dialog__error channel-management-panel__picker-empty" role="alert">
+            {t('channel.rateLimited')}
+          </p>
+        )}
+      </div>
+    </>
+  )
+
+  if (narrow)
+    return (
+      <>
+        <ChannelScreen covered={covered || pickerShown} onClose={onClose} actions={footerActions}>
+          <div className="channel-screen__fields">{fields}</div>
+          {roster}
+        </ChannelScreen>
+        {pickerShown && <PickerScreen onClose={closePicker}>{pickerBody}</PickerScreen>}
+        {person && (
+          <PersonSheet
+            key={person.user.id}
+            member={person}
+            setRoles={can.setRoles}
+            removePeople={can.removePeople}
+            // §13.2 item 8: the remove confirm alone over the details, as the artboard draws it.
+            under={confirmShown?.kind === 'remove-member'}
+            presence={presenceOf?.(person.user.id)}
+            onSetRole={(role) => onSetRole(channel.id, person.user.id, role)}
+            onOpenProfile={() => {
+              setPersonId(undefined)
+              onOpenProfile?.(person.user.id)
+            }}
+            onRemove={() => openConfirm({ kind: 'remove-member', user: person.user })}
+            onClose={() => setPersonId(undefined)}
+          />
+        )}
+        {confirmShown && (
+          <ConfirmSheet
+            key={keyOf(confirmShown)}
+            {...confirmCopy(confirmShown)}
+            tone={tone}
+            pending={pending}
+            failed={confirmError}
+            onConfirm={() => void handleConfirm()}
+            onClose={closeConfirm}
+          />
+        )}
+      </>
+    )
+
+  // View-state machine (ADR-038, Fork A): the confirm and the add-member picker are sub-views of THIS one
+  // Dialog (one scrim/trap/Esc). Esc is view-aware via onClose: in `main` it closes the panel; in
+  // `confirm`/`picker` it steps back to `main`.
+  const view: 'main' | 'confirm' | 'picker' = confirmShown ? 'confirm' : pickerShown ? 'picker' : 'main'
+  return (
+    <ManageShell
+      main={view === 'main'}
+      picker={view === 'picker'}
+      title={
+        view === 'confirm' ? (
+          <ConfirmTitle tone={tone}>{confirmCopy(confirmShown!).title}</ConfirmTitle>
+        ) : view === 'picker' ? (
+          t('channel.addMember')
+        ) : (
+          <ChannelLabel channel={channel} />
+        )
+      }
+      ariaLabel={view === 'confirm' ? confirmCopy(confirmShown!).title : view === 'main' ? manageLabel(channel) : undefined}
+      onClose={view === 'confirm' ? closeConfirm : view === 'picker' ? closePicker : onClose}
+      closeLabel={view === 'confirm' ? undefined : view === 'picker' ? t('channel.close') : t('channel.closeManage')}
+      footer={
+        view === 'confirm' ? (
+          <ConfirmFooter
+            tone={tone}
+            action={confirmCopy(confirmShown!).action}
+            pending={pending}
+            onCancel={closeConfirm}
+            onConfirm={() => void handleConfirm()}
+          />
+        ) : view === 'picker' ? (
+          // autoFocus: focus enters on Close (the first enabled control while candidates load).
+          <Button variant="secondary" size="gestao" autoFocus onClick={closePicker} disabled={adding}>
+            {t('channel.close')}
+          </Button>
+        ) : undefined
+      }
+      // High-consequence verbs: confirmation-gated, pinned to the modal foot. Only on the main view.
+      actions={footerActions}
+    >
+      {view === 'main' && (
+        <>
+          {fields}
+          {roster}
+        </>
+      )}
+      {view === 'confirm' && <ConfirmBody body={confirmCopy(confirmShown!).body} failed={confirmError} />}
+      {view === 'picker' && pickerBody}
     </ManageShell>
   )
 }
 
-// One roster row (Track U/U2). Busy/error state is scoped here, per user.id — a failed mutation on
-// one member never touches another row, and never mutates the roster (it reconciles only on the
-// confirmed member.changed). P1: renders ONLY displayName + role; user.id lives only in verb payloads.
+// §13.2 items 1, 2, 3 and 7: back and "Detalhes do canal", the fields and the people that scroll, the verbs
+// stacked in the fixed footer.
+function ChannelScreen({
+  covered,
+  onClose,
+  actions,
+  children,
+}: {
+  covered: boolean
+  onClose: () => void
+  actions: ReactNode
+  children: ReactNode
+}) {
+  const back = useStackBack(onClose)
+  const { backRef, screenProps } = useCoveringScreen(back, covered)
+  return (
+    <section className="channel-screen" aria-label={t('channel.details')} {...screenProps}>
+      <ScreenHeader className="channel-screen__header" onBack={back} backRef={backRef} title={t('channel.details')} />
+      <div className="channel-screen__body">{children}</div>
+      <div className="channel-screen__footer">{actions}</div>
+    </section>
+  )
+}
+
+// §13.2 item 6: the picker as a screen over the details — back in place of the ✕, no footer.
+function PickerScreen({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const back = useStackBack(onClose)
+  const { backRef, screenProps } = useCoveringScreen(back)
+  return (
+    <section className="channel-screen channel-picker-screen" aria-label={t('channel.addMember')} {...screenProps}>
+      <ScreenHeader className="channel-screen__header" onBack={back} backRef={backRef} title={t('channel.addMember')} />
+      {children}
+    </section>
+  )
+}
+
+// One row on the narrow window (§13.2 item 3): the whole row is the target, the own row is not one.
+function NarrowMemberRow({
+  member,
+  onOpen,
+  presence,
+}: {
+  member: RosterEntry
+  onOpen: () => void
+  presence?: Presence
+}) {
+  const { user, role, state, self } = member
+  const inner = (
+    <>
+      <MemberAvatar user={user} self={self} presence={presence} />
+      <MemberName user={user} self={self} />
+      {state === 'invited' && <span className="channel-management-panel__member-pending">{t('channel.awaiting')}</span>}
+      <span className="channel-management-panel__member-role" data-role={role}>
+        {roleLabel()[role]}
+      </span>
+    </>
+  )
+  return (
+    <li className="channel-management-panel__member">
+      {self ? (
+        <div className="channel-screen__row">{inner}</div>
+      ) : (
+        <button type="button" className="channel-screen__row" onClick={onOpen}>
+          {inner}
+        </button>
+      )}
+    </li>
+  )
+}
+
+// §13.2 item 4: the person on top; "Ver perfil"; "Papel" with the pair, applied on the tap (or the role as
+// text for a guest or someone not connected yet); "Remover". Busy and failure are this sheet's: closing it
+// while the role verb runs lets the verb go on (§14 item 3). §15 item 2: the pair only if the session may
+// change roles (otherwise the role as text), and "Remover" only if it may remove.
+function PersonSheet({
+  member,
+  setRoles,
+  removePeople,
+  under,
+  presence,
+  onSetRole,
+  onOpenProfile,
+  onRemove,
+  onClose,
+}: {
+  member: RosterEntry
+  setRoles: boolean
+  removePeople: boolean
+  under: boolean
+  presence?: Presence
+  onSetRole: (role: 'admin' | 'member') => Promise<void>
+  onOpenProfile: () => void
+  onRemove: () => void
+  onClose: () => void
+}) {
+  const { user, role } = member
+  const [opener] = useState(() => document.activeElement as HTMLElement | null)
+  const [busy, setBusy] = useState(false)
+  const [roleFailed, setRoleFailed] = useState(false)
+  const mounted = useMounted()
+
+  async function changeRole(next: 'admin' | 'member') {
+    if (busy || next === role) return
+    setBusy(true)
+    setRoleFailed(false)
+    try {
+      await onSetRole(next) // success: the roster (and `role`) reconciles via member.changed
+    } catch {
+      if (mounted.current) setRoleFailed(true)
+    } finally {
+      if (mounted.current) setBusy(false)
+    }
+  }
+
+  return (
+    <BottomSheet ariaLabel={user.displayName} onClose={onClose} returnFocus={opener} under={under}>
+      <div className="person-sheet__top">
+        <MemberAvatar user={user} presence={presence} />
+        <span className="person-sheet__name">{user.displayName}</span>
+      </div>
+      <button type="button" className="message-sheet__row" onClick={onOpenProfile}>
+        {t('channel.openProfile')}
+      </button>
+      <div className="person-sheet__role">
+        <span className="person-sheet__role-label">{t('channel.role')}</span>
+        {setRoles && settableRole(member) ? (
+          <Segmented
+            ariaLabel={t('channel.roleFor', { name: user.displayName })}
+            value={role as 'admin' | 'member'}
+            options={[
+              { value: 'admin', label: roleLabel().admin },
+              { value: 'member', label: roleLabel().member },
+            ]}
+            onChange={(next) => void changeRole(next)}
+            disabled={busy}
+          />
+        ) : (
+          <span className="channel-management-panel__member-role" data-role={role}>
+            {roleLabel()[role]}
+          </span>
+        )}
+      </div>
+      {roleFailed && (
+        <p className="manage-dialog__error person-sheet__error" role="alert">
+          {t('channel.roleFailed')}
+        </p>
+      )}
+      {removePeople && (
+        <button type="button" className="message-sheet__row message-sheet__row--danger" onClick={onRemove}>
+          {t('channel.remove')}
+        </button>
+      )}
+    </BottomSheet>
+  )
+}
+
+// One roster row on the wide window (Track U/U2). Busy/error state is scoped here, per user.id — a failed
+// mutation on one member never touches another row, and never mutates the roster.
 //
 // Role control asymmetry (ADR-026): Role is admin | member | guest, but setRole accepts only
 // admin | member. So admin/member rows get an admin↔member control; a guest row shows a read-only
-// label (no verb makes guest settable) — the read-only gate is on `role`, NOT on handler presence.
-// The own row (`self`, ADR-081) offers neither: role as a label, no Remove.
+// label. The own row (`self`, ADR-081) offers neither; the role control follows setRoles and Remove follows
+// removePeople (ADR-115).
 function MemberRow({
   member,
+  setRoles,
+  removePeople,
   channelId,
   onSetRole,
   onRequestRemove,
@@ -525,27 +817,19 @@ function MemberRow({
   presence,
 }: {
   member: RosterEntry
+  setRoles: boolean
+  removePeople: boolean
   channelId: ChannelId
   onSetRole: (id: ChannelId, user: UserId, role: 'admin' | 'member') => Promise<void>
-  // Opens the panel-level remove-member confirmation (the actual await lives there, reusing the
-  // shared scrim/dialog). Always wired — the panel passes it unconditionally (mount-guard ensures it).
+  // Opens the panel-level remove-member confirmation (the actual await lives there).
   onRequestRemove: (user: User) => void
-  // Perfil-de-outro (ADR-043): abre o perfil deste membro. Optional-chained — no-op no harness bare.
-  // aria-label carrega o displayName limpo, nunca user.id (P1).
+  // Perfil-de-outro (ADR-043). aria-label carrega o displayName limpo, nunca user.id (P1).
   onOpenProfile?: (user: UserId) => void
-  // Presença deste membro (ADR-056 rollout, §8.4) — valor já lido pelo panel; ausente no harness
-  // bare → Avatar sem a prop.
   presence?: Presence
 }) {
   const { user, role, state, self } = member
   const [roleBusy, setRoleBusy] = useState(false)
   const [roleError, setRoleError] = useState(false)
-  // Invited members show a read-only role (like guest): setRole on someone who hasn't connected
-  // is meaningless, and "awaiting first connection" is not the moment to fiddle with power.
-  const settable = role !== 'guest' && state === 'active' && !self
-  // Foto do membro (ADR-041 PR-2): resolve o avatar opaco → URL via useMedia (no-op sem avatar). O
-  // Avatar cai pro monograma sem foto. P1: o mr_*/mxc fica aqui+ACL, nunca no DOM.
-  const avatar = useMedia(user.avatar, 'thumbnail').url
 
   async function changeRole(next: 'admin' | 'member') {
     if (roleBusy || next === role) return
@@ -555,8 +839,7 @@ function MemberRow({
       await onSetRole(channelId, user.id, next)
       // Success: do nothing — the roster (and this row's `role` prop) reconciles via member.changed.
     } catch {
-      // Inline error scoped to this row; the roster is left intact (the controlled <select> reverts
-      // to the unchanged `role` prop, so no optimistic flip survives the rejection).
+      // Inline error scoped to this row; the controlled <select> reverts to the unchanged `role` prop.
       setRoleError(true)
     } finally {
       setRoleBusy(false)
@@ -567,34 +850,20 @@ function MemberRow({
     <li className="channel-management-panel__member">
       <div className="channel-management-panel__member-line">
         {/* O bloco avatar+nome abre o perfil-de-outro (ADR-043). As ações de gestão (role/remove)
-            ficam de fora do botão, intactas. aria-label com o displayName limpo, nunca user.id (P1). */}
+            ficam de fora do botão, intactas. */}
         <button
           type="button"
           className="channel-management-panel__member-open"
           onClick={() => onOpenProfile?.(user.id)}
           aria-label={t('channel.viewProfile', { name: user.displayName })}
         >
-          {agentColorOf(user) !== undefined ? (
-            // ADR-086: an agent member carries the agent avatar — no photo, never presence.
-            <AgentAvatar color={agentColorOf(user)!} size="gestao" />
-          ) : (
-            <Avatar
-              size="gestao"
-              variant={self ? 'accent' : 'greige'}
-              label={user.displayName.slice(0, 1)}
-              src={avatar}
-              presence={presence}
-            />
-          )}
-          <span className="channel-management-panel__member-name">
-            {user.displayName}
-            {self && <span className="channel-management-panel__member-you"> {t('channel.you')}</span>}
-          </span>
+          <MemberAvatar user={user} self={self} presence={presence} />
+          <MemberName user={user} self={self} />
         </button>
         {state === 'invited' && (
           <span className="channel-management-panel__member-pending">{t('channel.awaiting')}</span>
         )}
-        {!self && (
+        {removePeople && !self && (
           <button
             type="button"
             className="channel-management-panel__member-remove"
@@ -604,7 +873,7 @@ function MemberRow({
             {t('channel.remove')}
           </button>
         )}
-        {settable ? (
+        {setRoles && settableRole(member) ? (
           <span className="channel-management-panel__role-field">
             <select
               className="channel-management-panel__role-control"

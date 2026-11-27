@@ -141,6 +141,8 @@ describe('chat state: commands and SendOpts.command (§0.3.24 items 1 and 4)', (
       getThreadUnread: async () => ({ unread: false }),
       getTimeline: async () => ({ items: [] }),
       getPresence: () => 'offline' as const,
+      getConnectionState: () => 'connecting' as const,
+      getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
       listPanels: async () => [],
       listCommands,
       sendMessage,

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { render, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react'
+import { render, cleanup, fireEvent, waitFor, within, act, screen } from '@testing-library/react'
 import { App } from '../../src/ui/App'
 import type {
   Acl,
@@ -12,8 +12,10 @@ import type {
   Role,
   MemberState,
   User,
+  ChannelAbilities,
 } from '../../src/acl'
 import { RateLimitedError } from '../../src/acl'
+import { ALL_ABILITIES, NO_ABILITIES } from '../support/narrow-shell'
 import { channelLabel } from '../support/channel-label'
 import { copy, fill } from '../support/copy'
 
@@ -68,6 +70,8 @@ interface Handles {
   emitGlobal: (e: DomainEvent) => void
   emitChannel: (id: ChannelId, e: DomainEvent) => void
   setMembers: (id: ChannelId, list: Member[]) => void
+  setAbilities: (next: ChannelAbilities) => void
+  getChannelAbilities: ReturnType<typeof vi.fn>
   updateChannel: ReturnType<typeof vi.fn>
   archiveChannel: ReturnType<typeof vi.fn>
   leaveChannel: ReturnType<typeof vi.fn>
@@ -79,7 +83,11 @@ interface Handles {
 // Per-channel roster map + per-channel subscription capture, so a member.changed can be emitted on a
 // SPECIFIC channel's handler (the seam A1 test fires it on the managed channel while another is
 // selected). getMembers reads the mutable map, so setMembers + emit reconciles the roster.
-function makeAcl(channels: Channel[], initialMembers: Record<string, Member[]> = {}): Handles {
+function makeAcl(
+  channels: Channel[],
+  initialMembers: Record<string, Member[]> = {},
+  opts: { reader?: Role | 'absent'; ownAgents?: User[]; abilities?: ChannelAbilities | 'unread' } = {},
+): Handles {
   const globalSubs: Array<(e: DomainEvent) => void> = []
   const channelSubs = new Map<string, Array<(e: DomainEvent) => void>>()
   const members: Record<string, Member[]> = { ...initialMembers }
@@ -91,13 +99,28 @@ function makeAcl(channels: Channel[], initialMembers: Record<string, Member[]> =
   const addMember = vi.fn(async () => {})
   const removeMember = vi.fn(async () => {})
   const setRole = vi.fn(async () => {})
+  // ADR-115: every verb for an admin reader (the default), none for anyone else, unless a test says otherwise;
+  // 'unread' throws, which the screen takes as answers not read.
+  let abilities = opts.abilities ?? ((opts.reader ?? 'admin') === 'admin' || opts.reader === 'absent' ? ALL_ABILITIES : NO_ABILITIES)
+  const getChannelAbilities = vi.fn((): ChannelAbilities => {
+    if (abilities === 'unread') throw new Error('not read')
+    return abilities
+  })
   const acl: Acl = {
     getChannels: async () => channels,
     getArchivedChannels: async () => [],
     getChannel: async () => channels[0]!,
     getTimeline: async () => ({ items: [] }),
-    getMembers: async (id) => members[key(id)] ?? [],
+    // The reader is admin of every channel unless a test says otherwise.
+    getMembers: async (id) => {
+      const list = members[key(id)] ?? []
+      const reader = opts.reader ?? 'admin'
+      if (list.some((m) => m.self) || reader === 'absent') return list
+      return [...list, { user: me, role: reader, state: 'active' as MemberState, self: true }]
+    },
     getPresence: () => 'offline' as const,
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities,
     getDevices: async () => [],
     currentUser: async () => me,
     getMyProfile: async () => ({ fullName: me.displayName }),
@@ -168,7 +191,7 @@ function makeAcl(channels: Channel[], initialMembers: Record<string, Member[]> =
     connect: noop,
     disconnect: noop,
     listPeople: async () => [],
-    listOwnAgents: () => [],
+    listOwnAgents: () => opts.ownAgents ?? [],
     isOrgAdmin: async () => false,
     invitePerson: () => Promise.reject(new Error('unused')),
     removePerson: async () => {},
@@ -176,6 +199,11 @@ function makeAcl(channels: Channel[], initialMembers: Record<string, Member[]> =
     updateAgent: async () => {},
     reissueAgent: () => Promise.reject(new Error('not wired')),
     removeAgent: async () => {},
+    getOrgAccess: () => Promise.reject(new Error('unused')),
+    setOrgAdmin: async () => {},
+    enableDeviceNotifications: noop,
+    disableDeviceNotifications: noop,
+    resolveNotificationTarget: async () => undefined,
     signOut: noop,
   }
   return {
@@ -185,6 +213,10 @@ function makeAcl(channels: Channel[], initialMembers: Record<string, Member[]> =
     setMembers: (id, list) => {
       members[key(id)] = list
     },
+    setAbilities: (next) => {
+      abilities = next
+    },
+    getChannelAbilities,
     updateChannel,
     archiveChannel,
     leaveChannel,
@@ -203,6 +235,7 @@ describe('channel management — open + DM gating', () => {
 
     const entry = await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) })
     fireEvent.click(entry)
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
 
     const panel = getByRole('dialog', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) })
     expect(panel).toBeTruthy()
@@ -225,6 +258,7 @@ describe('channel management — edit (await-and-close, panel stays open)', () =
     const { findByRole, getByRole, getByLabelText, findByText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     fireEvent.change(getByLabelText(copy.channel.name), { target: { value: '#eng-renamed' } })
     fireEvent.blur(getByLabelText(copy.channel.name))
 
@@ -241,6 +275,7 @@ describe('channel management — edit (await-and-close, panel stays open)', () =
     const { findByRole, getByRole, getByLabelText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     fireEvent.change(getByLabelText(copy.channel.name), { target: { value: '#nope' } })
     fireEvent.keyDown(getByLabelText(copy.channel.name), { key: 'Enter' })
 
@@ -253,6 +288,7 @@ describe('channel management — edit (await-and-close, panel stays open)', () =
     const { findByRole, getByLabelText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     fireEvent.blur(getByLabelText(copy.channel.name))
     fireEvent.keyDown(getByLabelText(copy.channel.topic), { key: 'Enter' })
     await act(async () => {})
@@ -267,6 +303,7 @@ describe('channel management — edit (await-and-close, panel stays open)', () =
     const { findByRole, findByText, getByLabelText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     fireEvent.change(getByLabelText(copy.channel.name), { target: { value: 'eng' } })
     fireEvent.keyDown(getByLabelText(copy.channel.name), { key: 'Enter' })
     await findByText(copy.channel.saving)
@@ -286,7 +323,8 @@ describe('channel management — edit (await-and-close, panel stays open)', () =
     const dialogName = fill(copy.channel.manageNamed, { name: '#engineering' })
 
     fireEvent.click(await findByRole('button', { name: dialogName }))
-    const field = getByLabelText(copy.channel.name) as HTMLInputElement
+    const field = (await screen.findByLabelText(copy.channel.name)) as HTMLInputElement
+    expect(document.activeElement).toBe(getByLabelText(copy.channel.name))
     fireEvent.change(field, { target: { value: 'outro' } })
     fireEvent.keyDown(field, { key: 'Escape' })
 
@@ -305,6 +343,7 @@ describe('channel management — edit (await-and-close, panel stays open)', () =
     const dialogName = fill(copy.channel.manageNamed, { name: '#engineering' })
 
     fireEvent.click(await findByRole('button', { name: dialogName }))
+    await screen.findByLabelText(copy.channel.name)
     fireEvent.keyDown(getByLabelText(copy.channel.name), { key: 'Escape' })
 
     await waitFor(() => expect(queryByRole('dialog', { name: dialogName })).toBeNull())
@@ -343,6 +382,7 @@ describe('channel management — archive/leave (confirm → await → stream rec
     const { findByRole, getByRole, queryByRole, queryByText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     fireEvent.click(getByRole('button', { name: copy.channel.archiveTitle }))
     fireEvent.click(getByRole('button', { name: copy.channel.archive }))
 
@@ -357,6 +397,7 @@ describe('channel management — archive/leave (confirm → await → stream rec
     const { findByRole, getByRole, queryByRole, queryByText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     fireEvent.click(getByRole('button', { name: copy.channel.leaveTitle }))
     fireEvent.click(getByRole('button', { name: copy.channel.leave }))
 
@@ -372,6 +413,7 @@ describe('channel management — archive/leave (confirm → await → stream rec
     const { findByRole, getByRole, getAllByText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     fireEvent.click(getByRole('button', { name: copy.channel.archiveTitle }))
     fireEvent.click(getByRole('button', { name: copy.channel.archive }))
 
@@ -393,6 +435,7 @@ describe('channel management — roster + membership (U2)', () => {
     const { findByRole, findByText, getByLabelText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     await findByText('Ana Lima')
     await findByText('Bruno Sato')
     // admin/member get an admin↔member control reflecting their current role.
@@ -411,6 +454,7 @@ describe('channel management — roster + membership (U2)', () => {
 
     // Open the panel for the selected channel (#engineering = X).
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     await findByText('Ana Lima')
 
     // Select a DIFFERENT channel (#design = Y). `select` does NOT clear `managing`.
@@ -447,6 +491,7 @@ describe('channel management — roster + membership (U2)', () => {
     const { findByRole, getByRole, queryByRole, getByText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     await findByRole('combobox', { name: fill(copy.channel.roleFor, { name: 'Bruno Sato' }) })
 
     expect(getByText(copy.channel.you).closest('li')?.textContent).toContain('Ana Lima')
@@ -463,6 +508,7 @@ describe('channel management — roster + membership (U2)', () => {
     const { findByRole, getByRole } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     const role = await findByRole('combobox', { name: fill(copy.channel.roleFor, { name: 'Bruno Sato' }) })
     const remove = getByRole('button', { name: fill(copy.channel.removeNamed, { name: 'Bruno Sato' }) })
 
@@ -478,6 +524,7 @@ describe('channel management — roster + membership (U2)', () => {
     const { findByRole, getByLabelText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     const control = (await findByRole('combobox', { name: fill(copy.channel.roleFor, { name: 'Ana Lima' }) })) as HTMLSelectElement
     fireEvent.change(control, { target: { value: 'admin' } })
 
@@ -495,6 +542,7 @@ describe('channel management — roster + membership (U2)', () => {
     const { findByRole, getByRole, getByText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.removeNamed, { name: 'Ana Lima' }) }))
     fireEvent.click(getByRole('button', { name: copy.channel.remove })) // dialog confirm
 
@@ -522,6 +570,7 @@ describe('channel management — roster + membership (U2)', () => {
     const { findByRole, getByRole, findByText, queryByRole } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     // Let the managed roster settle (Ana present) BEFORE opening the picker, so listCandidates sees
     // the roster and excludes her from the union (it reads the `members` state).
     await findByText('Ana Lima')
@@ -553,6 +602,7 @@ describe('channel management — roster + membership (U2)', () => {
     const { findByRole, getByRole, findByText, queryByText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     await findByText('Ana Lima')
     fireEvent.click(getByRole('button', { name: copy.channel.addMember }))
     await findByRole('dialog', { name: copy.channel.addMember })
@@ -577,6 +627,7 @@ describe('channel management — roster + membership (U2)', () => {
       <App acl={handles.acl} onSignOut={() => {}} />,
     )
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     await findByText('Bruno Sato')
     expect(getByText(copy.channel.awaiting)).toBeTruthy() // pending chip
     expect(queryByLabelText(fill(copy.channel.roleFor, { name: 'Bruno Sato' }))).toBeNull() // invited: no editable control
@@ -591,8 +642,194 @@ describe('channel management — roster + membership (U2)', () => {
     const { findByRole, findByText, getByText, queryByLabelText } = render(<App acl={handles.acl} onSignOut={() => {}} />)
 
     fireEvent.click(await findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    await screen.findByLabelText(copy.channel.name) // §15 item 1: the field opens with the answers
     await findByText('Gisele Rocha')
     expect(getByText(copy.channel.roleGuest)).toBeTruthy() // read-only label
     expect(queryByLabelText(fill(copy.channel.roleFor, { name: 'Gisele Rocha' }))).toBeNull() // no control for guest
+  })
+})
+
+// channel-management.md §13.1 and §9 items 4–6 (PLANO-MOBILE §0.22 I1, I4, P3, P4): the picker in the 360 casca with
+// the ✕ and the filter, staying open after adding; the agent in two lines; who is not admin reads.
+describe('channel management — §13.1 (wide)', () => {
+  const robo: User = { id: uid('@a-abcdefghijkl:tayet.local'), displayName: 'Relatório diário', kind: 'agent', agentColor: 'argila', operatorName: 'Eu Mesmo' }
+  const mute: User = { id: uid('@a-mnopqrstuvwx:tayet.local'), displayName: 'Resumo semanal', kind: 'agent', agentColor: 'argila' }
+  const openPanel = async (handles: Handles) => {
+    const ui = render(<App acl={handles.acl} onSignOut={() => {}} />)
+    fireEvent.click(await ui.findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    return ui
+  }
+  const twoChannels = (reader?: Role | 'absent', ownAgents?: User[]) =>
+    makeAcl(
+      [eng, design],
+      {
+        [eng.id as unknown as string]: [{ user: ana, role: 'admin', state: 'active', self: false }],
+        [design.id as unknown as string]: [
+          { user: ana, role: 'admin', state: 'active', self: false },
+          { user: bruno, role: 'member', state: 'active', self: false },
+          { user: gisele, role: 'member', state: 'active', self: false },
+        ],
+      },
+      { reader, ownAgents },
+    )
+
+  it('item 5: who is not admin reads — name and topic as text, no add, no role control, no Remove, no archive; leave stays', async () => {
+    const ui = await openPanel(twoChannels('member'))
+    await ui.findByText(copy.channel.you.replace('· ', ''), { exact: false })
+    const dialog = ui.getByRole('dialog', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) })
+    expect(within(dialog).queryByLabelText(copy.channel.name)).toBeNull()
+    expect(dialog.querySelectorAll('.channel-management-panel__value')[0]!.textContent).toBe('#engineering')
+    expect(dialog.querySelectorAll('.channel-management-panel__value')[1]!.textContent).toBe(eng.topic)
+    expect(within(dialog).queryByRole('button', { name: copy.channel.addMember })).toBeNull()
+    expect(within(dialog).queryByRole('combobox')).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: fill(copy.channel.removeNamed, { name: 'Ana Lima' }) })).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: copy.channel.archiveTitle })).toBeNull()
+    const footer = dialog.querySelector('.channel-management-panel__footer')!
+    expect([...footer.querySelectorAll('button')].map((b) => b.textContent)).toEqual([copy.channel.leaveTitle])
+    expect(within(dialog).getByRole('button', { name: fill(copy.channel.viewProfile, { name: 'Ana Lima' }) })).toBeTruthy()
+    // The Dialog still hears Esc: the focus is inside it.
+    expect(dialog.contains(document.activeElement)).toBe(true)
+  })
+
+  it('item 5: an empty topic has no line', async () => {
+    const handles = makeAcl([{ ...eng, topic: undefined }], {}, { reader: 'member' })
+    const ui = await openPanel(handles)
+    await ui.findByText(copy.channel.leaveTitle)
+    await waitFor(() => expect(ui.container.querySelectorAll('.channel-management-panel__value')).toHaveLength(1))
+    expect(ui.queryByText(copy.channel.topic)).toBeNull()
+  })
+
+  it('§15 item 1: closed while the answers have not been read, even with an admin own row', async () => {
+    const ui = await openPanel(makeAcl([eng], {}, { abilities: 'unread' }))
+    await ui.findByText(copy.channel.you.replace('· ', ''), { exact: false })
+    expect(ui.queryByLabelText(copy.channel.name)).toBeNull()
+    expect(ui.queryByLabelText(copy.channel.topic)).toBeNull()
+    expect(ui.queryByRole('button', { name: copy.channel.addMember })).toBeNull()
+    expect(ui.queryByRole('button', { name: copy.channel.archiveTitle })).toBeNull()
+  })
+
+  it('§9 items 4–6: the picker in the compose casca, ✕ and filter; adding keeps it open and the person leaves the list', async () => {
+    const handles = twoChannels()
+    const ui = await openPanel(handles)
+    await screen.findByLabelText(copy.channel.name)
+    await ui.findByText('Ana Lima')
+    fireEvent.click(ui.getByRole('button', { name: copy.channel.addMember }))
+    const picker = await ui.findByRole('dialog', { name: copy.channel.addMember })
+    expect(picker.classList.contains('compose-dialog')).toBe(true)
+    expect(picker.getAttribute('data-size')).toBe('cotidiano')
+    await within(picker).findByText('Bruno Sato')
+    // The filter reads the name only; nothing found → people.noResults.
+    const filter = within(picker).getByRole('textbox', { name: copy.newConversation.filterPeople })
+    fireEvent.change(filter, { target: { value: 'gisé' } })
+    expect(within(picker).queryByText('Bruno Sato')).toBeNull()
+    expect(within(picker).getByText('Gisele Rocha')).toBeTruthy()
+    fireEvent.change(filter, { target: { value: 'zz' } })
+    expect(within(picker).getByText(fill(copy.people.noResults, { term: 'zz' }))).toBeTruthy()
+    fireEvent.click(within(picker).getByRole('button', { name: copy.people.clearFilter }))
+    fireEvent.click(within(picker).getByRole('button', { name: 'Bruno Sato' }))
+    await waitFor(() => expect(handles.addMember).toHaveBeenCalledWith(eng.id, bruno.id))
+    await waitFor(() => expect(within(picker).queryByText('Bruno Sato')).toBeNull())
+    expect(ui.getByRole('dialog', { name: copy.channel.addMember })).toBe(picker)
+    expect(within(picker).getByText('Gisele Rocha')).toBeTruthy()
+    // The ✕ goes back to the main view.
+    fireEvent.click(within(picker).getAllByRole('button', { name: copy.channel.close })[0]!)
+    expect(await ui.findByRole('dialog', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) })).toBeTruthy()
+  })
+
+  it('§9 item 4: Esc in the picker goes back to the main view', async () => {
+    const ui = await openPanel(twoChannels())
+    await screen.findByLabelText(copy.channel.name)
+    fireEvent.click(ui.getByRole('button', { name: copy.channel.addMember }))
+    const picker = await ui.findByRole('dialog', { name: copy.channel.addMember })
+    fireEvent.keyDown(within(picker).getByRole('textbox', { name: copy.newConversation.filterPeople }), { key: 'Escape' })
+    expect(await ui.findByRole('dialog', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) })).toBeTruthy()
+  })
+
+  it('items 1–2: the agent in two lines in the roster and in the picker; without operatorName, one line', async () => {
+    const handles = makeAcl(
+      [eng],
+      {
+        [eng.id as unknown as string]: [
+          { user: ana, role: 'admin', state: 'active', self: false },
+          { user: robo, role: 'member', state: 'active', self: false },
+        ],
+      },
+      { ownAgents: [robo, mute] },
+    )
+    const ui = await openPanel(handles)
+    await screen.findByLabelText(copy.channel.name)
+    const line = (await ui.findByText('Relatório diário')).closest('.channel-management-panel__member')!
+    expect(line.querySelector('.channel-management-panel__member-sub')!.textContent).toBe(fill(copy.agent.operatedBy, { name: 'Eu Mesmo' }))
+    expect(ui.getByRole('heading', { name: fill(copy.channel.membersCount, { n: 3 }) })).toBeTruthy()
+    fireEvent.click(ui.getByRole('button', { name: copy.channel.addMember }))
+    const picker = await ui.findByRole('dialog', { name: copy.channel.addMember })
+    const option = (await within(picker).findByText('Resumo semanal')).closest('button')!
+    expect(option.querySelector('[data-agent-avatar]')).not.toBeNull()
+    expect(option.querySelector('.channel-management-panel__member-sub')).toBeNull()
+  })
+})
+
+// ADR-115 (Proposto); channel-management.md §15 item 1: each control follows its own answer, not the role of the
+// reader's own row. The roster: the reader (admin row), Ana (admin) and Bruno (member).
+describe('channel management — the answers, control by control (ADR-115)', () => {
+  const roster = () => ({
+    [eng.id as unknown as string]: [
+      { user: ana, role: 'admin' as Role, state: 'active' as MemberState, self: false },
+      { user: bruno, role: 'member' as Role, state: 'active' as MemberState, self: false },
+      { user: me, role: 'admin' as Role, state: 'active' as MemberState, self: true },
+    ],
+  })
+  const openWith = async (abilities: ChannelAbilities | 'unread') => {
+    const handles = makeAcl([eng], roster(), { abilities })
+    const ui = render(<App acl={handles.acl} onSignOut={() => {}} />)
+    fireEvent.click(await ui.findByRole('button', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) }))
+    const dialog = await ui.findByRole('dialog', { name: fill(copy.channel.manageNamed, { name: '#engineering' }) })
+    await within(dialog).findByText('Bruno Sato')
+    return { ui, dialog, handles }
+  }
+  const shown = (dialog: HTMLElement) => ({
+    rename: within(dialog).queryByLabelText(copy.channel.name) !== null,
+    editTopic: within(dialog).queryByLabelText(copy.channel.topic) !== null,
+    addPeople: within(dialog).queryByRole('button', { name: copy.channel.addMember }) !== null,
+    removePeople: within(dialog).queryByRole('button', { name: fill(copy.channel.removeNamed, { name: 'Bruno Sato' }) }) !== null,
+    setRoles: within(dialog).queryByRole('combobox', { name: fill(copy.channel.roleFor, { name: 'Bruno Sato' }) }) !== null,
+    archive: within(dialog).queryByRole('button', { name: copy.channel.archiveTitle }) !== null,
+  })
+
+  for (const key of Object.keys(NO_ABILITIES) as Array<keyof ChannelAbilities>) {
+    it(`${key} alone opens only its control`, async () => {
+      const { dialog } = await openWith({ ...NO_ABILITIES, [key]: true })
+      expect(shown(dialog)).toEqual({ ...NO_ABILITIES, [key]: true })
+    })
+    it(`every answer but ${key} closes only its control`, async () => {
+      const { dialog } = await openWith({ ...ALL_ABILITIES, [key]: false })
+      expect(shown(dialog)).toEqual({ ...ALL_ABILITIES, [key]: false })
+    })
+  }
+
+  it('the name editable and the topic as text, and the other way round', async () => {
+    const a = await openWith({ ...NO_ABILITIES, rename: true })
+    expect(within(a.dialog).getByLabelText(copy.channel.name)).toBeTruthy()
+    expect(within(a.dialog).getByText(eng.topic!).tagName).toBe('P')
+    cleanup()
+    const b = await openWith({ ...NO_ABILITIES, editTopic: true })
+    expect((within(b.dialog).getByLabelText(copy.channel.topic) as HTMLInputElement).value).toBe(eng.topic)
+    expect(b.dialog.querySelector('.channel-management-panel__value')!.textContent).toBe('#engineering')
+  })
+
+  it('never a Remove nor a role control on the own row', async () => {
+    const { dialog } = await openWith(ALL_ABILITIES)
+    const own = within(dialog).getByText(copy.channel.you.replace('· ', ''), { exact: false }).closest('.channel-management-panel__member')!
+    expect(own.querySelector('.channel-management-panel__member-remove')).toBeNull()
+    expect(own.querySelector('select')).toBeNull()
+  })
+
+  it('ADR-115 dec. 5: read on opening, and again on a member.changed of the managed channel', async () => {
+    const { dialog, handles } = await openWith(NO_ABILITIES)
+    expect(handles.getChannelAbilities).toHaveBeenCalledWith(eng.id)
+    expect(shown(dialog)).toEqual(NO_ABILITIES)
+    handles.setAbilities(ALL_ABILITIES)
+    act(() => handles.emitChannel(eng.id, { t: 'member.changed', channelId: eng.id, user: bruno.id, role: 'admin' } as DomainEvent))
+    await waitFor(() => expect(shown(dialog)).toEqual(ALL_ABILITIES))
   })
 })

@@ -89,6 +89,7 @@ describe('the management button in a group (workspace.md §22.1 item 4)', () => 
         onSend={() => {}}
         managing={managing}
         members={roster()}
+        channelAbilities={{ rename: true, editTopic: true, addPeople: true, removePeople: true, setRoles: true, archive: true }}
         onManageChannel={setManaging}
         onCloseManage={() => setManaging(undefined)}
         onUpdateChannel={verb}
@@ -139,7 +140,7 @@ describe('participants (§10.1 items 1 and 2)', () => {
     expect(rows[1]!.querySelector('[data-presence="online"]')).toBeNull()
   })
 
-  it('an agent: the agent avatar, its operator beside the name, no presence', () => {
+  it('an agent: the agent avatar, its operator on a second line (§13.1 item 4), no presence', () => {
     const { ui } = panel({
       channel: withAgent,
       members: [...roster(), entry(robo, 'member')],
@@ -149,9 +150,9 @@ describe('participants (§10.1 items 1 and 2)', () => {
     const row = ui.container.querySelectorAll('.channel-management-panel__member')[3]!
     expect(row.querySelector('[data-agent-avatar]')).not.toBeNull()
     expect(row.querySelector('[data-presence]')).toBeNull()
-    expect(row.querySelector('[data-agent-operator]')?.textContent).toBe(
-      ` · ${fill(copy.agent.operatedBy, { name: 'Marina Alves' })}`,
-    )
+    const operator = row.querySelector('[data-agent-operator]')!
+    expect(operator.textContent).toBe(fill(copy.agent.operatedBy, { name: 'Marina Alves' }))
+    expect(operator.classList.contains('channel-management-panel__member-sub')).toBe(true)
   })
 
   it('no role, no remove, no add', () => {

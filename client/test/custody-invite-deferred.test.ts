@@ -6,6 +6,7 @@ import {
   CUSTODY_WAIT_MS,
 } from '../src/acl/internal/custody'
 import type { AclTelemetry } from '../src/acl'
+import { directInviteHttp } from './support/direct-invite'
 
 // F11 (ratificado — PR-3.1 do track CRIPTO-COBERTURA): convite estrutural sob 429 do
 // rc_message do CRIADOR. Medido na PR-4 (§8.4): 6/12 salas da rajada nasceram sem cofre —
@@ -54,11 +55,12 @@ function harness(inviteResults: Array<'ok' | MatrixError | Error>): {
       getMember: (uid: string) => (uid === COFRE ? { userId: COFRE, membership: 'invite' } : null),
     }),
     createRoom: () => Promise.resolve({ room_id: ROOM }),
-    invite: (roomId: string, userId: string) => {
+    // The ACL invites by a direct call (ADR-057, addendum of 24/Nov/2026).
+    http: directInviteHttp((roomId: string, userId: string) => {
       cap.invites.push({ roomId, userId })
       const result = inviteResults.shift() ?? 'ok'
       return result === 'ok' ? Promise.resolve(undefined) : Promise.reject(result)
-    },
+    }),
     getAccountData: () => undefined,
     setAccountData: () => Promise.resolve(undefined),
   }

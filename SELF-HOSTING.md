@@ -33,6 +33,11 @@ Two rules for whoever runs the commands, person or agent:
 A Linux server with a public IP address and ports 80 and 443 reachable from the internet. TLS
 certificates are issued automatically.
 
+For notifications to reach devices while Tayet is closed, the server also needs outbound HTTPS
+(port 443) to the push services of browsers and phones: `fcm.googleapis.com`, `*.push.apple.com`,
+`updates.push.services.mozilla.com` and `*.notify.windows.com`. Tayet sends notifications to no
+other host.
+
 On the server:
 
 - `git`
@@ -129,6 +134,21 @@ Expected: `2`.
 
 ## 7. Generate the secrets (once)
 
+The chat server and the push service talk on a Docker network of their own, on the subnet
+`10.213.77.0/29`. First see which subnets the Docker networks on the host use:
+
+```bash
+docker network inspect $(docker network ls -q) --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}'
+```
+
+If one of them overlaps `10.213.77.0/29`, pick another subnet and set it in the shell where you run
+`./deploy.sh secrets` below. It must be an IPv4 /29 starting on a multiple of 8 (a.b.c.N/29), unused
+by any other Docker network on the host. For example:
+
+```bash
+export TAYET_PUSH_SUBNET=10.213.77.8/29
+```
+
 Set the base domain and the first administrator, then generate:
 
 ```bash
@@ -168,6 +188,7 @@ Synapse config = host render ✅
 MAS config = render ✅
 Org channel #all: OK ✅
 Escrow /healthz: OK ✅
+Push /healthz: OK ✅
 cofre token: whoami OK ✅
 Encrypted rooms without the cofre: none ✅
 ```
@@ -203,7 +224,7 @@ You land in the app, in the channel `#all`. You are the administrator of the org
 
 ## 11. Back up
 
-Four things hold the state of your organization. Back up all four.
+Five things hold the state of your organization. `./deploy.sh backup` copies all five.
 
 | What | Holds | If lost |
 |---|---|---|
@@ -211,6 +232,7 @@ Four things hold the state of your organization. Back up all four.
 | Volume `escrowdata` | Key deposits | People cannot recover history on a new device |
 | Postgres (databases `synapse` and `mas`) | Accounts, channels, messages | Everything |
 | Volume `synapsedata` | Uploaded files and the server signing key | Attachments |
+| Volume `orgdata` | The audit of invitations, removals and agents | That audit |
 
 Rules:
 
@@ -218,93 +240,90 @@ Rules:
 - **Copy the backup off the server.** A backup on the same disk is not a backup.
 - **Encrypting the server disk and the backup files is recommended.** The backup contains keys and, in the database, unencrypted channel messages. How to encrypt is your decision.
 - The volume `agentdata` is left out on purpose: restoring an old copy would break key custody. The TLS certificates are also left out: they are issued again.
+- `secrets/` also holds the key pair of the push service, `secrets/push.env`, so the backup already carries it. It is generated once and never replaced: subscriptions to notifications are bound to its public key, which `build` puts in the web app.
 
-Run, in `infra/deploy`, as a user that can run Docker:
-
-```bash
-P=$(sed -n 's/^TAYET_COMPOSE_PROJECT=//p' secrets/deployment.env); P=${P:-tayet}
-DC="docker compose -p $P --env-file secrets/deployment.env -f compose.yaml"
-IMG=$(sed -n 's/^AGENT_IMAGE="\(.*\)"$/\1/p' deploy.sh)
-OUT=$HOME/tayet-backup/$(date -u +%Y%m%dT%H%M%SZ)
-( umask 077; mkdir -p "$OUT" )
-```
-
-Database first, then the volumes, in this order:
+Run, in `infra/deploy`, as a user that can run Docker, with the stack up:
 
 ```bash
-for db in synapse mas; do
-  $DC exec -T postgres pg_dump -U synapse -Fc "$db" > "$OUT/$db.dump"
-done
-for v in synapsedata escrowdata; do
-  docker run --rm -v "${P}_$v:/data:ro" -v "$OUT:/out" "$IMG" \
-    tar czf "/out/$v.tgz" --numeric-owner -C /data .
-done
-tar czf "$OUT/secrets.tgz" --exclude=secrets/backups secrets
-ls -l "$OUT"
+./deploy.sh backup
 ```
 
-Expected: five files, none empty: `synapse.dump`, `mas.dump`, `synapsedata.tgz`, `escrowdata.tgz`,
-`secrets.tgz`.
+It writes one directory per backup, named after the time in UTC, with two halves:
 
-Then copy `secrets.tgz` to one place and `escrowdata.tgz` to a different one, copy the other three
-files to either, and remove the directory from the server:
+```
+$HOME/tayet-backup/<UTC>/keys/   secrets.tgz, MANIFEST
+$HOME/tayet-backup/<UTC>/data/   synapse.dump, mas.dump, synapsedata.tgz, escrowdata.tgz, orgdata.tgz, MANIFEST
+```
+
+`keys/` holds `secrets/`; `data/` holds the databases and the three volumes. Each `MANIFEST` lists the
+backup, the commit of the code and the size and checksum of each file. The `MANIFEST` of `data/` is
+also signed, in `data/MANIFEST.sig`, with a key that lives in `secrets/` and so travels in `keys/`:
+`restore` refuses a `data/` that was changed or that comes from another installation. The signature
+proves where `data/` came from; it encrypts nothing. To write somewhere else, pass the directory:
+`./deploy.sh backup /path/to/dir`. It refuses a directory inside `secrets/`.
+
+Then copy `keys/` to one place and `data/` to a different one, and remove the directory from the
+server. The command prints the path.
+
+The stack stays up during the backup. `./deploy.sh up` also dumps both databases into
+`secrets/backups/` every time it runs and keeps the five most recent; those dumps are only as recent
+as your last `up` and do not replace this backup.
+
+`./deploy.sh check` prints a warning when no backup was made on this installation or the last one is
+more than 7 days old. The warning does not change its exit status.
+
+**Schedule it.** For example, a script that makes the backup and copies each half to its own
+destination (replace the two destinations with yours):
 
 ```bash
-rm -rf "$OUT"
+#!/usr/bin/env bash
+set -euo pipefail
+cd /path/to/tayet/infra/deploy
+./deploy.sh backup
+B=$(ls -d "$HOME"/tayet-backup/*Z | tail -n 1)
+rsync -a "$B/keys/" "keys-host.example:tayet-keys/${B##*/}/"
+rsync -a "$B/data/" "data-host.example:tayet-data/${B##*/}/"
+rm -rf "$B"
 ```
 
-The stack can stay up during the backup. `./deploy.sh up` also dumps both databases into
-`secrets/backups/` every time it runs and keeps the five most recent; those dumps are only as
-recent as your last `up`.
+and a crontab line that runs it every night:
+
+```
+30 3 * * * /path/to/tayet-backup.sh >> "$HOME/tayet-backup.log" 2>&1
+```
 
 Rehearse the restore once before you depend on it.
 
 ## 12. Restore
 
-Use this on a new server, or on the same server after losing data. You need the five backup files
-in one directory, the server prepared as in step 1, the DNS records pointing to it, and the same
-release of the code that was running when the backup was made (step 5).
+Use this on a new server, or on the same server after losing data. You need both halves of the same
+backup (`keys/` and `data/`), the server prepared as in step 1, the DNS records pointing to it, and
+the same release of the code that was running when the backup was made (step 5).
 
 If `infra/deploy/secrets/` already exists, stop the stack and move it aside. Do not delete it.
+`restore` refuses to run while `secrets/` exists or while the stack is up.
 
 ```bash
 ./deploy.sh down
 mv secrets secrets.before-restore
 ```
 
-Restore the secrets and build:
+Restore:
 
 ```bash
-IN=/path/to/backup
-tar xzf "$IN/secrets.tgz"
-P=$(sed -n 's/^TAYET_COMPOSE_PROJECT=//p' secrets/deployment.env); P=${P:-tayet}
-DC="docker compose -p $P --env-file secrets/deployment.env -f compose.yaml"
-IMG=$(sed -n 's/^AGENT_IMAGE="\(.*\)"$/\1/p' deploy.sh)
+./deploy.sh restore /path/to/<UTC>/keys /path/to/<UTC>/data
+```
+
+It checks both manifests first and refuses if a file is missing or changed, or if the two halves come
+from different backups. It warns when the backup was made with another commit of the code. Then it
+puts `secrets/` back, restores both databases and the volumes, and empties `agentdata`. It leaves
+the stack stopped. A backup made before the volume `orgdata` existed has no `orgdata.tgz`: `restore`
+accepts it and leaves `orgdata` empty. With such a backup, run `./deploy.sh render` before `build`.
+
+Build (on a new server) and start:
+
+```bash
 ./deploy.sh build
-```
-
-Restore the databases:
-
-```bash
-$DC up -d --wait postgres
-for db in synapse mas; do
-  $DC exec -T postgres pg_restore -U synapse -d "$db" --clean --if-exists < "$IN/$db.dump"
-done
-```
-
-Restore the two volumes:
-
-```bash
-$DC up --no-start synapse escrow
-for v in synapsedata escrowdata; do
-  docker run --rm -v "${P}_$v:/data" -v "$IN:/in:ro" "$IMG" \
-    sh -c "find /data -mindepth 1 -delete && tar xzf /in/$v.tgz --numeric-owner -C /data"
-done
-```
-
-Start and check:
-
-```bash
 ./deploy.sh up
 ./deploy.sh check
 ```
@@ -321,7 +340,15 @@ deposited is in `escrowdata`.
 
 `check` must exit with status 0. Then sign in and confirm that channels and messages are there.
 
-What a restore does not bring back: anything written after the backup was taken.
+**A restore returns the state of the backup.** Review it before people use the server again:
+
+- Anything written after the backup is gone: messages, files, channels, accounts.
+- Sign-ins made after the backup no longer work. Those browsers show that the access has ended, and
+  their people sign in again; their history comes back through key custody.
+- Sign-ins that existed when the backup was taken work again without a new sign-in, even if they were
+  ended after it. People removed and roles changed after the backup are also back as they were then.
+  End those sign-ins again, remove those people again and fix those roles before you open the server
+  to use.
 
 ## 13. Update
 
@@ -346,6 +373,33 @@ changed `hash:` line; that is not a change. If it shows any other difference in 
 restart command for `dex` that `render` prints.
 
 `up` dumps both databases before applying anything.
+
+**From a version without the push service.** The same four commands bring it in, with no `down`:
+`render` lets the chat server reach the push service, `build` generates the push key pair in
+`secrets/push.env` and puts its public key in the web app, `up` creates the push network and the
+`push` container and recreates `synapse` on both networks. Then `check` must exit with status 0 and
+print:
+
+```
+Push /healthz: OK ✅
+```
+
+If another Docker network on the host overlaps `10.213.77.0/29` (step 7 shows how to see it), add
+the line `TAYET_PUSH_SUBNET=<subnet>` to `secrets/deployment.env` before `render`, with a subnet that
+follows the rule in step 7.
+
+**If nobody can administer the organization.** The app does not let anyone demote or remove the last
+admin. If nobody can administer the organization anymore, for example because the only admin lost
+their access, make a member an admin again, with the stack up:
+
+```bash
+./deploy.sh promote-admin maria@example.com
+```
+
+It prints the username and whether the account was promoted or already an admin. It refuses, with a
+non-zero status, an email with no account, a deactivated or locked account, a guest, a removed person
+and an agent. `up` makes the bootstrap admin an admin only when it creates the account, so the next
+update does not undo a role changed in the app.
 
 ## Where to go next
 

@@ -1,12 +1,12 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
 import { HOMESERVER } from '../test/support/synapse'
 import { LUZ, RUI } from './fixtures/users'
-import { accountSettings } from './support/account'
 import { expectNoProtocolLeak } from './support/assertions'
 import { ConsoleLedger, FIRST_LOGIN_404, recognizedSet404 } from './support/console'
-import { AGENTS, APPROVAL, AWAITING, LIST, MANAGE, PEOPLE } from './support/labels'
+import { AGENTS, APPROVAL, AWAITING, LIST, MANAGE } from './support/labels'
+import { closeAdmin, openAdmin } from './support/admin'
 import { signIn } from './support/login'
-import { addMember, createChannel, deleteSharedRooms, openManage } from './support/rooms'
+import { addMember, closePicker, createChannel, deleteSharedRooms, openManage } from './support/rooms'
 import { channelRow, conversations, highlighted, row } from './support/workspace'
 
 // Phone project (PLANO-MOBILE M9b; workspace.md §23.2 item 5, §23.4), on the mould of agent-forms.spec.ts: luz
@@ -114,10 +114,9 @@ test('"Aguardando você" on the phone: the row, the screen, an answer that stays
     })
 
     await test.step('0b. luz creates the agent through the UI and adds it to both channels; the agent joins', async () => {
-      const account = await accountSettings(luz)
-      await expect(account.getByText(PEOPLE.section)).toBeVisible({ timeout: 30_000 })
-      await account.getByRole('button', { name: new RegExp(`^${PEOPLE.title}`) }).click()
-      await luz.getByRole('dialog', { name: PEOPLE.title }).getByRole('button', { name: AGENTS.add }).click()
+      // Slice 1c: "Pessoas" lives in the Admin, opened from "Sua conta".
+      await openAdmin(luz)
+      await luz.getByRole('button', { name: AGENTS.add }).click()
       const create = luz.getByRole('dialog', { name: AGENTS.createTitle })
       await create.getByLabel(AGENTS.fieldName).fill(NAME)
       await create.getByRole('button', { name: AGENTS.create }).click()
@@ -131,12 +130,15 @@ test('"Aguardando você" on the phone: the row, the screen, an answer that stays
         if ((await luz.getByRole('dialog').count()) > 0) await luz.keyboard.press('Escape')
         await expect(luz.getByRole('dialog')).toHaveCount(0, { timeout: 1_000 })
       }).toPass({ timeout: 15_000 })
+      // Back from the Admin to the conversations.
+      await closeAdmin(luz)
       for (const name of [CH1, CH2]) {
         await openManage(luz, name, 'public')
         await luz.getByRole('button', { name: MANAGE.addMember }).click()
         const candidate = luz.getByRole('dialog', { name: MANAGE.addMember }).getByRole('button', { name: new RegExp(NAME) })
         await expect(candidate).toBeVisible({ timeout: 30_000 })
         await candidate.click()
+        await closePicker(luz, candidate)
         rooms[name] = await poll(() => agent.invitedRoom(name), `the invite to ${name} reaches the agent`)
         await agent.join(rooms[name]!)
         const member = luz.getByRole('region', { name: MANAGE.members }).getByRole('listitem').filter({ hasText: NAME })

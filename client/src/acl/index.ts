@@ -62,12 +62,14 @@ export type {
   PersonInvite, // ADR-083: resultado de invitePerson, com os canais que falharam.
   NewAgent, // ADR-086: resultado de createAgent (id + credencial exibida uma vez).
   AgentPatch, // ADR-086: input de updateAgent (nome, cor).
+  OrgAccess, // ADR-118 dec. 4: resultado de getOrgAccess (admins e sem acesso válido).
   PageCursor,
   Page,
   AwaitingApproval, // ADR-099: one item of approvals.awaiting, for the "Aguardando você" screen (M9b).
   SearchHit, // ADR-074: resultado da busca local (Message + canal + trecho), consumido pela UI de busca no PR 2.
   Unsubscribe,
   ConnectionState,
+  ChannelAbilities, // ADR-115: what the session may do in one channel, the shape of getChannelAbilities.
   DomainEvent,
   ResetOutcome,
   OutgoingBody,
@@ -78,6 +80,8 @@ export type {
   DataExportOptions, // ADR-096: input of exportMyData; consumed by the export dialog (PLANO-EXPORT-DADOS §0.3.6).
   DataExportPart, // ADR-096: one part of exportMyData's output, synthetic identifiers only.
   AccountPreferences, // The account's interface preferences (language), the shape of getAccountPreferences.
+  DeviceNotificationSubscription, // ADR-117 dec. 6: the input of enableDeviceNotifications.
+  NotificationTarget, // ADR-117 dec. 5: the input of resolveNotificationTarget.
   AclMode,
   ConceptKind,
   AclTelemetry,
@@ -94,6 +98,9 @@ export {
   ConnectionError,
   PersonExistsError,
   PeopleUnavailableError,
+  LastAdminError, // ADR-118 dec. 5: rebaixar deixaria a organização sem admin.
+  NotMemberError, // ADR-118 dec. 5: promover quem não é membro (convidado, removido).
+  OrgAccessDeniedError, // ADR-118 dec. 6: o serviço recusou o verbo de organização (a superfície fecha).
   NameInUseError, // ADR-086 dec. 6: nome de agente em uso (criar/renomear) ou apelido igual a nome de agente.
 } from '@tayet/shared'
 

@@ -148,6 +148,8 @@ describe('useChat — thread summary + per-root unread', () => {
       currentUser: async () => alice,
       getThreadUnread,
       getTimeline: async () => ({ items: initial, nextCursor: undefined as PageCursor | undefined }),
+      getConnectionState: () => 'connecting' as const,
+      getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
       subscribe: () => () => {},
       subscribeChannel: (_id: ChannelId, h: (e: DomainEvent) => void) => {
         channelHandler = h
@@ -211,6 +213,8 @@ describe('useChat — thread summary + per-root unread', () => {
       currentUser: async () => alice,
       getThreadUnread: async () => ({ unread: false }),
       getTimeline,
+      getConnectionState: () => 'connecting' as const,
+      getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
       subscribe: () => () => {},
       subscribeChannel: () => () => {},
       markRead: async () => {},

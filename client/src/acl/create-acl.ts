@@ -29,6 +29,10 @@ export function createAcl(opts: AclOptions): Acl {
     isOrgAdmin: () => gateway.isOrgAdmin(),
     // ADR-056: synchronous point read off the ACL-side presence map — pass-through.
     getPresence: (user) => gateway.getPresence(user),
+    // ADR-114: synchronous point read of the last reported connection state — pass-through.
+    getConnectionState: () => gateway.getConnectionState(),
+    // ADR-115: synchronous point read of what the session may do in a channel — pass-through.
+    getChannelAbilities: (id) => gateway.getChannelAbilities(id),
     getDevices: async () => gateway.getDevices(),
     currentUser: () => gateway.currentUser(),
     // ADR-040 → ADR-042: leitura + patch editável (account-data + setDisplayName + extended profile) —
@@ -85,12 +89,18 @@ export function createAcl(opts: AclOptions): Acl {
     updateAgent: (user, patch) => gateway.updateAgent(user, patch),
     reissueAgent: (user) => gateway.reissueAgent(user),
     removeAgent: (user) => gateway.removeAgent(user),
+    getOrgAccess: () => gateway.getOrgAccess(),
+    setOrgAdmin: (user, admin) => gateway.setOrgAdmin(user, admin),
     setRole: (channelId, user, role) => gateway.setRole(channelId, user, role),
     openDirectMessage: (user) => gateway.openDirectMessage(user),
     openGroupConversation: (users) => gateway.openGroupConversation(users),
     convertToChannel: (id, name) => gateway.convertToChannel(id, name),
     acknowledgeAccess: (access) => gateway.acknowledgeAccess(access),
     resetAccess: () => gateway.resetAccess(),
+    // ADR-117 dec. 6: this device's notifications with the app closed — pass-through.
+    enableDeviceNotifications: (subscription) => gateway.enableDeviceNotifications(subscription),
+    disableDeviceNotifications: () => gateway.disableDeviceNotifications(),
+    resolveNotificationTarget: (target) => gateway.resolveNotificationTarget(target),
     resolveMedia: (ref, variant) => gateway.resolveMedia(ref, variant),
     // ADR-096: the person's data export, as parts — pass-through.
     exportMyData: (opts) => gateway.exportMyData(opts),

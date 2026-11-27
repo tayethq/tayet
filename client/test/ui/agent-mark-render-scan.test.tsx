@@ -7,7 +7,7 @@ import { Workspace } from '../../src/ui/components/Workspace'
 import { SearchResults } from '../../src/ui/components/SearchResults'
 import { agentColorOf } from '../../src/ui/components/AgentAvatar'
 import { useSearch } from '../../src/ui/useSearch'
-import { PeoplePanel } from '../../src/ui/components/PeoplePanel'
+import { AdminPeople } from '../../src/ui/components/AdminPeople'
 import { NewConversationDialog } from '../../src/ui/components/NewConversationDialog'
 import { ChannelManagementPanel } from '../../src/ui/components/ChannelManagementPanel'
 import { UserProfileDialog } from '../../src/ui/components/UserProfileDialog'
@@ -26,7 +26,8 @@ import { copy, fill } from '../support/copy'
 // indicator anywhere — the mark comes from the kind, never from the name.
 //
 // F1 rows → where they are mounted here: Timeline/ThreadPanel (MessageRow grouped + the thread panel),
-// quoted reply preview, composer reply banner, DM header and DM sidebar row → Workspace; PeoplePanel;
+// quoted reply preview, composer reply banner, DM header and DM sidebar row → Workspace; AdminPeople (the Admin's people
+// list, which replaced the PeoplePanel of "Sua conta" in slice 1c);
 // @-picker → RichComposer; search → SearchResults; NewConversationDialog (options, chips,
 // suggestions); channel members + add-member picker → ChannelManagementPanel; UserProfileDialog;
 // notification → createNotifier. Account/self: an agent never signs in to the client (no session of
@@ -51,6 +52,7 @@ const alice: User = { id: ALICE_ID, displayName: 'Alice Souza', kind: 'member' }
 const ROW = [
   'article',
   'li',
+  '[role="row"]',
   // The conversation header's name: its row is the whole header, where the agent's block sits before
   // the heading.
   'h2:not(.channel-header__name)',
@@ -244,7 +246,7 @@ describe('gate "agente sem marca" — approval card', () => {
   it('OS notification of the card: the agents’ title, "Pede aprovação: {primeira linha}"', async () => {
     const shown: Array<{ title: string; body: string }> = []
     const notifier = createNotifier(
-      { getChannel: () => CHANNEL, getSelectedId: () => undefined, select: () => {}, getMembers: async () => [agent, alice] },
+      { getChannel: () => CHANNEL, getSelectedId: () => undefined, select: () => {}, jumpTo: () => {}, getMembers: async () => [agent, alice] },
       {
         permission: () => 'granted',
         notify: (title, { body }) => {
@@ -270,20 +272,17 @@ describe('gate "agente sem marca" — approval card', () => {
   })
 })
 
-// ── PeoplePanel ──────────────────────────────────────────────────────────────────────────────────
+// ── AdminPeople ──────────────────────────────────────────────────────────────────────────────────
 const asPerson = (user: User): Person => ({ user, pending: false, self: false })
 
-describe('gate "agente sem marca" — PeoplePanel', () => {
+describe('gate "agente sem marca" — AdminPeople', () => {
   const mount = (who: User) =>
     render(
-      <PeoplePanel
+      <AdminPeople
         people={[asPerson(alice), asPerson(who)]}
-        filter=""
-        onFilter={() => {}}
+        access={{ status: 'ready', admins: new Set([ALICE_ID]), withoutAccess: new Set(), adminCount: 1 }}
         onInvite={() => {}}
-        onRemove={() => {}}
-        onBack={() => {}}
-        onClose={() => {}}
+        onAction={() => {}}
       />,
     )
   it('the agent line: avatar, "operado por", no kind word', () => {
@@ -295,9 +294,8 @@ describe('gate "agente sem marca" — PeoplePanel', () => {
   // row's verb is "Remover", never "Cancelar convite".
   it('the agent line: the verb is "Remover", never "Cancelar convite"', () => {
     const { container, getByRole } = mount(agent)
-    expect(getByRole('button', { name: fill(copy.agent.removeLabel, { name: NAME }) }).textContent).toBe(
-      copy.people.remove,
-    )
+    fireEvent.click(getByRole('button', { name: fill(copy.admin.actionsFor, { name: NAME }) }))
+    expect(getByRole('menuitem', { name: copy.agent.remove })).toBeTruthy()
     expect(container.textContent).not.toContain(copy.people.cancelInvite)
     expect(container.textContent).not.toContain(copy.people.pending)
   })
@@ -492,6 +490,7 @@ describe('gate "agente sem marca" — channel members', () => {
   const mount = (who: User) =>
     render(
       <ChannelManagementPanel
+        abilities={{ rename: true, editTopic: true, addPeople: true, removePeople: true, setRoles: true, archive: true }}
         channel={CHANNEL}
         members={[
           { user: alice, role: 'admin', state: 'active', self: true },
@@ -570,6 +569,7 @@ describe('gate "agente sem marca" — OS notification (text)', () => {
         getChannel: (id) => channels[id],
         getSelectedId: () => undefined,
         select: () => {},
+        jumpTo: () => {},
         getMembers: async () => [who, alice],
       },
       env,

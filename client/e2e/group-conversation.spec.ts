@@ -3,7 +3,7 @@ import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
 import { VAL, WES, XIN } from './fixtures/users'
 import { expectNoProtocolLeak, expectReadable } from './support/assertions'
 import { ConsoleLedger, FIRST_LOGIN_404, recognizedSet404 } from './support/console'
-import { GROUP, LIST, NEW_CONVERSATION, NOTIFICATIONS } from './support/labels'
+import { GROUP, LIST, NEW_CONVERSATION, NOTIFICATIONS, TIMELINE } from './support/labels'
 import { signIn } from './support/login'
 import { NotificationStub } from './support/notifications'
 import { deleteGroupsOf } from './support/rooms'
@@ -125,6 +125,9 @@ test('group conversation: created from the dialog, seen by the others, written a
       await setHidden(pageB, false)
       await groupWith(pageB, [A_NAME, C_NAME]).click()
       await expectReadable(pageB, text)
+      // Issue #421: B joined the new group after its first sync; the first read reaches the room's start, so the
+      // timeline offers no older messages.
+      await expect(pageB.getByRole('main').getByRole('button', { name: TIMELINE.loadOlder })).toHaveCount(0)
       await expect(pageB).toHaveTitle('Tayet')
       expect(stubB.shown).toHaveLength(1)
       await expectNoProtocolLeak(pageA, pageB)

@@ -11,10 +11,18 @@ export const ROOM = '!all:tayet.local'
 export const ME = 'io.tayet.member'
 
 export interface Fake {
-  users: Array<{ id: string; username: string; displayname?: string; admin?: boolean; deactivated?: boolean }>
+  users: Array<{ id: string; username: string; displayname?: string; admin?: boolean; deactivated?: boolean; locked?: boolean }>
   emails: Array<{ user_id: string; email: string }>
   links: Array<{ id: string; user_id: string; provider_id: string; subject: string }>
   sessions: Array<{ id: string; body: Record<string, unknown>; revoked?: boolean; revokedAt?: number }>
+  // OAuth2 and compat sessions for the access read; `user_id: null` is an admin client's token.
+  oauth2Sessions: Array<{ id: string; user_id: string | null; finished?: boolean }>
+  compatSessions: Array<{ id: string; user_id: string; finished?: boolean }>
+  // Every `filter[...]` the fake refused: a filter MAS does not know is silently ignored there, so a
+  // typo would turn a narrow list into the whole collection. Here it is a loud error.
+  filterViolations: string[]
+  // Called before every set-admin write: the hook the race tests use to interleave.
+  beforeSetAdmin?: () => Promise<void>
   state: Map<string, Record<string, unknown>>
   invites: string[]
   // PUT /profile/:mxid/displayname: quem escreveu (ator da sessão) e o quê.
@@ -43,6 +51,9 @@ export function seed(): Fake {
     emails: [],
     links: [],
     sessions: [],
+    oauth2Sessions: [],
+    compatSessions: [],
+    filterViolations: [],
     state: new Map(),
     invites: [],
     displaynames: [],
@@ -57,14 +68,44 @@ export function seed(): Fake {
   }
 }
 
+// The filters each admin API collection knows, as measured on MAS 1.27.0.
+const KNOWN_FILTERS: Record<string, string[]> = {
+  users: ['admin', 'status'],
+  'user-emails': ['email'],
+  'upstream-oauth-links': ['user'],
+  'personal-sessions': ['actor_user', 'status', 'expires_before'],
+  'oauth2-sessions': ['user', 'status'],
+  'compat-sessions': ['user', 'status'],
+}
+
+// One page of a cursor listing, in the shape MAS returns (`links.next` with `page[after]`, `meta.count`).
+function paged<T extends { id: string }>(url: URL, rows: T[], toRow: (r: T) => unknown): unknown {
+  const first = Number(url.searchParams.get('page[first]') ?? '10')
+  const after = url.searchParams.get('page[after]')
+  const start = after === null ? 0 : rows.findIndex((r) => r.id === after) + 1
+  const page = rows.slice(start, start + first)
+  const next = new URL(url.href)
+  next.searchParams.set('page[after]', page.at(-1)?.id ?? '')
+  return {
+    meta: { count: rows.length },
+    data: page.map(toRow),
+    links: start + first < rows.length ? { next: `${next.pathname}${next.search}` } : {},
+  }
+}
+
 export function fakeFetch(fake: Fake): typeof fetch {
   const json = (status: number, body: unknown): Response =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
   const userRow = (u: Fake['users'][number]): unknown => ({
     id: u.id,
-    attributes: { username: u.username, admin: u.admin === true, deactivated_at: u.deactivated === undefined ? null : '2026-11-04T00:00:00Z' },
+    attributes: {
+      username: u.username,
+      admin: u.admin === true,
+      deactivated_at: u.deactivated === undefined ? null : '2026-11-04T00:00:00Z',
+      locked_at: u.locked === true ? '2026-11-04T00:00:00Z' : null,
+    },
   })
-  const route = (input: string, init?: RequestInit): Response => {
+  const route = async (input: string, init?: RequestInit): Promise<Response> => {
     const url = new URL(input)
     const method = init?.method ?? 'GET'
     const path = decodeURIComponent(url.pathname)
@@ -126,6 +167,44 @@ export function fakeFetch(fake: Fake): typeof fetch {
     }
 
     if ((init?.headers as Record<string, string>).authorization !== 'Bearer adm') return json(401, {})
+    const collection = /^\/api\/admin\/v1\/([^/]+)$/.exec(path)?.[1]
+    for (const key of url.searchParams.keys()) {
+      const filter = /^filter\[(.+)\]$/.exec(key)?.[1]
+      if (filter !== undefined && !(KNOWN_FILTERS[collection ?? ''] ?? []).includes(filter)) {
+        fake.filterViolations.push(`${collection ?? path} ${key}`)
+        throw new Error(`fake MAS: unknown filter ${key} on ${collection ?? path}`)
+      }
+    }
+    const setAdmin = /^\/api\/admin\/v1\/users\/([^/]+)\/set-admin$/.exec(path)
+    if (setAdmin && method === 'POST') {
+      await fake.beforeSetAdmin?.()
+      const user = fake.users.find((u) => u.id === setAdmin[1])
+      if (!user) return json(404, {})
+      user.admin = body.admin === true
+      return json(200, { data: userRow(user) })
+    }
+    const active = url.searchParams.get('filter[status]') === 'active'
+    if (path === '/api/admin/v1/users' && method === 'GET') {
+      const admin = url.searchParams.get('filter[admin]')
+      const rows = fake.users.filter(
+        (u) =>
+          (admin === null || (u.admin === true) === (admin === 'true')) &&
+          (!active || (u.deactivated !== true && u.locked !== true)),
+      )
+      return json(200, paged(url, rows, userRow))
+    }
+    for (const [resource, list] of [
+      ['oauth2-sessions', fake.oauth2Sessions],
+      ['compat-sessions', fake.compatSessions],
+    ] as const) {
+      if (path === `/api/admin/v1/${resource}`) {
+        const user = url.searchParams.get('filter[user]')
+        const rows = (list as Array<{ id: string; user_id: string | null; finished?: boolean }>).filter(
+          (s) => (!active || s.finished !== true) && (user === null || s.user_id === user),
+        )
+        return json(200, paged(url, rows, (s) => ({ id: s.id, attributes: { user_id: s.user_id } })))
+      }
+    }
     const byName = /^\/api\/admin\/v1\/users\/by-username\/(.+)$/.exec(path)
     if (byName) {
       const user = fake.users.find((u) => u.username === byName[1])
@@ -190,7 +269,7 @@ export function fakeFetch(fake: Fake): typeof fetch {
           (actor === null || s.body.actor_user_id === actor) &&
           (!url.searchParams.has('filter[expires_before]') || s.id.startsWith('expired')),
       )
-      return json(200, { data: rows.map((s) => ({ id: s.id })), query: url.search })
+      return json(200, { data: rows.map((s) => ({ id: s.id, attributes: { actor_user_id: s.body.actor_user_id } })), query: url.search })
     }
     const revoke = /^\/api\/admin\/v1\/personal-sessions\/(.+)\/revoke$/.exec(path)
     if (revoke) {
@@ -203,7 +282,7 @@ export function fakeFetch(fake: Fake): typeof fetch {
     }
     return json(404, {})
   }
-  return ((input: string, init?: RequestInit) => Promise.resolve(route(input, init))) as typeof fetch
+  return ((input: string, init?: RequestInit) => route(input, init)) as typeof fetch
 }
 
 // Tokens fixos para as pessoas; um token cunhado pelo fake (`mptN`) introspecta como o ator da sessão
@@ -213,6 +292,7 @@ export function fakeIntrospector(fake?: Fake): Introspector {
   const identities: Record<string, { sub: string; username: string }> = {
     'tok-alice': { sub: 'sub-alice', username: 'alice' },
     'tok-bob': { sub: 'sub-bob', username: 'bob' },
+    'tok-carol': { sub: 'sub-carol', username: 'carol' },
   }
   const minted = (token: string): { sub: string; username: string } | null => {
     const live = (s: Fake['sessions'][number]): boolean =>

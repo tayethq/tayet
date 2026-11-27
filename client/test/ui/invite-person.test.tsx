@@ -2,13 +2,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { InvitePersonDialog } from '../../src/ui/components/InvitePersonDialog'
-import { AccountSettings } from '../../src/ui/components/AccountSettings'
+import { OrgAdmin } from '../../src/ui/components/OrgAdmin'
 import { PeopleUnavailableError, PersonExistsError } from '../../src/acl'
 import type { Channel, ChannelId, NewPerson, Person, PersonInvite, UserId } from '../../src/acl'
 import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
 import { copy, fill } from '../support/copy'
-import { noExport } from '../support/data-export-fake'
-import { idleLanguage } from '../support/language-fake'
 
 // Dialog "Convidar pessoa" e os confirms (manifesto account-access.md §9.1, §9.2 g), um it por estado
 // do artboard. Fixtures com shape de protocolo de propósito: nunca chegam ao DOM.
@@ -208,36 +206,33 @@ describe('confirms de Pessoas', () => {
     pending,
     self: false,
   })
+  // Slice 1c: the confirms live in the Admin shell, reached through each row's ⋯ menu.
   function panel(onRemovePerson: (user: UserId) => Promise<void>) {
     const ui = render(
-      <AccountSettings
-        open
-        orgAdmin
+      <OrgAdmin
         people={[person('Bruna', false), person('Lúcia', true)]}
         inviteChannels={channels}
+        onBack={() => {}}
+        onGetOrgAccess={async () => ({ admins: [], withoutAccess: [] })}
+        onSetOrgAdmin={async () => {}}
         onInvitePerson={async () => invited}
         onRemovePerson={onRemovePerson}
-        accesses={[]}
-        onLoadProfile={async () => ({ fullName: 'Marina' })}
-        onSaveProfile={async () => {}}
-        onSaveAvatar={async () => {}}
-        onClearAvatar={async () => {}} onExportData={noExport}
-        onReset={() => {}}
-        onSignOut={() => {}}
-        theme="light"
-        onThemeChange={() => {}} language={idleLanguage}
-        onClose={() => {}}
-      />
+      />,
     )
-    fireEvent.click(ui.getByRole('button', { name: new RegExp(copy.people.title) }))
+    // Slice 1d: the shell opens on the Visão geral; "Pessoas" is one step of the navigation.
+    fireEvent.click(within(ui.getByRole('navigation', { name: copy.admin.nav })).getByRole('button', { name: copy.people.title }))
     return ui
+  }
+  const pick = (ui: ReturnType<typeof panel>, name: string, item: string) => {
+    fireEvent.click(ui.getByRole('button', { name: fill(copy.admin.actionsFor, { name }) }))
+    fireEvent.click(ui.getByRole('menuitem', { name: item }))
   }
 
   it('Remover: alertdialog com o corpo do §9.2 d; Cancelar não remove, danger-fill remove e volta', async () => {
     const onRemove = vi.fn(async () => {})
     const ui = panel(onRemove)
     const title = fill(copy.people.removeTitle, { name: 'Bruna' })
-    fireEvent.click(ui.getByRole('button', { name: fill(copy.people.removeLabel, { name: 'Bruna' }) }))
+    pick(ui, 'Bruna', copy.admin.removeFromOrg)
     const dialog = ui.getByRole('alertdialog', { name: title })
     expect(dialog.textContent).toContain(fill(copy.people.removeBody, { name: 'Bruna' }))
 
@@ -245,19 +240,19 @@ describe('confirms de Pessoas', () => {
     expect(onRemove).not.toHaveBeenCalled()
     expect(ui.queryByRole('alertdialog')).toBeNull()
 
-    fireEvent.click(ui.getByRole('button', { name: fill(copy.people.removeLabel, { name: 'Bruna' }) }))
+    pick(ui, 'Bruna', copy.admin.removeFromOrg)
     const danger = ui.getByRole('button', { name: copy.people.remove })
     expect(danger.getAttribute('data-variant')).toBe('danger-fill')
     fireEvent.click(danger)
     await waitFor(() => expect(ui.queryByRole('alertdialog')).toBeNull())
     expect(onRemove).toHaveBeenCalledWith(uid('@u-abc234def567-Bruna:tayet.local'))
-    expect(ui.getByRole('list', { name: copy.people.title })).toBeTruthy()
+    expect(ui.getByRole('table', { name: copy.people.title })).toBeTruthy()
   })
 
   it('Cancelar convite: a forma do confirm com a copy do §9.2 g', async () => {
     const onRemove = vi.fn(async () => {})
     const ui = panel(onRemove)
-    fireEvent.click(ui.getByRole('button', { name: fill(copy.people.cancelInviteTitle, { name: 'Lúcia' }) }))
+    pick(ui, 'Lúcia', copy.people.cancelInvite)
     const dialog = ui.getByRole('alertdialog', { name: fill(copy.people.cancelInviteTitle, { name: 'Lúcia' }) })
     expect(dialog.textContent).toContain(fill(copy.people.cancelInviteBody, { name: 'Lúcia' }))
     fireEvent.click(ui.getByRole('button', { name: copy.people.cancelInvite }))
@@ -268,7 +263,7 @@ describe('confirms de Pessoas', () => {
     const ui = panel(async () => {
       throw new PeopleUnavailableError()
     })
-    fireEvent.click(ui.getByRole('button', { name: fill(copy.people.removeLabel, { name: 'Bruna' }) }))
+    pick(ui, 'Bruna', copy.admin.removeFromOrg)
     fireEvent.click(ui.getByRole('button', { name: copy.people.remove }))
     await waitFor(() => expect(ui.getByRole('alert').textContent).toBe(copy.newConversation.failed))
     expect(ui.getByRole('alertdialog')).toBeTruthy()

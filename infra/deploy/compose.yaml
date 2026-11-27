@@ -66,6 +66,12 @@ services:
       # SOMENTE loopback do host: ops (o seed do `#all` e probes de admin do deploy.sh)
       # alcançam aqui; o tráfego PÚBLICO entra por matrix.<domínio base> via Caddy.
       - "127.0.0.1:${TAYET_HS_PORT:-8008}:8008"
+    # The push network (ADR-117 dec. 7) next to the default one, at a fixed address that deploy.sh
+    # derives from TAYET_PUSH_SUBNET (the homeserver is .2, the push service .3).
+    networks:
+      default:
+      push:
+        ipv4_address: ${TAYET_PUSH_SYNAPSE_IP:-10.213.77.2}
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8008/health').read()==b'OK' else 1)\""]
       interval: 5s
@@ -141,10 +147,6 @@ services:
       # ADR-082 dec. 3: admin API do MAS no listener interno, rede interna. Nunca pelo Caddy.
       ESCROW_MAS_ADMIN_URL: http://mas:8081
       ESCROW_MAS_ADMIN_CLIENT_ID: "000000000000000000ESCADM1N"
-      # ADR-083: Synapse pela rede interna; o provider é o Google de mas/config.yaml.tmpl.
-      ESCROW_HS_URL: http://synapse:8008
-      ESCROW_SERVER_NAME: ${TAYET_DOMAIN:?use ./deploy.sh ou --env-file secrets/deployment.env}
-      ESCROW_PEOPLE_PROVIDER_ID: 01M6EV4GP9QK3T7YH2ZD8NXGG1
     # ESCROW_ORG_KEY, ESCROW_CLIENT_SECRET e ESCROW_MAS_ADMIN_CLIENT_SECRET vêm do env-file
     # gitignored, gerado uma vez pelo `deploy.sh secrets`. Os dois secrets de client casam com
     # os clients `00000000000000000000ESCR0W` e `000000000000000000ESCADM1N` no MAS (mesmo valor
@@ -154,6 +156,46 @@ services:
     healthcheck:
       # /healthz é dep-free (server.ts). Liveness pura, no loopback DO CONTAINER.
       test: ["CMD", "node", "-e", "fetch('http://localhost:8090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  org:
+    # Organization service: people and agents, out of the escrow's process. Same regime as the
+    # escrow: from source, same pinned image, no published port. Reached only through chat.<base
+    # domain>/escrow, where the Caddyfile sends the people, agents and org paths here. On the default
+    # network (MAS and the homeserver), never on the push network; it holds no organization key and
+    # has no access to the escrow's volume.
+    image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee  # node:22-bookworm-slim
+    restart: unless-stopped
+    depends_on:
+      mas:
+        condition: service_started
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "src/server.ts"]
+    # SIGTERM drains the requests in flight (server.ts, 5 s cap); the grace period stays above the cap.
+    stop_grace_period: 10s
+    volumes:
+      - ../../org:/app:ro
+      - orgdata:/data             # the org service's audit.jsonl
+    environment:
+      ORG_PORT: "8091"
+      ORG_BIND: 0.0.0.0
+      ORG_STORE_DIR: /data
+      ORG_INTROSPECTION_URL: http://mas:8080/oauth2/introspect
+      ORG_CLIENT_ID: "00000000000000000000RG1NTR"
+      ORG_MAS_ADMIN_URL: http://mas:8081
+      ORG_MAS_ADMIN_CLIENT_ID: "0000000000000000000RGADM1N"
+      ORG_HS_URL: http://synapse:8008
+      ORG_SERVER_NAME: ${TAYET_DOMAIN:?use ./deploy.sh ou --env-file secrets/deployment.env}
+      # The Google provider of mas/config.yaml.tmpl.
+      ORG_PEOPLE_PROVIDER_ID: 01M6EV4GP9QK3T7YH2ZD8NXGG1
+    # ORG_CLIENT_SECRET and ORG_MAS_ADMIN_CLIENT_SECRET: generated once by deploy.sh (secrets, render,
+    # build or up), the same values rendered into the two MAS clients above.
+    env_file:
+      - ./secrets/org.env
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8091/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -195,6 +237,36 @@ services:
     env_file:
       - ./secrets/agent.env
 
+  push:
+    # Push gateway (ADR-117): turns the homeserver's push notifications into Web Push for the
+    # browsers' push services. Same regime as the escrow: from source, same pinned image, no data
+    # volume, no published port. ONLY on the push network: it reaches the homeserver and the outside
+    # (the push services), never the database, MAS or the escrow.
+    image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee  # node:22-bookworm-slim
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "src/server.ts"]
+    # SIGTERM drains the requests in flight (server.ts, 5 s cap); the grace period stays above the cap.
+    stop_grace_period: 10s
+    volumes:
+      - ../../push:/app:ro
+    environment:
+      PUSH_PORT: "8095"
+      PUSH_BIND: 0.0.0.0
+      PUSH_VAPID_SUBJECT: https://chat.${TAYET_DOMAIN:?use ./deploy.sh ou --env-file secrets/deployment.env}
+    # PUSH_VAPID_PRIVATE_KEY and PUSH_VAPID_PUBLIC_KEY: the installation's key pair, generated once by
+    # deploy.sh (secrets, build or up) and never replaced.
+    env_file:
+      - ./secrets/push.env
+    networks:
+      push:
+        ipv4_address: ${TAYET_PUSH_IP:-10.213.77.3}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8095/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   caddy:
     # Reverse proxy + TLS automático (ACME) — ADR-046. Digest pinado na Fatia 1
     # (caddy:2 → v2.11.4; ver corpo do PR). Único ponto de entrada público: 80/443.
@@ -205,6 +277,7 @@ services:
       - mas
       - dex
       - escrow
+      - org
     ports:
       - "${TAYET_HTTP_PORT:-80}:80"
       - "${TAYET_HTTPS_PORT:-443}:443"
@@ -225,10 +298,19 @@ services:
       - caddydata:/data
       - caddyconfig:/config
 
+networks:
+  # Only the homeserver and the push service. Fixed subnet so the homeserver can allow exactly the push
+  # service's address (ip_range_whitelist); the default network keeps the subnet Docker chose.
+  push:
+    ipam:
+      config:
+        - subnet: ${TAYET_PUSH_SUBNET:-10.213.77.0/29}
+
 volumes:
   pgdata:
   synapsedata:
   escrowdata:
+  orgdata:
   agentdata:
   caddydata:
   caddyconfig:

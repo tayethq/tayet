@@ -92,6 +92,8 @@ function fakeAcl(): { acl: Acl; emit: (e: DomainEvent) => void; acked: AccessId[
     getTimeline: async () => ({ items: [] }),
     getMembers: async () => [],
     getPresence: () => 'offline' as const,
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     getDevices: async () => [],
     currentUser: async () => ({ id: '@me:tayet.local' as unknown as UserId, displayName: 'Me', kind: 'member' }),
     getMyProfile: async () => ({ fullName: 'Me' }),
@@ -157,6 +159,11 @@ createChannel: async () => { throw new Error('membership verb not used in this t
     updateAgent: async () => {},
     reissueAgent: () => Promise.reject(new Error('not wired')),
     removeAgent: async () => {},
+    getOrgAccess: () => Promise.reject(new Error('unused')),
+    setOrgAdmin: async () => {},
+    enableDeviceNotifications: noop,
+    disableDeviceNotifications: noop,
+    resolveNotificationTarget: async () => undefined,
     signOut: noop,
   }
   return { acl, emit: (e) => handlers.forEach((h) => h(e)), acked }

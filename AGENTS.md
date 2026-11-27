@@ -6,7 +6,7 @@ Instructions for coding agents working in this repository. People should start a
 ## What this is
 
 Tayet is corporate chat that an organization hosts on its own server, as one Docker Compose stack.
-The packages are `client/`, `escrow/`, `agent/`, `shared/` and `sidecar/`. The deployment is
+The packages are `client/`, `escrow/`, `agent/`, `shared/`, `sidecar/`, `push/` and `org/`. The deployment is
 `infra/deploy/`. `infra/dev-stack/` is the local development stack.
 
 ## If you are installing Tayet

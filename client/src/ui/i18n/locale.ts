@@ -17,6 +17,8 @@ export const DEFAULT_LOCALE: Locale = 'pt-BR'
 // What resolution gives someone whose device speaks none of the active languages.
 export const FALLBACK_LOCALE: Locale = 'en'
 
+import { saveWorkerLocale } from '../../sw/store'
+
 const LOCALE_KEY = 'tayet.locale'
 
 let current: Locale = DEFAULT_LOCALE
@@ -82,6 +84,8 @@ export function resolveLocale(): Locale {
 export function applyLocale(locale: Locale): void {
   current = locale
   document.documentElement.lang = locale
+  // ADR-117 dec. 4: the service worker builds the push text in the language the page applied.
+  void saveWorkerLocale(locale)
 }
 
 export function getLocale(): Locale {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { beforeAll, describe, it, expect } from 'vitest'
 import { ESLint } from 'eslint'
 
 // Negative test of the JSX half of the copy gate (ADR-080 D4), in the molde of boundary.test.ts:
@@ -18,6 +18,14 @@ async function copyHits(code: string, filePath: string): Promise<{ copy: number;
 
 const UI = 'src/ui/components/__fixture__.tsx'
 const CATALOG = 'src/ui/i18n/__fixture__.tsx'
+
+// Warm-up (issue #7, as in shared/test/boundary.test.ts): the first lintText of the process loads
+// ESLint, the config and its plugins (0.6 s alone, 2.2 s under load). Paid here, under its own
+// deadline, on the first test's filePath, not inside the 5 s deadline of the first test; no assertion
+// depends on it.
+beforeAll(async () => {
+  await eslint.lintText('export {}\n', { filePath: UI })
+}, 60_000)
 
 describe('copy gate — JSX (ADR-080 D4)', () => {
   it.each([

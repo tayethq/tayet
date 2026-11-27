@@ -247,10 +247,21 @@ describe('files.upload (v1)', () => {
 })
 
 describe('the staging (relógio injetado)', () => {
+  // The tests that build their own UploadStaging take a directory of their own: the harness's staging (the
+  // server of the beforeEach) owns `dir`, and its boot sweep, which nobody awaits, may still be running —
+  // under load it can read the file these tests wrote and delete it, logging to the harness (issue #7).
+  let own: string
+  beforeEach(async () => {
+    own = await mkdtemp(join(tmpdir(), 'slack-staging-'))
+  })
+  afterEach(async () => {
+    await rm(own, { recursive: true, force: true })
+  })
+
   it('a ticket expires after 10 min: the upload and the completion → file_not_found; the sweep deletes it', async () => {
     let now = 1_000_000
     const logs: Array<Record<string, unknown>> = []
-    const s = new UploadStaging(dir, () => now, (l) => logs.push(l))
+    const s = new UploadStaging(own, () => now, (l) => logs.push(l))
     const { body, type } = multipart([{ name: 'body', filename: 'a.txt', data: 'abc' }])
     const boundary = boundaryOf(type) as string
     const late = s.issue('late.txt', 3)
@@ -259,27 +270,27 @@ describe('the staging (relógio injetado)', () => {
     const done = s.issue('done.txt', 3)
     await s.store(s.open(done.ticket), body, boundary, 1024)
     expect(s.take([done.id])).toHaveLength(1)
-    expect(await readdir(dir)).toEqual([done.ticket])
+    expect(await readdir(own)).toEqual([done.ticket])
     now += UPLOAD_TTL_MS - 1
     expect(s.take([done.id])).toHaveLength(1)
     now += 1
     expect(() => s.take([done.id])).toThrow('file_not_found')
     s.sweep()
     await new Promise((r) => setTimeout(r, 20))
-    expect(await readdir(dir)).toEqual([])
+    expect(await readdir(own)).toEqual([])
   })
 
   it('the boot sweep empties what an earlier run left; clear() empties it on a clean shutdown', async () => {
     const now = () => 1
-    const first = new UploadStaging(dir, now, () => {})
+    const first = new UploadStaging(own, now, () => {})
     const { body, type } = multipart([{ name: 'body', filename: 'a.txt', data: 'abc' }])
     const t = first.issue('a.txt', 3)
     await first.store(first.open(t.ticket), body, boundaryOf(type) as string, 1024)
-    expect(await readdir(dir)).toHaveLength(1)
+    expect(await readdir(own)).toHaveLength(1)
     const logs: Array<Record<string, unknown>> = []
-    const second = new UploadStaging(dir, now, (l) => logs.push(l))
+    const second = new UploadStaging(own, now, (l) => logs.push(l))
     await second.clear()
-    expect(await readdir(dir)).toEqual([])
+    expect(await readdir(own)).toEqual([])
     expect(logs).toContainEqual({ evt: 'upload-staging-swept', when: 'boot', files: 1 })
   })
 

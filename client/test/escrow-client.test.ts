@@ -236,7 +236,7 @@ describe('createPeopleClient (ADR-083)', () => {
 
   it.each([
     [409, 'exists'],
-    [403, 'rejected'],
+    [403, 'forbidden'],
     [400, 'rejected'],
     [502, 'unavailable'],
     [504, 'unavailable'],
@@ -265,6 +265,89 @@ describe('createPeopleClient (ADR-083)', () => {
     expect(await client(spy).remove('@u-x:t')).toEqual({ kind: 'removed' })
     expect(seen).toEqual([['http://escrow.test/v1/people/%40u-x%3At', 'DELETE']])
     expect(await client(answering(404)).remove('@u-x:t')).toEqual({ kind: 'rejected' })
+    expect(await client(answering(403, { error: 'forbidden' })).remove('@u-x:t')).toEqual({ kind: 'forbidden' })
     expect(await client(answering(502)).remove('@u-x:t')).toEqual({ kind: 'unavailable' })
+  })
+
+  it('agentes: 403 é forbidden em criar, editar, reemitir e remover', async () => {
+    const no = client(answering(403, { error: 'forbidden' }))
+    expect(await no.createAgent({ name: 'X', color: 'areia' })).toEqual({ kind: 'forbidden' })
+    expect(await no.updateAgent('@a-x:t', { name: 'Y' })).toEqual({ kind: 'forbidden' })
+    expect(await no.reissueAgent('@a-x:t')).toEqual({ kind: 'forbidden' })
+    expect(await no.removeAgent('@a-x:t')).toEqual({ kind: 'forbidden' })
+  })
+})
+
+// ADR-118 dec. 4 e 5 (fatia 1c): a leitura do papel e o verbo de promover/rebaixar, com as formas reais do
+// `org` (org/src/admins.ts): 409 traz `{ reason, userId }`, 403/400 trazem `{ error }`.
+describe('createPeopleClient — papel de admin (ADR-118)', () => {
+  const answering = (status: number, body: unknown = {}): typeof fetch =>
+    (async () => new Response(JSON.stringify(body), { status })) as typeof fetch
+  const client = (fetchFn: typeof fetch, timeoutMs?: number) =>
+    createPeopleClient({ baseUrl: 'http://escrow.test/', token: 'tok', fetchFn, timeoutMs })
+  const hanging = ((_url: string, init: RequestInit) =>
+    new Promise((_, reject) => {
+      init.signal!.addEventListener('abort', () => reject(new Error('aborted')))
+    })) as typeof fetch
+
+  it('access: GET /v1/org/access; 200 traz os dois conjuntos', async () => {
+    const seen: Array<[string, string]> = []
+    const spy = (async (url: string, init: RequestInit) => {
+      seen.push([url, init.method!])
+      return new Response(JSON.stringify({ admins: ['@a:t'], withoutAccess: ['@b:t', '@a-r:t'] }), { status: 200 })
+    }) as typeof fetch
+    expect(await client(spy).access()).toEqual({ kind: 'access', admins: ['@a:t'], withoutAccess: ['@b:t', '@a-r:t'] })
+    expect(seen).toEqual([['http://escrow.test/v1/org/access', 'GET']])
+  })
+
+  it.each([
+    [403, { error: 'forbidden' }, 'forbidden'],
+    [400, { error: 'bad_request' }, 'rejected'],
+    [404, { error: 'not_found' }, 'rejected'],
+    [502, { error: 'admin_unavailable' }, 'unavailable'],
+    [200, { admins: ['@a:t'] }, 'unavailable'],
+    [200, { admins: ['@a:t'], withoutAccess: [1] }, 'unavailable'],
+  ])('access: %i %j → %s', async (status, body, kind) => {
+    expect(await client(answering(status, body)).access()).toEqual({ kind })
+  })
+
+  it('access: prazo e rede viram unavailable', async () => {
+    expect(await client(hanging, 5).access()).toEqual({ kind: 'unavailable' })
+    expect(await client((() => Promise.reject(new Error('net'))) as typeof fetch).access()).toEqual({ kind: 'unavailable' })
+  })
+
+  it('setAdmin: PUT promove, DELETE rebaixa, no id codificado, corpo vazio', async () => {
+    const seen: Array<[string, string, unknown]> = []
+    const spy = (async (url: string, init: RequestInit) => {
+      seen.push([url, init.method!, init.body])
+      return new Response('{}', { status: 200 })
+    }) as typeof fetch
+    expect(await client(spy).setAdmin('@u-x:t', true)).toEqual({ kind: 'done' })
+    expect(await client(spy).setAdmin('@u-x:t', false)).toEqual({ kind: 'done' })
+    expect(seen).toEqual([
+      ['http://escrow.test/v1/people/%40u-x%3At/admin', 'PUT', undefined],
+      ['http://escrow.test/v1/people/%40u-x%3At/admin', 'DELETE', undefined],
+    ])
+  })
+
+  it.each([
+    [200, { userId: '@u:t', admin: true }, 'done'],
+    [400, { error: 'bad_target' }, 'rejected'],
+    [403, { error: 'forbidden' }, 'forbidden'],
+    [404, { error: 'not_found' }, 'rejected'],
+    [409, { reason: 'is_agent', userId: '@a-x:t', kind: 'agent' }, 'rejected'],
+    [409, { reason: 'not_member', userId: '@u:t' }, 'not_member'],
+    [409, { reason: 'last_admin', userId: '@u:t' }, 'last_admin'],
+    [409, { reason: 'something_new' }, 'rejected'],
+    [502, { error: 'admin_unavailable' }, 'unavailable'],
+  ])('setAdmin: %i %j → %s', async (status, body, kind) => {
+    expect(await client(answering(status, body)).setAdmin('@u:t', true)).toEqual({ kind })
+  })
+
+  it('setAdmin: prazo e rede viram unavailable', async () => {
+    expect(await client(hanging, 5).setAdmin('@u:t', false)).toEqual({ kind: 'unavailable' })
+    expect(await client((() => Promise.reject(new Error('net'))) as typeof fetch).setAdmin('@u:t', true)).toEqual({
+      kind: 'unavailable',
+    })
   })
 })

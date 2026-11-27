@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { beforeAll, describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { ESLint } from 'eslint'
 
@@ -14,6 +14,13 @@ async function messagesFor(code: string, filePath: string) {
 }
 
 const INDEX = 'src/index.ts'
+
+// Warm-up (issue #7): the first lintText of the process loads ESLint, the config and its plugins. That
+// cold load took 0.6–1.3 s alone and 15 s at worst on CI, inside the 5 s deadline of whichever test ran
+// first. Paid here, under its own deadline, on the first test's filePath; no assertion depends on it.
+beforeAll(async () => {
+  await eslint.lintText('export {}\n', { filePath: INDEX })
+}, 60_000)
 
 describe('ADR-088 clean-index vocabulary gate', () => {
   it('a star export in the clean index breaks the build (it would blind the vocabulary selector)', async () => {

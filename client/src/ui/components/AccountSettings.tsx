@@ -1,36 +1,22 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
-import type {
-  AgentColor,
-  AgentPatch,
-  NewAgent,
-  Channel,
-  DeviceId,
-  MyProfile,
-  NewPerson,
-  Person,
-  PersonInvite,
-  Presence,
-  Timestamp,
-  UserId,
-} from '@tayet/client'
+import type { DeviceId, MyProfile, Person, Presence, Timestamp } from '@tayet/client'
 import { Avatar, Button, Dialog, Segmented, Sweep } from '../primitives'
-import { InvitePersonDialog } from './InvitePersonDialog'
 import { DataExportDialog } from './DataExportDialog'
 import type { DataExportVerb } from '../useDataExport'
-import { AgentDialog, type AgentDialogMode } from './AgentDialog'
-import { PeoplePanel } from './PeoplePanel'
 import { ProfileEditor } from './ProfileEditor'
 import { AccountScreen, AccountSurface } from './AccountScreen'
 import { InstallSheet } from './InstallSheet'
 import { OpenOnPhoneDialog } from './OpenOnPhoneDialog'
 import { ResetSheet } from './ResetSheet'
 import { useCanInstall } from '../install'
+import { useCoarsePointer } from '../narrow'
 import { useStackBack, useStackDialog } from '../stack'
 import type { ResetStatus } from './ResetAccessBanner'
 import { relativeTimeOf } from './Timeline'
 import { type Theme } from '../theme'
 import type { LanguageChoice, LanguageState } from '../useLanguage'
+import type { DeviceNotificationsRow, DeviceNotificationsStatus } from '../useDeviceNotifications'
 import { Chevron } from '../icons'
 import { t, GLYPH, getLocale } from '../i18n'
 
@@ -100,18 +86,7 @@ function languageSubtitle(language: LanguageState): string {
   return t('account.languageDevice', { language: applied })
 }
 
-type View =
-  | 'main'
-  | 'access'
-  | 'confirm'
-  | 'profile'
-  | 'people'
-  | 'invite'
-  | 'removePerson'
-  | 'agent'
-  | 'export'
-  | 'phone'
-  | 'install'
+type View = 'main' | 'access' | 'confirm' | 'profile' | 'export' | 'phone' | 'install'
 
 // What is under each view: one step back (PLANO-MOBILE M7 H1). On the narrow window "Sua conta" and each step
 // above it are one entry of the stack each.
@@ -119,17 +94,13 @@ const UNDER: Record<Exclude<View, 'main'>, View> = {
   access: 'main',
   confirm: 'access',
   profile: 'main',
-  people: 'main',
-  invite: 'people',
-  removePerson: 'people',
-  agent: 'people',
   export: 'main',
   phone: 'main',
   install: 'main',
 }
 
 // The views with no narrow screen: one already open when the window narrows stays a dialog until it closes (H2).
-const DIALOG_ONLY: readonly View[] = ['people', 'invite', 'removePerson', 'agent', 'export', 'phone']
+const DIALOG_ONLY: readonly View[] = ['export', 'phone']
 
 // The language row sits in the appearance block, with no divider between the two. The control is the
 // system's own select, laid transparent over the closed field (value and chevron), so the list that
@@ -165,18 +136,80 @@ function LanguageRow({ language }: { language: LanguageState }) {
   )
 }
 
+const NOTIFICATIONS_STATE = {
+  off: 'account.notificationsOff',
+  enabling: 'account.notificationsEnabling',
+  on: 'account.notificationsOn',
+  failed: 'account.notificationsFailed',
+  blocked: 'account.notificationsBlocked',
+} as const satisfies Record<Exclude<DeviceNotificationsStatus, 'hidden'>, string>
+
+// "Notificações" (account-access.md §16): a section of its own between "Idioma" and "Acesso", in both widths. The
+// state sits under "Neste aparelho" (a live status), the button on the right, the help under the row. One button
+// element serves off, enabling, on and failed (R2: the focus stays on it when its label and action change); while
+// turning on it stays on screen faded and inert, like the language field while saving — the look is inline because
+// it keeps its focus (aria-disabled, not disabled). Blocked has no button: a focus that was on it goes to the state
+// line. Medium weight only on "Ativar", as the artboards draw.
+function NotificationsSection({ row }: { row: DeviceNotificationsRow }) {
+  const { status } = row
+  const rowRef = useRef<HTMLDivElement>(null)
+  const stateRef = useRef<HTMLParagraphElement>(null)
+  const focusToState = useRef(false)
+  // Read while the outgoing button is still in the page: was it the focused element?
+  if (status === 'blocked' && !focusToState.current) {
+    const button = rowRef.current?.querySelector('button')
+    if (button && document.activeElement === button) focusToState.current = true
+  }
+  useLayoutEffect(() => {
+    if (status !== 'blocked' || !focusToState.current) return
+    focusToState.current = false
+    stateRef.current?.focus()
+  }, [status])
+  if (status === 'hidden') return null
+  const enabling = status === 'enabling'
+  const turnOff = status === 'on'
+  return (
+    <>
+      <hr className="account-settings__divider" />
+      <section className="account-settings__notifications" data-status={status}>
+        <h3 className="account-settings__section-title">{t('account.notifications')}</h3>
+        <div ref={rowRef} className="account-settings__notifications-row">
+          <div className="account-settings__notifications-text">
+            <h4 className="account-settings__notifications-title">{t('account.notificationsDevice')}</h4>
+            <p ref={stateRef} tabIndex={-1} className="account-settings__notifications-state" role="status">
+              {t(NOTIFICATIONS_STATE[status])}
+            </p>
+          </div>
+          {status !== 'blocked' && (
+            <Button
+              variant="secondary"
+              className={
+                turnOff
+                  ? 'account-settings__notifications-action'
+                  : 'account-settings__notifications-action account-settings__notifications-action--on'
+              }
+              aria-disabled={enabling || undefined}
+              style={enabling ? { opacity: 0.5, cursor: 'default' } : undefined}
+              onClick={enabling ? undefined : turnOff ? row.onDisable : row.onEnable}
+            >
+              {t(turnOff ? 'account.notificationsTurnOff' : 'account.notificationsTurnOn')}
+            </Button>
+          )}
+        </div>
+        <p className="account-settings__notifications-help">
+          {t(status === 'blocked' ? 'account.notificationsHelpBlocked' : 'account.notificationsHelp')}
+        </p>
+      </section>
+    </>
+  )
+}
+
 export function AccountSettings({
   open,
   accesses,
   orgAdmin = false,
   people = [],
-  inviteChannels = [],
-  onInvitePerson,
-  onRemovePerson,
-  onCreateAgent,
-  onUpdateAgent,
-  onReissueAgent,
-  onRemoveAgent,
+  onOpenAdmin,
   displayName,
   avatarUrl,
   presence,
@@ -191,23 +224,17 @@ export function AccountSettings({
   theme,
   onThemeChange,
   language,
+  notifications,
   narrow = false,
   onClose,
 }: {
   open: boolean
   accesses: KnownAccess[]
-  // ADR-083 dec. 7: só o admin da organização vê a seção "Organização" e a sub-tela "Pessoas".
+  // ADR-083 dec. 7: só o admin da organização vê a seção "Organização". Na tela larga ela é a linha
+  // "Administrar organização", que abre a Admin (organization-admin.md §2.1 item 5; C7 da fatia 1c).
   orgAdmin?: boolean
   people?: Person[]
-  // Os verbos vêm junto com orgAdmin; os canais são a fonte dos chips do convite.
-  inviteChannels?: Channel[]
-  onInvitePerson?: (person: NewPerson) => Promise<PersonInvite>
-  onRemovePerson?: (user: UserId) => Promise<void>
-  // ADR-086 (Proposto): agent management, with orgAdmin like the people verbs. Absent → no agent actions.
-  onCreateAgent?: (name: string, color: AgentColor) => Promise<NewAgent>
-  onUpdateAgent?: (user: UserId, patch: AgentPatch) => Promise<void>
-  onReissueAgent?: (user: UserId) => Promise<{ token: string }>
-  onRemoveAgent?: (user: UserId) => Promise<void>
+  onOpenAdmin?: () => void
   // ADR-040: summary da entry-row "Editar perfil". Opcional — degrada pra sem-summary se ausente
   // (ex.: identidade ainda não resolvida). É o displayName efetivo já limpo (nickname || fullName), P1.
   displayName?: string
@@ -230,17 +257,14 @@ export function AccountSettings({
   theme: Theme
   onThemeChange: (theme: Theme) => void
   language: LanguageState
+  // ADR-117, addendum of 26/Nov/2026 (F1): the "Notificações" section. Absent, or hidden, it is not drawn.
+  notifications?: DeviceNotificationsRow
   // Below the width breakpoint: full screens of the stack and bottom sheets (account-access.md §13.2).
   narrow?: boolean
   onClose: () => void
 }) {
   const [view, setView] = useState<View>('main')
-  // ADR-086: what the AgentDialog opens on (create, or edit/remove of an agent of the list).
-  const [agentMode, setAgentMode] = useState<AgentDialogMode>({ kind: 'create' })
-  const [peopleFilter, setPeopleFilter] = useState('')
-  const [removing, setRemoving] = useState<Person | undefined>(undefined)
-  const [removeBusy, setRemoveBusy] = useState(false)
-  const [removeFailed, setRemoveFailed] = useState(false)
+  const coarse = useCoarsePointer()
 
   // Foco-no-swap main→access: o subtítulo da sub-tela recebe o foco ao entrar nela (anúncio de
   // contexto em drill-in; alvo não-destrutivo). A view `confirm` ancora seu foco no Cancelar
@@ -271,6 +295,12 @@ export function AccountSettings({
     }
   }, [showsMain, onLoadProfile])
 
+  // F3: the permission and the subscription are read again each time "Sua conta" opens (no call to the ACL).
+  const onOpenNotifications = notifications?.onOpen
+  useEffect(() => {
+    if (open) onOpenNotifications?.()
+  }, [open, onOpenNotifications])
+
   // A linha atual vem primeiro (manifesto §7.2); as demais mantêm a ordem da ACL (sort estável).
   const orderedAccesses = useMemo(
     () => [...accesses].sort((a, b) => Number(b.current) - Number(a.current)),
@@ -281,8 +311,8 @@ export function AccountSettings({
   // close — só retorna null — então o estado de view persiste sem isto).
   const handleClose = () => {
     setView('main')
-    setPeopleFilter('')
     language.onDismissFailure()
+    notifications?.onDismissFailure()
     onClose()
   }
 
@@ -339,20 +369,6 @@ export function AccountSettings({
     )
   }
 
-  if (view === 'agent' && onCreateAgent && onUpdateAgent && onReissueAgent && onRemoveAgent) {
-    return shown(
-      <AgentDialog
-        mode={agentMode}
-        operatorName={displayName}
-        onCreate={onCreateAgent}
-        onUpdate={onUpdateAgent}
-        onReissue={onReissueAgent}
-        onRemove={onRemoveAgent}
-        onClose={() => setView('people')}
-      />,
-    )
-  }
-
   // ── view 'export' ── "Exportar seus dados" (account-access.md §12): its own dialog, back to "Sua conta" on
   // close, as the invite goes back to "Pessoas" (PLANO-EXPORT-DADOS §0.3.6 item 1).
   if (view === 'export') {
@@ -362,111 +378,6 @@ export function AccountSettings({
   // ── view 'phone' ── "Abrir no celular" (account-access.md §13.1): a dialog of its own, like the export.
   if (view === 'phone') {
     return shown(<OpenOnPhoneDialog onClose={() => setView('main')} />)
-  }
-
-  if (view === 'invite') {
-    return shown(
-      <InvitePersonDialog channels={inviteChannels} onInvite={onInvitePerson!} onClose={() => setView('people')} />,
-    )
-  }
-
-  // ── view 'removePerson' ── confirm `alertdialog` (manifesto account-access.md §9.1, §9.2 g), na forma do
-  // confirm de reset. Await-and-close: a lista se corrige no people.changed; falha fica aqui.
-  if (view === 'removePerson' && removing) {
-    const name = removing.user.displayName
-    const title = removing.pending
-      ? t('people.cancelInviteTitle', { name })
-      : t('people.removeTitle', { name })
-    const backToPeople = () => {
-      if (!removeBusy) setView('people')
-    }
-    const confirmRemoval = async () => {
-      setRemoveBusy(true)
-      setRemoveFailed(false)
-      try {
-        await onRemovePerson!(removing.user.id)
-        setView('people')
-      } catch {
-        setRemoveFailed(true)
-      } finally {
-        setRemoveBusy(false)
-      }
-    }
-    return shown(
-      <Dialog
-        role="alertdialog"
-        size="gestao"
-        ariaLabel={title}
-        title={
-          <span className="account-settings__confirm-title">
-            <span className="account-settings__confirm-dot" aria-hidden="true" />
-            {title}
-          </span>
-        }
-        onClose={backToPeople}
-        footer={
-          <>
-            <Button variant="secondary" autoFocus disabled={removeBusy} onClick={backToPeople}>
-              {t('account.cancel')}
-            </Button>
-            <Button variant="danger-fill" disabled={removeBusy} onClick={() => void confirmRemoval()}>
-              {removing.pending ? t('people.cancelInvite') : t('people.remove')}
-            </Button>
-          </>
-        }
-      >
-        <div className="account-settings__confirm-body people__confirm-body">
-          <p>
-            {removing.pending ? t('people.cancelInviteBody', { name }) : t('people.removeBody', { name })}
-          </p>
-          {removeFailed && (
-            <p className="compose-dialog__error" role="alert">
-              {t('newConversation.failed')}
-            </p>
-          )}
-        </div>
-      </Dialog>,
-    )
-  }
-
-  if (view === 'people') {
-    return shown(
-      <PeoplePanel
-        people={people}
-        filter={peopleFilter}
-        onFilter={setPeopleFilter}
-        onInvite={() => setView('invite')}
-        onRemove={(person) => {
-          // ADR-086: an agent leaves by the AgentDialog's remove (revokes the credential first).
-          if (person.user.kind === 'agent') {
-            setAgentMode({ kind: 'remove', agent: person })
-            setView('agent')
-            return
-          }
-          setRemoving(person)
-          setRemoveFailed(false)
-          setView('removePerson')
-        }}
-        onAddAgent={
-          onCreateAgent
-            ? () => {
-                setAgentMode({ kind: 'create' })
-                setView('agent')
-              }
-            : undefined
-        }
-        onEditAgent={
-          onUpdateAgent
-            ? (person) => {
-                setAgentMode({ kind: 'edit', agent: person })
-                setView('agent')
-              }
-            : undefined
-        }
-        onBack={() => setView('main')}
-        onClose={handleClose}
-      />,
-    )
   }
 
   if (showInstall && view === 'install') {
@@ -672,6 +583,7 @@ export function AccountSettings({
           />
         </section>
         <LanguageRow language={language} />
+        {notifications && <NotificationsSection row={notifications} />}
         <hr className="account-settings__divider" />
         <section className="account-settings__access-section">
           <h3 className="account-settings__section-title">{t('account.accessSection')}</h3>
@@ -694,8 +606,9 @@ export function AccountSettings({
             before "Organização". */}
         <section className="account-settings__access-section">
           <h3 className="account-settings__section-title">{t('dataExport.section')}</h3>
-          {narrow ? (
-            // §13.2 item 2: it points at the computer, with no action and no chevron.
+          {narrow && coarse ? (
+            // §13.2 item 2: with a coarse pointer it points at the computer, with no action and no chevron. With a
+            // fine pointer the narrow window opens the wide dialog over the stack (#421 P3 a; PLANO-ADMIN §8.8 V8).
             <p className="account-settings__desktop-only">
               <span className="account-settings__access-entry-label">{t('dataExport.entry')}</span>
               <span className="account-settings__access-entry-summary">{t('dataExport.desktopOnly')}</span>
@@ -755,17 +668,20 @@ export function AccountSettings({
             <hr className="account-settings__divider" />
           </>
         )}
-        {orgAdmin && !narrow && (
+        {orgAdmin && !narrow && onOpenAdmin && (
           <>
             <section className="account-settings__access-section">
               <h3 className="account-settings__section-title">{t('people.orgSection')}</h3>
               <button
                 type="button"
                 className="account-settings__access-entry"
-                onClick={() => setView('people')}
+                onClick={() => {
+                  handleClose()
+                  onOpenAdmin()
+                }}
               >
                 <span className="account-settings__access-entry-text">
-                  <span className="account-settings__access-entry-label">{t('people.title')}</span>
+                  <span className="account-settings__access-entry-label">{t('admin.entry')}</span>
                   <span className="account-settings__access-entry-summary">
                     {t('people.summaryPeople', { n: people.length })} {GLYPH.dot}{' '}
                     {t('people.summaryGuests', { n: people.filter((p) => p.user.kind === 'guest').length })}

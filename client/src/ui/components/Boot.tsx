@@ -15,6 +15,7 @@ import { createTabLock, WAIT_COPY_DELAY_MS, type TabLock } from '../tab-lock'
 import { watchSearchState } from '../search-state'
 import { reconcileLanguage } from '../language'
 import { installDismissed, saveInstallDismissed, useCanInstall } from '../install'
+import { PUSH_STOP_BOUND_MS, stopDeviceNotifications, waitAtMost } from '../device-notifications'
 
 // Controlador de boot. Trilha 1: connect-como-estado (issue #1). Fatia 2a: detecta o callback OIDC,
 // inicia o login no no-session, mostra os beats. Fatia 2b: logout (ADR-034) — signOut na ACL (para o
@@ -35,6 +36,9 @@ export interface BootProps {
   tabLock?: TabLock
   // Page reload, for the language reconciliation after connecting. A seam like makeAcl.
   reload?: () => void
+  // ADR-117, addendum of 26/Nov/2026 (F5): the local stop of this device's notifications before the ACL's signOut.
+  // A seam like makeAcl; the default cancels the browser's subscription and the pending click target.
+  stopNotifications?: () => Promise<void>
 }
 
 const defaultMakeAcl = (
@@ -57,6 +61,7 @@ export function Boot({
   renderReady = (acl, onSignOut) => <App acl={acl} onSignOut={onSignOut} />,
   tabLock,
   reload = defaultReload,
+  stopNotifications = stopDeviceNotifications,
 }: BootProps) {
   // ADR-031 addendum Out/2026: a volta do provedor nasce no D4 — o primeiro paint do callback já é
   // `preparing`, sem "Conectando…" entre a página do provedor e o beat.
@@ -198,6 +203,9 @@ export function Boot({
   // de IndexedDB não tem superfície em Node).
   const signOut = useCallback(async () => {
     try {
+      // F5: the browser's subscription is cancelled first (the ACL removes the server's next), waited at most
+      // PUSH_STOP_BOUND_MS: the bound limits the wait and aborts nothing.
+      await waitAtMost(stopNotifications(), PUSH_STOP_BOUND_MS)
       await aclRef.current?.signOut()
     } catch (e) {
       console.error('[boot]', e)
@@ -209,7 +217,7 @@ export function Boot({
       lock.release()
       setPhase('revoked')
     }
-  }, [lock])
+  }, [lock, stopNotifications])
 
   // ADR-065 D4/D5: "Usar aqui" — pede ao dono que ceda e espera na fila, sem prazo de correção (dono
   // congelado = espera; nunca à força). Adquiriu → o boot normal (inclusive o callback preservado na
@@ -247,6 +255,8 @@ export function Boot({
     sessionLostRef.current = true
     const acl = aclRef.current
     aclRef.current = null
+    // F5: the local stop runs unawaited; the screen's order (ADR-059 D2) and the lock's (ADR-065 D2) do not change.
+    void stopNotifications().catch(() => undefined)
     clearSession()
     setPhase('revoked')
     // ADR-065 D2: a tela vem já; o lock só é solto quando o teardown da ACL assenta — wipe concluído

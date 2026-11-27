@@ -11,6 +11,9 @@ interface ImportMetaEnv {
   // (ADR-031 D1 — the SPA never enumerates the MAS providers; §8.L21).
   readonly VITE_OIDC_CLIENT_ID?: string
   readonly VITE_SSO_LABEL?: string
+  // ADR-117 (addendum of 25/Nov/2026): the installation's Web Push public key, baked in by `deploy.sh build`. Absent or
+  // empty, this build has no push: the "Notifications" row is hidden (read only in ui/device-notifications.ts).
+  readonly VITE_PUSH_PUBLIC_KEY?: string
 }
 
 interface ImportMeta {

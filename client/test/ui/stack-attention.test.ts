@@ -112,6 +112,7 @@ function notifier() {
     getChannel: (id) => (id === DM ? channel : undefined),
     getSelectedId: () => DM,
     select: () => {},
+    jumpTo: () => {},
     getMembers: () => Promise.resolve([]),
     getThreadOnScreen: () => state.screenThread,
   }

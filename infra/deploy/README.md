@@ -18,7 +18,7 @@ and routes by host:
 | Host | Internal target | Role |
 |---|---|---|
 | `<domain>` | Caddy, static | `/.well-known/matrix/{server,client}` (ADR-023/046), plus an optional site |
-| `chat.<domain>` | `client/dist` | The web app (static), plus `/escrow` same-origin → `escrow:8090` |
+| `chat.<domain>` | `client/dist` | The web app (static), plus `/escrow` same-origin → `org:8091` for people, agents and org, `escrow:8090` for the rest |
 | `matrix.<domain>` | `synapse:8008` | Matrix homeserver |
 | `auth.<domain>` | `mas:8080` | MAS (issuer and `public_base`); sign-in providers |
 | `login.<domain>` | `dex:5556` | OIDC provider for the bootstrap admin (ADR-048) |
@@ -26,16 +26,69 @@ and routes by host:
 Who talks to whom (internal Compose network; no public port except Caddy's):
 
 - `escrow` → `mas:8080/oauth2/introspect` (RFC 7662, ADR-017): introspection against the deployment's
-  own MAS.
+  own MAS; `mas:8081` (admin API) for the reset of access.
+- `org` → `mas:8080/oauth2/introspect` and `mas:8081` with clients of its own, and `synapse:8008`
+  (`#all`). It holds no organization key and has no access to the escrow's volume.
 - `mas` → `synapse:8008` (auth delegation), `postgres:5432` (database `mas`) and `dex:5556` (token,
   JWKS and userinfo of the upstream provider; split horizon: the browser reaches Dex through
   `login.<domain>`, MAS reaches it server to server on the internal network).
 - `synapse` → `postgres:5432` and `mas:8080` (delegation).
 - `agent` → `synapse:8008` and `escrow:8090`.
-- `caddy` → `synapse:8008`, `mas:8080`, `dex:5556`, `escrow:8090`.
+- `caddy` → `synapse:8008`, `mas:8080`, `dex:5556`, `escrow:8090`, `org:8091`.
+- `synapse` → `push:8095` and `push` → the browsers' push services, on a network of their own (next
+  section).
 - `synapse` publishes **only** `127.0.0.1:<TAYET_HS_PORT>` on the host: an operations loopback
   (`deploy.sh` seeds `#all` and runs its probes there). Public traffic enters through
   `matrix.<domain>`.
+
+## Organization service
+
+`org` (ADR-118, `org/README.md`) invites and removes people and creates and manages agents. It runs
+from source like the escrow, on the default network, with no published port and its own volume,
+`orgdata` (its `audit.jsonl` only; the history before it stays in the escrow's `audit.jsonl`).
+
+- **Routing.** The public URLs did not move: inside `handle_path /escrow/*`, a `handle` with a named
+  matcher sends `/v1/people`, `/v1/people/*`, `/v1/agents`, `/v1/agents/*` and `/v1/org/*` to
+  `org:8091`, and a `handle` without matcher sends the rest to `escrow:8090`. `test/local-install.sh`
+  proves it by stopping one process at a time.
+- **Credentials.** Two MAS clients of its own, introspection (`00000000000000000000RG1NTR`) and admin
+  (`0000000000000000000RGADM1N`, in `policy.data.admin_clients` next to the escrow's), with the secrets
+  in `secrets/org.env` (mode 600), generated once by `secrets`, `render`, `build` or `up`. Both
+  processes hold the MAS admin scope: the escrow keeps it for the reset of access.
+- **Update of an installation older than it:** `render` (it generates `secrets/org.env` and adds the
+  two clients to the MAS render) → `build` → `up` → `check`. No manual step.
+- **Organization admins.** The app promotes and demotes admins, and never demotes or removes the last
+  active one. `up` makes the bootstrap admin an admin only when it creates the account, so a demotion
+  made in the app survives the next deploy. When nobody can administer the organization any more,
+  `./deploy.sh promote-admin EMAIL` (SELF-HOSTING.md step 13) runs `src/cli.ts promote-admin` inside the
+  `org` container, with the same rules as the app's promotion and no caller; `deploy.sh` reads neither
+  the MAS admin API nor its database. It needs `org` running.
+
+## Push service
+
+`push` (ADR-117, `push/README.md`) receives the homeserver's push notifications, keeps only what the
+app would show, and sends it as Web Push to the push service of the subscriber's browser. It runs
+from source like the escrow, has no published port and no data volume.
+
+- **Network.** `push` is only on the network `<project>_push`, whose subnet is fixed
+  (`TAYET_PUSH_SUBNET`, default `10.213.77.0/29`): the gateway is `.1`, `synapse` `.2` (it stays on the
+  default network too) and `push` `.3`. It reaches neither Postgres, nor MAS, nor the escrow. The
+  homeserver blocks outbound requests to private addresses; `ip_range_whitelist` in the rendered
+  `homeserver.yaml` allows the push address, `/32`, and nothing else. Pick another subnet with
+  `TAYET_PUSH_SUBNET` when `secrets` runs if this one is used by another Docker network on the host
+  (on an existing installation, add the line `TAYET_PUSH_SUBNET=<subnet>` to `secrets/deployment.env`
+  before `render`).
+- **Key.** The VAPID key pair (P-256) is generated once in `secrets/push.env` (mode 600) by `secrets`,
+  `build` or `up`, and is never replaced: subscriptions are bound to its public key, which `build`
+  bakes into the web app (`VITE_PUSH_PUBLIC_KEY`). It travels in `secrets.tgz` like the rest of
+  `secrets/`; a backup older than it is restored with a new pair.
+- **Outbound.** If the host's firewall restricts egress, `push` needs HTTPS (443) to
+  `fcm.googleapis.com`, `*.push.apple.com`, `updates.push.services.mozilla.com` and
+  `*.notify.windows.com`. It sends nowhere else: a subscription to any other host is rejected.
+- **Existing installation.** Run `./deploy.sh render` (the homeserver gains `ip_range_whitelist`),
+  `./deploy.sh build` (generates the key and bakes it into the web app), `./deploy.sh up` (creates the
+  network and the `push` container, recreates `synapse` on both networks) and `./deploy.sh check`. No
+  `down` is needed.
 
 ## Commands and deployment parameters
 
@@ -45,13 +98,24 @@ Who talks to whom (internal Compose network; no public port except Caddy's):
 ./deploy.sh db-password # new Postgres password: sets it on the role, renders, restarts synapse and mas,
                       # after recreating postgres if its Compose config changed
                       # (once on an installation without secrets/postgres.password, and to rotate)
-./deploy.sh build     # builds the web app into client/dist; agent dependencies into agent/node_modules
+./deploy.sh build     # builds the web app into client/dist (with the push public key); agent
+                      # dependencies into agent/node_modules
 ./deploy.sh up        # aborts on a pending render; pg_dump + migrate + MAS config sync, starts the stack,
                       # restarts MAS/Synapse/Caddy when their config changed, provisions the service
-                      # accounts and the bootstrap admin, seeds #all; second phase: the custody agent
+                      # accounts and the bootstrap admin (made an admin only when this up creates the
+                      # account), seeds #all; second phase: the custody agent
 ./deploy.sh down      # stops the stack, PRESERVING volumes
 ./deploy.sh check     # read-only: probes, renders up to date, Synapse and MAS config = render,
-                      # base domain, Postgres password file, #all, escrow, latest backup, custody agent
+                      # base domain, Postgres password file, #all, escrow, org, push, latest backup, custody agent;
+                      # warns when the last ./deploy.sh backup is missing or older than 7 days
+./deploy.sh backup [DIR]  # stack up: DIR/<UTC>/keys/ (secrets.tgz) and DIR/<UTC>/data/ (both dumps,
+                      # synapsedata, escrowdata, orgdata), each with a MANIFEST; DIR defaults to $HOME/tayet-backup
+./deploy.sh restore KEYS_DIR DATA_DIR  # no secrets/ and nothing of the project running: checks both
+                      # manifests, puts secrets/ back, recreates and restores both databases, refills
+                      # the volumes, empties agentdata; leaves the stack stopped (then up and check)
+./deploy.sh promote-admin EMAIL  # stack up: makes the active account with this email an organization admin,
+                      # through the org service's own command in its container; refuses an account that
+                      # is not a live member of #all (guest, removed, agent, deactivated or locked)
 ```
 
 **Deployment parameters.** `TAYET_DOMAIN` is required by `secrets` and has no default (ADR-095).
@@ -59,7 +123,7 @@ Who talks to whom (internal Compose network; no public port except Caddy's):
 it from there and aborts if the environment variable, the file and the rendered `server_name`
 disagree.
 
-Four more parameters can be set when `secrets` runs:
+Five more parameters can be set when `secrets` runs:
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -67,6 +131,7 @@ Four more parameters can be set when `secrets` runs:
 | `TAYET_HS_PORT` | `8008` | Host loopback port of Synapse |
 | `TAYET_HTTP_PORT` | `80` | Host port for HTTP |
 | `TAYET_HTTPS_PORT` | `443` | Host port for HTTPS |
+| `TAYET_PUSH_SUBNET` | `10.213.77.0/29` | Subnet of the push network (a /29 starting on a multiple of 8) |
 
 The ones present in the environment are written to `secrets/deployment.env` and follow the same rule
 as the domain: they never change afterwards, and an environment value that differs from the
@@ -84,7 +149,7 @@ install.
   `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, from a Web OAuth client whose redirect URI is
   `https://auth.<domain>/upstream/callback/01M6EV4GP9QK3T7YH2ZD8NXGG1`. Registration is closed
   (`allowed_usernames: { literals: [] }`, ADR-083): new accounts are created only by an invitation
-  (`POST /v1/people` on the escrow, see `escrow/README.md`).
+  (`POST /v1/people` on the org service, see `org/README.md`).
 - **The bootstrap admin signs in through Dex** at `login.<domain>` (ADR-048), with
   `BOOTSTRAP_ADMIN_EMAIL` and the password in `secrets/bootstrap-admin.password`. The Dex `userID` is
   derived from the username (`tayet-<username>-0001`). The account is created by `up` with that
@@ -111,16 +176,16 @@ git fetch --tags && git checkout <tag>
 curl -s https://chat.<domain>/ | grep -o 'index-[A-Za-z0-9_-]*\.js'   # hash AFTER
 ```
 
-**Rule: `up` always recreates the escrow and the agent.** Both run from source through a bind mount
-(`../../escrow`, `../../agent`), and `compose up -d` only recreates a container when the Compose
+**Rule: `up` always recreates the escrow, the org service, the push service and the agent.** They run from source
+through a bind mount (`../../escrow`, `../../org`, `../../push`, `../../agent`), and `compose up -d` only recreates a container when the Compose
 config changes; a code update does not change it. Without recreating, the process keeps running the
-old code. So `up` runs `compose up -d --force-recreate escrow` in phase 1 and starts the agent with
+old code. So `up` runs `compose up -d --force-recreate escrow org push` in phase 1 and starts the agent with
 `--force-recreate` in phase 2. Recreating with the stack up is safe: the escrow store only publishes
 complete files (a blob is written to a temporary file and only then published), and the agent
 flushes on SIGTERM within the `stop_grace_period`. The other services do not run from source: Caddy
 serves the static `client/dist` (no restart needed), and the other bind mounts are configuration,
 with their own restart path (next section; `up` restarts Caddy itself when the `Caddyfile` changes,
-see the operation notes). `check` shows since when the escrow and the agent are up: earlier than the
+see the operation notes). `check` shows since when the escrow, the org service, the push service and the agent are up: earlier than the
 last `up` means old code.
 
 **Post-deploy check:** with a change in `client/`, the `index-*.js` hash **changes**. The same hash
@@ -204,7 +269,8 @@ Two cases need a manual step, both with Postgres up
 (`docker compose -p <project> --env-file secrets/deployment.env -f compose.yaml up -d --wait postgres`):
 
 - **Restoring `secrets/` from before a rotation onto a database volume that survived.** Dumps do not
-  carry the role's password. Set the role to the restored file before `./deploy.sh up`:
+  carry the role's password. `./deploy.sh restore` sets the role to the restored file by itself; after
+  restoring `secrets/` any other way, set it before `./deploy.sh up`:
 
   ```bash
   { printf "SET log_min_error_statement = 'panic';\nALTER ROLE synapse WITH PASSWORD '"
@@ -344,6 +410,46 @@ device. Losing the volume → F8 above: new device, coverage resumes.
   is in `escrowdata` and does not depend on the agent. Rooms keep encrypting to the `cofre` device;
   when it comes back, the agent drains its queue and catches up to the last checkpoint. Stopped for
   more than 30 days, the reaper above applies.
+
+## Backup and restore
+
+`./deploy.sh backup [DIR]` is the backup of the whole state (SELF-HOSTING.md step 11), with the stack
+up. Databases first (`pg_dump -Fc`), then the volumes `synapsedata`, `escrowdata` and `orgdata` (`tar`
+through a throwaway container of the agent image), then `secrets/` without `secrets/backups` and
+`secrets/last-backup`. Two halves in `DIR/<UTC>/`, mode 700: `keys/` (`secrets.tgz`) and `data/` (the
+other five), so `secrets/` and `escrowdata` can live in different places. Each half has a `MANIFEST`:
+format line (`tayet-backup 2`), backup id (the `<UTC>`, the same in both), part, code commit (`unknown` outside a git
+checkout) and `file <name> <bytes> <sha256>` per file; never contents. `data/MANIFEST` is signed
+(HMAC-SHA256, hex, in `data/MANIFEST.sig`) with `secrets/backup-manifest.key` (64 hex, mode 600, made by
+`secrets` or by the first `backup`), which travels in `secrets.tgz`. The HMAC is computed with bash
+builtins and the sha256 tool, so the key is never a process argument. A failure removes the half-written
+`<UTC>.partial`. On success it writes `secrets/last-backup`, which `check` reads. `agentdata` is left
+out (ADR-069 dec. 5). The escrow writes each deposit to a temporary file and publishes it with
+`link`/`rename`, so a copy with the stack up holds whole deposits only.
+
+`./deploy.sh restore KEYS_DIR DATA_DIR` (SELF-HOSTING.md step 12). Refuses, writing nothing, while
+`secrets/` exists, when a manifest does not match its files or the halves carry different backup ids,
+when the halves have different formats, when `secrets.tgz` holds anything outside `secrets/`, when `data/MANIFEST.sig` is missing or does not
+match the key restored from `keys/` (checked in staging, before any database or volume), and when a
+container of the project is running;
+a different commit is a warning. Then: `secrets/` back; Postgres up; the role password set to the
+restored `postgres.password`; each database dropped, created again (`UTF8`, `C`, `template0`) and
+restored with `pg_restore --exit-on-error` (not `--clean`: see "Synapse upgrade and rollback" below);
+the volumes emptied and extracted; `agentdata` emptied when it exists, so the next `up` takes the
+F8 path (stop → kill-sessions → mint → wipe) instead of reusing an agent store newer than the
+databases; the stack stopped. It never runs `up`. Interrupted midway, `secrets/` is already back:
+move it aside and run `restore` again. Project, ports and domain come from the restored
+`deployment.env`; no other project's volume is touched. It also takes a `tayet-backup 1` backup, made
+before the org service: its `data/` has no `orgdata.tgz`, and `orgdata` is left empty (the org audit
+starts over; the history before it is in `escrowdata`). Such a backup has no `secrets/org.env`, so a
+new one is made, and the `render` of the update (SELF-HOSTING.md step 13) puts it in the MAS.
+
+A restore returns the state of the backup: anything written after it is gone; sign-ins made after it
+show the access-ended screen; sign-ins that existed at backup time work again even if ended after it
+(measured by `test/restore-proof.sh`), and so do the room memberships and power levels of that time
+(they live in the restored `synapse` database, and `up` re-applies the directory from the restored
+`secrets/`). SELF-HOSTING.md step 12 tells the operator to review that before reopening use. `test/backup-refusals.sh` (run by `test/render-identity.sh`) covers the refusals without
+Docker; `test/restore-proof.sh` is the end-to-end proof, run by hand like the local test install.
 
 ## Postgres dumps and rollback
 

@@ -1,11 +1,11 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
 import { TAI, UGO } from './fixtures/users'
-import { accountSettings } from './support/account'
 import { expectNoProtocolLeak } from './support/assertions'
 import { AFTER_RELOGIN_404, backupLookupsCap, ConsoleLedger, FIRST_LOGIN_404, recognizedSet404 } from './support/console'
-import { AGENTS, MANAGE, PANEL, PEOPLE } from './support/labels'
+import { AGENTS, MANAGE, PANEL } from './support/labels'
+import { closeAdmin, openAdmin } from './support/admin'
 import { signIn } from './support/login'
-import { addMember, createChannel, deleteSharedRooms, openManage } from './support/rooms'
+import { addMember, closePicker, createChannel, deleteSharedRooms, openManage } from './support/rooms'
 import { startSidecar, type SidecarRun } from './support/sidecar'
 import { channelRow, messages } from './support/workspace'
 
@@ -38,7 +38,6 @@ const LATE_JOINER_404 = {
   why: 'panel writes from before the entry (§0.3.16 item 16, P-A3-2): one session never shared; ADR-077 cap',
 }
 
-const peoplePanel = (page: Page): Locator => page.getByRole('dialog', { name: PEOPLE.title })
 const panel = (page: Page): Locator => page.getByRole('region', { name: PANEL.section(NAME) })
 
 async function readCommand(dialog: Locator): Promise<{ command: string; credential: string }> {
@@ -95,11 +94,9 @@ test('agent pinned panel: write, replace, re-edit on entry, clear — the sideca
 
     let run!: SidecarRun
     await test.step('0b. tai creates the agent; the command shown starts the sidecar', async () => {
-      const account = await accountSettings(pageA)
-      await expect(account.getByText(PEOPLE.section)).toBeVisible({ timeout: 30_000 })
-      await account.getByRole('button', { name: new RegExp(`^${PEOPLE.title}`) }).click()
-      await expect(peoplePanel(pageA)).toBeVisible()
-      await peoplePanel(pageA).getByRole('button', { name: AGENTS.add }).click()
+      // Slice 1c: "Pessoas" lives in the Admin, opened from "Sua conta".
+      await openAdmin(pageA)
+      await pageA.getByRole('button', { name: AGENTS.add }).click()
       const dialog = pageA.getByRole('dialog', { name: AGENTS.createTitle })
       await dialog.getByLabel(AGENTS.fieldName).fill(NAME)
       await dialog.getByRole('button', { name: AGENTS.create }).click()
@@ -118,11 +115,14 @@ test('agent pinned panel: write, replace, re-edit on entry, clear — the sideca
         if ((await pageA.getByRole('dialog').count()) > 0) await pageA.keyboard.press('Escape')
         await expect(pageA.getByRole('dialog')).toHaveCount(0, { timeout: 1_000 })
       }).toPass({ timeout: 15_000 })
+      // Back from the Admin to the conversations.
+      await closeAdmin(pageA)
       await openManage(pageA, CHANNEL, 'private')
       const candidate = pageA.getByRole('dialog', { name: MANAGE.addMember }).getByRole('button', { name: new RegExp(NAME) })
       await pageA.getByRole('button', { name: MANAGE.addMember }).click()
       await expect(candidate).toBeVisible({ timeout: 30_000 })
       await candidate.click()
+      await closePicker(pageA, candidate)
       const member = pageA.getByRole('region', { name: MANAGE.members }).getByRole('listitem').filter({ hasText: NAME })
       await expect(member).toBeVisible({ timeout: 30_000 })
       await expect(member.getByText(MANAGE.awaiting)).toHaveCount(0, { timeout: SEEN_MS })

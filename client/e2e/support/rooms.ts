@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 import { deleteRoom } from '../../test/support/room-admin'
 import { MANAGE, NEW_CONVERSATION, LIST } from './labels'
 import { groupRoomsOf, roomsNamed, sharedRoomsBesidesOrgChannel } from './server-facts'
@@ -53,7 +53,8 @@ export async function openManage(page: Page, name: string, kind: 'public' | 'pri
 
 // Add a member from the open management panel. The candidates are read when the dialog opens; the
 // member's first-login join of the org channel may reach this client a moment later, so the dialog is
-// reopened until the member is in it.
+// reopened until the member is in it. Adding keeps the picker open and the person leaves its list
+// (channel-management.md §9 item 5); the picker is then closed, back to the roster.
 export async function addMember(page: Page, memberName: string): Promise<void> {
   const add = page.getByRole('dialog', { name: MANAGE.addMember })
   const contact = add.getByRole('button', { name: memberName, exact: true })
@@ -63,7 +64,17 @@ export async function addMember(page: Page, memberName: string): Promise<void> {
     await expect(contact).toBeVisible({ timeout: 5_000 })
   }).toPass({ timeout: 60_000 })
   await contact.click()
+  await closePicker(page, contact)
   await expect(page.getByRole('region', { name: MANAGE.members })).toContainText(memberName)
+}
+
+// The picker after a pick: the candidate leaves the list once the verb is acknowledged, then the footer's
+// "Fechar" goes back to the main view (§9 item 4).
+export async function closePicker(page: Page, picked: Locator): Promise<void> {
+  const add = page.getByRole('dialog', { name: MANAGE.addMember })
+  await expect(picked).toHaveCount(0, { timeout: 30_000 })
+  await add.getByRole('button', { name: MANAGE.closePicker, exact: true }).last().click()
+  await expect(add).toHaveCount(0)
 }
 
 // The rest of the management panel's verbs, from the open panel (the one dialog on screen). Each waits

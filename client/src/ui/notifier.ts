@@ -1,5 +1,8 @@
 import type { Channel, ChannelId, DomainEvent, Message, MessageBody, MessageId, User, UserId } from '@tayet/client'
-import { t, GLYPH } from './i18n'
+import { t } from './i18n'
+import { clip } from './preview-text'
+import { activeRegistration } from './service-worker'
+import { loadNotificationsPref } from './notifications-pref'
 
 // ADR-073: the attention signal outside the tab — a system notification raised by the LIVE tab (one
 // tab per origin, ADR-065), owned by the app (ADR-030). The trigger is an app rule over two booleans
@@ -10,8 +13,8 @@ import { t, GLYPH } from './i18n'
 // Dec. 2: how long an undecryptable message may wait for its content (the message.edited of the
 // same id) before it is given up on.
 export const UTD_WAIT_MS = 10_000
-// Dec. 5: preview length of a text body, before the ellipsis.
-export const PREVIEW_MAX = 120
+// Dec. 5: preview length of a text body, before the ellipsis (shared with the service worker).
+export { PREVIEW_MAX } from './preview-text'
 
 export type NotificationPermissionState = 'default' | 'granted' | 'denied'
 
@@ -24,6 +27,9 @@ export interface NotifierDeps {
   getChannel(id: ChannelId): Channel | undefined
   getSelectedId(): ChannelId | undefined
   select(id: ChannelId): void
+  // Opens the conversation and the thread on the message, with the jump's mark (useChat's jumpTo).
+  // The click on a thread reply's notification lands there (ADR-073 addendum, 2026-11-23).
+  jumpTo(channelId: ChannelId, message: Message): void
   getMembers(id: ChannelId): Promise<User[]>
   // The thread that covers the conversation on a narrow window (the stack's thread screen). With it on
   // screen only that thread's replies are in view; absent or undefined, the whole conversation is.
@@ -33,13 +39,25 @@ export interface NotifierDeps {
 // Injected like TabLockEnv (tab-lock.ts): the unit tests drive a fake clock and record notify calls.
 export interface NotifierEnv {
   permission(): NotificationPermissionState
-  notify(title: string, options: { body: string; tag: string }): NotificationHandle | undefined
+  // Through the service worker's registration when there is one (ADR-117 dec. 5): then nothing comes back, the click
+  // is the worker's. Else, or when the registration refuses, `new Notification` and its handle.
+  notify(
+    title: string,
+    options: { body: string; tag: string; data?: NotificationData },
+  ): NotificationHandle | undefined | Promise<NotificationHandle | undefined>
   isVisible(): boolean
   hasFocus(): boolean
   focusWindow(): void
   now(): number
   setTimeout(fn: () => void, ms: number): unknown
   clearTimeout(handle: unknown): void
+}
+
+// Where the click leads, as opaque strings in the notification's data (never in its title or body).
+export interface NotificationData {
+  conversation: string
+  message: string
+  thread?: string
 }
 
 export interface Notifier {
@@ -50,8 +68,20 @@ export interface Notifier {
 export function browserNotifierEnv(): NotifierEnv {
   const supported = typeof window !== 'undefined' && 'Notification' in window
   return {
-    permission: () => (supported ? Notification.permission : 'denied'),
-    notify: (title, options) => (supported ? new Notification(title, options) : undefined),
+    // ADR-117, addendum of 26/Nov/2026 (F4): the live tab notifies only with the permission granted AND this device's
+    // preference on. Read at each notification, so the row of "Your account" takes effect without a new notifier.
+    permission: () => {
+      if (!supported) return 'denied'
+      const granted = Notification.permission
+      return granted === 'granted' && loadNotificationsPref() !== 'on' ? 'default' : granted
+    },
+    notify: (title, { body, tag, data }) => {
+      if (!supported) return undefined
+      const fallback = (): NotificationHandle => new Notification(title, { body, tag })
+      const registration = activeRegistration()
+      if (!registration) return fallback()
+      return registration.showNotification(title, { body, tag, data }).then(() => undefined, fallback)
+    },
     isVisible: () => document.visibilityState === 'visible',
     hasFocus: () => document.hasFocus(),
     focusWindow: () => window.focus(),
@@ -69,11 +99,6 @@ export function shouldNotify(message: Message, channel: Channel): boolean {
 // The conversations where every message is for the reader: a DM and a group (ADR-094 dec. 10).
 const everyMessage = (channel: Channel): boolean => channel.kind === 'dm' || channel.kind === 'group'
 
-
-const clip = (raw: string): string => {
-  const text = raw.replace(/\s+/g, ' ').trim()
-  return text.length > PREVIEW_MAX ? `${text.slice(0, PREVIEW_MAX)}${GLYPH.ellipsis}` : text
-}
 
 // Dec. 5: what the notification says about the body — product copy, never a payload.
 export function previewOf(body: MessageBody): string {
@@ -128,15 +153,24 @@ export function createNotifier(deps: NotifierDeps, env: NotifierEnv = browserNot
     return thread === undefined || message.threadParent === thread
   }
 
-  const show = (channelId: ChannelId, title: string, body: string): void => {
+  // The click opens where the message is: a thread reply's thread on the reply (ADR-073 addendum,
+  // 2026-11-23); a message of the conversation only selects the channel (dec. 4).
+  const show = (channelId: ChannelId, message: Message, title: string, body: string): void => {
     if (disposed) return
-    const handle = env.notify(title, { body, tag: String(channelId) })
-    if (!handle) return
-    handle.onclick = () => {
-      env.focusWindow()
-      deps.select(channelId)
-      handle.close()
+    const data: NotificationData = { conversation: String(channelId), message: String(message.id) }
+    if (message.threadParent !== undefined) data.thread = String(message.threadParent)
+    const clickable = (handle: NotificationHandle | undefined): void => {
+      if (!handle) return
+      handle.onclick = () => {
+        env.focusWindow()
+        if (message.threadParent !== undefined) deps.jumpTo(channelId, message)
+        else deps.select(channelId)
+        handle.close()
+      }
     }
+    const shown = env.notify(title, { body, tag: String(channelId), data })
+    if (shown instanceof Promise) void shown.then(clickable, () => undefined)
+    else clickable(shown)
   }
 
   // `body` overrides the preview (the expired-UTD DM of dec. 2).
@@ -147,7 +181,7 @@ export function createNotifier(deps: NotifierDeps, env: NotifierEnv = browserNot
     if (env.permission() !== 'granted' || suppressed(channelId, message)) return
     const text = body ?? previewOf(message.body)
     if (channel.kind === 'dm') {
-      show(channelId, channel.peerAgent ? t('notifications.titleDmAgent', { name: channel.name }) : channel.name, text)
+      show(channelId, message, channel.peerAgent ? t('notifications.titleDmAgent', { name: channel.name }) : channel.name, text)
       return
     }
     void namesOf(channelId).then((byId) => {
@@ -164,7 +198,7 @@ export function createNotifier(deps: NotifierDeps, env: NotifierEnv = browserNot
           : agent
             ? t('notifications.titleInAgent', { author, channel: channel.name })
             : t('notifications.titleIn', { author, channel: channel.name })
-      show(channelId, title, text)
+      show(channelId, message, title, text)
     })
   }
 

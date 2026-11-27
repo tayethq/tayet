@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from 'vitest'
-import { render, cleanup, fireEvent } from '@testing-library/react'
+import { render, cleanup, fireEvent, screen } from '@testing-library/react'
 import { Workspace } from '../../src/ui/components/Workspace'
 import type { Channel, ChannelId, MemberState, Role, User, UserId } from '../../src/acl'
 import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
@@ -33,6 +33,8 @@ const members: Array<{ user: User; role: Role; state: MemberState; self: boolean
   { user: { id: uid('@ana:tayet.local'), displayName: 'Ana Lima', kind: 'member' }, role: 'admin', state: 'active', self: false },
   { user: { id: uid('@bruno:tayet.local'), displayName: 'Bruno Sato', kind: 'member' }, role: 'member', state: 'active', self: false },
   { user: { id: uid('@gisele:tayet.local'), displayName: 'Gisele Rocha', kind: 'member' }, role: 'guest', state: 'active', self: false },
+  // The reader, admin: the gate of §13.1 item 5 opens the add, role and remove surfaces the scan covers.
+  { user: { id: uid('@me:tayet.local'), displayName: 'Eu Mesmo', kind: 'member' }, role: 'admin', state: 'active', self: true },
 ]
 
 // Candidate pool for the picker: also protocol-shaped ids, clean names.
@@ -50,6 +52,7 @@ function renderPanel() {
       connection="connected"
       managing={channel}
       members={members}
+      channelAbilities={{ rename: true, editTopic: true, addPeople: true, removePeople: true, setRoles: true, archive: true }}
       onManageChannel={() => {}}
       onCloseManage={() => {}}
       onUpdateChannel={noopVerb}
@@ -85,7 +88,8 @@ describe('DOM render-scan (P1) — channel management surface (U2)', () => {
     await findByRole('dialog', { name: copy.channel.addMember })
     await findByText('Carol Dias')
     expect(findProtocolLeaksInText(container.innerHTML)).toEqual([])
-    fireEvent.click(getByRole('button', { name: copy.channel.close }))
+    // The ✕ and the footer's Fechar share the name (§9 item 4); the footer's is the last.
+    fireEvent.click(screen.getAllByRole('button', { name: copy.channel.close }).at(-1)!)
 
     // Remove-member dialog open: scan again (body interpolates the clean displayName, never the id).
     fireEvent.click(getByRole('button', { name: fill(copy.channel.removeNamed, { name: 'Ana Lima' }) }))

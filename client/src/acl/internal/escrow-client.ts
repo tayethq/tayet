@@ -54,14 +54,17 @@ export type SessionsOutcome =
 export type RevokeOthersOutcome = { kind: 'revoked' } | { kind: 'unavailable' }
 
 // Pessoas (ADR-083). `completed` e `created` são o mesmo desfecho para o client: a pessoa está
-// provisionada. 502 parcial e 504 são 'unavailable' porque reexecutar completa; 400/403 são 'rejected'.
+// provisionada. 502 parcial e 504 são 'unavailable' porque reexecutar completa; 400 é 'rejected'.
+// 403 é 'forbidden' em todo verbo de organização: quem chama não é (ou deixou de ser) admin, e a
+// superfície fecha (ADR-118 dec. 6).
 export type PersonInviteOutcome =
   | { kind: 'invited'; userId: string; personKind: PersonKind }
   | { kind: 'exists' }
   | { kind: 'rejected' }
+  | { kind: 'forbidden' }
   | { kind: 'unavailable' }
 
-export type PersonRemoveOutcome = { kind: 'removed' } | { kind: 'rejected' } | { kind: 'unavailable' }
+export type PersonRemoveOutcome = { kind: 'removed' } | { kind: 'rejected' } | { kind: 'forbidden' } | { kind: 'unavailable' }
 
 // Agentes (ADR-086). O token sai daqui só no 201 de create/reissue, exibido uma vez pela UI; nunca
 // logado nem guardado. 409 é colisão de nome (dec. 6); 502/504 'unavailable' (repetir conclui).
@@ -69,9 +72,34 @@ export type AgentCreateOutcome =
   | { kind: 'created'; userId: string; token: string }
   | { kind: 'name_taken' }
   | { kind: 'rejected' }
+  | { kind: 'forbidden' }
   | { kind: 'unavailable' }
-export type AgentUpdateOutcome = { kind: 'updated' } | { kind: 'name_taken' } | { kind: 'rejected' } | { kind: 'unavailable' }
-export type AgentReissueOutcome = { kind: 'reissued'; token: string } | { kind: 'rejected' } | { kind: 'unavailable' }
+export type AgentUpdateOutcome =
+  | { kind: 'updated' }
+  | { kind: 'name_taken' }
+  | { kind: 'rejected' }
+  | { kind: 'forbidden' }
+  | { kind: 'unavailable' }
+export type AgentReissueOutcome =
+  | { kind: 'reissued'; token: string }
+  | { kind: 'rejected' }
+  | { kind: 'forbidden' }
+  | { kind: 'unavailable' }
+
+// Papel de admin (ADR-118 dec. 4 e 5). A leitura traz os dois conjuntos em ids crus (a ACL os marca);
+// o 409 se lê pelo `reason` do corpo e o 403/400 pelo `error`.
+export type OrgAccessOutcome =
+  | { kind: 'access'; admins: string[]; withoutAccess: string[] }
+  | { kind: 'rejected' }
+  | { kind: 'forbidden' }
+  | { kind: 'unavailable' }
+export type SetAdminOutcome =
+  | { kind: 'done' }
+  | { kind: 'last_admin' }
+  | { kind: 'not_member' }
+  | { kind: 'rejected' }
+  | { kind: 'forbidden' }
+  | { kind: 'unavailable' }
 
 export interface EscrowClient {
   deposit(secret: Uint8Array): Promise<DepositOutcome>
@@ -100,6 +128,8 @@ export interface PeopleClient {
   updateAgent(userId: string, patch: { name?: string; color?: AgentColor }): Promise<AgentUpdateOutcome>
   reissueAgent(userId: string): Promise<AgentReissueOutcome>
   removeAgent(userId: string): Promise<PersonRemoveOutcome>
+  access(): Promise<OrgAccessOutcome>
+  setAdmin(userId: string, admin: boolean): Promise<SetAdminOutcome>
 }
 
 // O escrow espera até 20 s por escrita sob 429 (ADR-083, addendum), e um convite faz mais de uma.
@@ -229,7 +259,11 @@ export function createPeopleClient(opts: EscrowClientOpts & { timeoutMs?: number
         ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
     })
-  const failure = (res: Response): 'rejected' | 'unavailable' => (res.status >= 500 ? 'unavailable' : 'rejected')
+  const orgUrl = `${opts.baseUrl.replace(/\/+$/, '')}/v1/org`
+  const failure = (res: Response): 'rejected' | 'forbidden' | 'unavailable' =>
+    res.status >= 500 ? 'unavailable' : res.status === 403 ? 'forbidden' : 'rejected'
+  const ids = (value: unknown): string[] | undefined =>
+    Array.isArray(value) && value.every((v) => typeof v === 'string') ? (value as string[]) : undefined
 
   return {
     async isAdmin(): Promise<boolean> {
@@ -303,6 +337,38 @@ export function createPeopleClient(opts: EscrowClientOpts & { timeoutMs?: number
       try {
         const res = await request(`${agentsUrl}/${encodeURIComponent(userId)}`, { method: 'DELETE' })
         return res.status === 200 ? { kind: 'removed' } : { kind: failure(res) }
+      } catch {
+        return { kind: 'unavailable' }
+      }
+    },
+
+    async access(): Promise<OrgAccessOutcome> {
+      try {
+        const res = await request(`${orgUrl}/access`, { method: 'GET' })
+        if (res.status !== 200) return { kind: failure(res) }
+        const body = (await res.json()) as { admins?: unknown; withoutAccess?: unknown }
+        const admins = ids(body.admins)
+        const withoutAccess = ids(body.withoutAccess)
+        // A 200 whose body does not carry both lists is the service misbehaving: never a half-read role.
+        if (admins === undefined || withoutAccess === undefined) return { kind: 'unavailable' }
+        return { kind: 'access', admins, withoutAccess }
+      } catch {
+        return { kind: 'unavailable' }
+      }
+    },
+
+    async setAdmin(userId, admin): Promise<SetAdminOutcome> {
+      try {
+        const res = await request(`${url}/${encodeURIComponent(userId)}/admin`, { method: admin ? 'PUT' : 'DELETE' })
+        if (res.status === 200) return { kind: 'done' }
+        if (res.status === 409) {
+          const reason = ((await res.json().catch(() => ({}))) as { reason?: unknown }).reason
+          if (reason === 'last_admin') return { kind: 'last_admin' }
+          if (reason === 'not_member') return { kind: 'not_member' }
+          // `is_agent` and any reason this client does not know: a refusal, not a retry.
+          return { kind: 'rejected' }
+        }
+        return { kind: failure(res) }
       } catch {
         return { kind: 'unavailable' }
       }

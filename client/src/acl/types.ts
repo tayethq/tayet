@@ -47,6 +47,18 @@ export type Unsubscribe = () => void
 
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'offline'
 
+// ADR-115 (Proposto): what this session may do in one channel, one yes or no per verb of the management
+// screen. Per channel, not per person: the server may still refuse a verb against a given person, and
+// that refusal reaches the screen as the verb's rejection.
+export interface ChannelAbilities {
+  rename: boolean
+  editTopic: boolean
+  addPeople: boolean
+  removePeople: boolean
+  setRoles: boolean
+  archive: boolean
+}
+
 // Contract invariant: the stream NEVER emits a raw SDK object — the type only admits branded
 // domain. Protocol noise (typing, state events, content-less ephemerals) is NOT an event:
 // intentional silent discard (PLANO-FASE-1 §1.3 / ADR-007), not degradation.
@@ -239,6 +251,13 @@ export interface AclOptions {
   onSessionLost?: () => void
 }
 
+// ADR-118 dec. 4: the two sets of the role read. Ids of people and agents; the organization's own service
+// accounts are never in them.
+export interface OrgAccess {
+  admins: UserId[]
+  withoutAccess: UserId[]
+}
+
 // ADR-083: `kind` is what the admin chose; `channels` are the admin's own to add the person to.
 export interface NewPerson {
   name: string
@@ -300,6 +319,22 @@ export interface AccountPreferences {
   language?: string
 }
 
+// ── Device notifications ─────────────────────────────────────────────────────────────────
+// ADR-117 dec. 6: this access's Web Push subscription, in the shape of the browser's PushSubscription.toJSON
+// (`endpoint` and the two keys, unpadded base64url). Opaque to the ACL beyond its shape.
+export interface DeviceNotificationSubscription {
+  endpoint: string
+  keys: { p256dh: string; auth: string }
+}
+
+// ADR-117 dec. 5: where a notification's click leads, as the notification carries it (strings it got from the push or
+// from the live tab). Untrusted until resolveNotificationTarget checks it against the session's conversations.
+export interface NotificationTarget {
+  conversation: string
+  message?: string
+  thread?: string
+}
+
 // ── The single public surface ────────────────────────────────────────────────────────────
 export interface Acl {
   // Outbound (SDK→domain)
@@ -319,12 +354,27 @@ export interface Acl {
   // The only agents the known set offers (picker, add member, DM). Without that channel (a guest)
   // the list is empty. Synchronous: state the sync already delivered, no network.
   listOwnAgents(): User[]
-  // ADR-083 dec. 7: asked once per connect; any failure is false.
+  // ADR-083 dec. 7: asked once per connect; any failure is false. ADR-118 dec. 6: the answer turns false,
+  // without a new read, when an organization verb or read meets the service's refusal
+  // (OrgAccessDeniedError) or when this session takes its own role away (setOrgAdmin on itself).
   isOrgAdmin(): Promise<boolean>
+  // ADR-118 dec. 4, admin of the organization only: who is an admin and who has no valid access, each a
+  // set of people and agents of the organization (the caller crosses them with listPeople). Nothing is
+  // kept. OrgAccessDeniedError when the session is not an admin; PeopleUnavailableError when the
+  // service did not answer.
+  getOrgAccess(): Promise<OrgAccess>
   // ADR-056: point read from the ACL-side presence map (solves the late subscriber —
   // a dialog opened after the EDUs passed). Unknown resolves 'offline'. Synchronous by
   // design: it is a Map lookup, no network.
   getPresence(user: UserId): Presence
+  // ADR-114 (Proposto): point read of the connection state — the last one the ACL reported on the
+  // stream (solves the late subscriber — a screen that subscribed after the state was reported).
+  // 'connecting' before the first. Synchronous by design: a field read, no network.
+  getConnectionState(): ConnectionState
+  // ADR-115 (Proposto): point read of what this session may do in a channel (rename, topic, add, remove,
+  // roles, archive), from the state the ACL already holds. All false for a channel this session is not
+  // in, a direct conversation or a group conversation. Synchronous by design: no network.
+  getChannelAbilities(id: ChannelId): ChannelAbilities
   getDevices(): Promise<Device[]>
 
   // Self-identity (ADR-039): who the operator is, as a domain User. Derives from the internal
@@ -372,6 +422,17 @@ export interface Acl {
   // preferences; with none in the cache the patch is written alone. Resolves when the server confirms
   // the write; failure rejects.
   setAccountPreferences(patch: { language?: string }): Promise<void>
+
+  // ADR-117 dec. 6: notifications on this device, with the app closed. `enable` checks the subscription's shape
+  // (rejects with Error, before any request), then registers it unless the account already has it exactly so:
+  // idempotent, called on every opening in which the device is on. `disable` removes the one this session
+  // registered and forgets it; with none, it resolves without a request. signOut removes it too, bounded.
+  enableDeviceNotifications(subscription: DeviceNotificationSubscription): Promise<void>
+  disableDeviceNotifications(): Promise<void>
+  // ADR-117 dec. 5: a notification's target → a conversation this session is in and lists, or undefined (unknown,
+  // left, malformed; never rejects). With `message` and `thread`, the thread reply too, read like getMessage within
+  // 3 s; without it in time, only the conversation. No request is made before the conversation is known.
+  resolveNotificationTarget(target: NotificationTarget): Promise<{ channel: ChannelId; message?: Message } | undefined>
 
   // Per-thread unread (ADR-067; closes the deferred per-thread badge from PLANO-FASE-1-TRADUTORES §1.5).
   // A boolean derived by the ACL from the user's READ RECEIPTS, with the same rule in encrypted and
@@ -477,6 +538,12 @@ export interface Acl {
   // The current credential stops working now; the new one is returned once.
   reissueAgent(user: UserId): Promise<{ token: string }>
   removeAgent(user: UserId): Promise<void>
+  // ADR-118 dec. 5, admin of the organization only: give (true) or take (false) the admin role; both are
+  // idempotent. LastAdminError when taking it would leave no admin; NotMemberError when the person is not a
+  // member (a guest, a removed account); OrgAccessDeniedError when the session is not an admin;
+  // PeopleUnavailableError when the service did not answer. The organization verbs above (invite, remove,
+  // agents) also reject with OrgAccessDeniedError on that refusal.
+  setOrgAdmin(user: UserId, admin: boolean): Promise<void>
   removeMember(channelId: ChannelId, user: UserId): Promise<void>
   // 'admin'→PL 50, 'member'→PL 0 (owner-tier PL 100 fora do Role). Os guardrails de PL do Matrix
   // viram REJEIÇÃO LEGÍTIMA (um admin/50 não promove acima de 50 nem rebaixa o criador/100) — isso

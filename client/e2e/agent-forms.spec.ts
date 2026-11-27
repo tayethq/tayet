@@ -1,12 +1,12 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
 import { HOMESERVER } from '../test/support/synapse'
 import { TAI, UGO } from './fixtures/users'
-import { accountSettings } from './support/account'
+import { adminNav, openAdmin } from './support/admin'
 import { expectNoProtocolLeak } from './support/assertions'
 import { ConsoleLedger, FIRST_LOGIN_404, recognizedSet404 } from './support/console'
-import { AGENTS, APPROVAL, FORMS, MANAGE, PEOPLE } from './support/labels'
+import { ADMIN, AGENTS, APPROVAL, FORMS, MANAGE } from './support/labels'
 import { signIn } from './support/login'
-import { addMember, createChannel, deleteSharedRooms, openManage } from './support/rooms'
+import { addMember, closePicker, createChannel, deleteSharedRooms, openManage } from './support/rooms'
 import { channelRow, messages, row } from './support/workspace'
 
 // Formulários 1b (ADR-103, Proposto; workspace.md §25.5, §26, §27; fork I6): the agent's form end to end in two
@@ -22,6 +22,15 @@ import { channelRow, messages, row } from './support/workspace'
 //
 // Secrets: the credential is in the DOM while the dialog is open → no trace, video or screenshot.
 test.use({ trace: 'off', video: 'off', screenshot: 'off' })
+
+// The agent's operator on a line of its own, under the name (channel-management.md §13.1 items 1 and 2).
+async function expectTwoLines(line: Locator, operator: string): Promise<void> {
+  const sub = line.locator('[data-agent-operator]')
+  await expect(sub).toHaveText(operator)
+  const name = line.getByText(NAME, { exact: true })
+  const [a, b] = [await name.boundingBox(), await sub.boundingBox()]
+  expect(b!.y).toBeGreaterThanOrEqual(a!.y + a!.height - 1)
+}
 
 const suffix = Math.random().toString(36).slice(2, 8)
 const NAME = `Formulador ${suffix}`
@@ -76,7 +85,6 @@ const FIELDS = [
   { kind: 'date', id: 'due', label: 'Data', optional: true },
 ]
 
-const peoplePanel = (page: Page): Locator => page.getByRole('dialog', { name: PEOPLE.title })
 const card = (page: Page, text: string): Locator => row(page, text).getByRole('group', { name: APPROVAL.title })
 const formDialog = (page: Page): Locator => page.getByRole('dialog', { name: TITLE })
 const fieldOf = (dialog: Locator, label: string): Locator => dialog.locator('.ui-field').filter({ has: dialog.page().getByText(label, { exact: true }) })
@@ -184,11 +192,8 @@ test('agent forms: open for the one who clicked, validate, agent errors, done, n
 
     let agent!: Agent
     await test.step('0b. tai creates the agent through the UI; the spec keeps the credential shown once', async () => {
-      const account = await accountSettings(pageA)
-      await expect(account.getByText(PEOPLE.section)).toBeVisible({ timeout: 30_000 })
-      await account.getByRole('button', { name: new RegExp(`^${PEOPLE.title}`) }).click()
-      await expect(peoplePanel(pageA)).toBeVisible()
-      await peoplePanel(pageA).getByRole('button', { name: AGENTS.add }).click()
+      await openAdmin(pageA)
+      await pageA.getByRole('button', { name: AGENTS.add }).click()
       const dialog = pageA.getByRole('dialog', { name: AGENTS.createTitle })
       await dialog.getByLabel(AGENTS.fieldName).fill(NAME)
       await dialog.getByRole('button', { name: AGENTS.create }).click()
@@ -201,20 +206,25 @@ test('agent forms: open for the one who clicked, validate, agent errors, done, n
 
     let roomId = ''
     await test.step('0c. tai adds the agent to the channel through the UI; the agent joins', async () => {
-      await expect(async () => {
-        if ((await pageA.getByRole('dialog').count()) > 0) await pageA.keyboard.press('Escape')
-        await expect(pageA.getByRole('dialog')).toHaveCount(0, { timeout: 1_000 })
-      }).toPass({ timeout: 15_000 })
+      // Leave the Admin: back to the conversations.
+      await pageA.getByRole('button', { name: ADMIN.back }).click()
+      await expect(adminNav(pageA)).toHaveCount(0)
       await openManage(pageA, CHANNEL, 'public')
       const candidate = pageA.getByRole('dialog', { name: MANAGE.addMember }).getByRole('button', { name: new RegExp(NAME) })
       await pageA.getByRole('button', { name: MANAGE.addMember }).click()
       await expect(candidate).toBeVisible({ timeout: 30_000 })
+      // channel-management.md §13.1 item 2: the agent in two lines in the picker, its operator (the reader) below.
+      await expectTwoLines(candidate, AGENTS.operatedBy('tai'))
       await candidate.click()
+      await closePicker(pageA, candidate)
       const member = pageA.getByRole('region', { name: MANAGE.members }).getByRole('listitem').filter({ hasText: NAME })
       await expect(member).toBeVisible({ timeout: 30_000 })
       roomId = await poll(() => agent.invitedRoom(CHANNEL), 'the invite reaches the agent')
       await agent.join(roomId)
       await expect(member.getByText(MANAGE.awaiting)).toHaveCount(0, { timeout: SEEN_MS })
+      // §13.1 item 1: and in the channel's list of people, the role on the right.
+      await expectTwoLines(member, AGENTS.operatedBy('tai'))
+      await expect(member).toContainText(MANAGE.member)
       await pageA.getByRole('button', { name: MANAGE.close }).click()
       await channelRow(pageA, CHANNEL).click()
       await channelRow(pageB, CHANNEL).click()

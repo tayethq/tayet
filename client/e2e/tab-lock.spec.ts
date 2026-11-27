@@ -299,8 +299,10 @@ const activeTabId = (worker: Worker): Promise<number> =>
 const discardTab = (worker: Worker, tabId: number): Promise<boolean> =>
   worker.evaluate(async (id) => (await chrome.tabs.discard(id)).discarded, tabId)
 
-// ROTEIRO-U2 rev. 2 item 2.5, the variant: the owner is discarded while it cannot answer. The lock falls
-// with the document, and B, waiting, enters by itself: nobody clicks anything after "Usar aqui".
+// ROTEIRO-U2 rev. 2 item 2.5, the variant: the owner is discarded while it cannot answer. With the service
+// worker on the origin the browser may keep it in the owner's process, so the tab reads as discarded while
+// the lock is still held: the lock falls when the owner's thread frees, and B, waiting, enters by itself:
+// nobody clicks anything after "Usar aqui" (ADR-065, addendum of Nov/2026).
 test('a discarded owner: the lock falls with the tab and the waiting tab enters alone', async ({ browser, baseURL }) => {
   test.setTimeout(180_000)
   const ts = Date.now()
@@ -329,16 +331,20 @@ test('a discarded owner: the lock falls with the tab and the waiting tab enters 
     await pageB.bringToFront()
     expect(await activeTabId(worker), 'the tab to discard is not the active one').not.toBe(tabA)
 
-    await test.step('1. "Usar aqui" with A silent: B waits and tells so', async () => {
-      await silenceOwner(pageA, 60_000)
+    const owner = await test.step('1. "Usar aqui" with A silent: B waits and tells so', async () => {
+      const silenced = await silenceOwner(pageA, 20_000)
       await pageB.getByRole('button', { name: SESSION.useHere }).click()
       await expect(pageB.getByText(SESSION.takeoverStuck)).toBeVisible()
       await expect(title(pageB)).toHaveCount(0)
+      return silenced
     })
 
-    await test.step('2. the browser discards A: B enters by itself and the DM reads and writes', async () => {
+    await test.step('2. the browser discards A: once its thread frees, the lock falls and B enters by itself; the DM reads and writes', async () => {
+      // Before the discard, not after: the discard ends the loop's evaluation at once, so afterwards silent()
+      // no longer speaks of the owner's thread.
+      expect(owner.silent(), 'the owner is still stuck right before the discard').toBe(true)
       expect(await discardTab(worker, tabA), 'the browser reports the tab discarded').toBe(true)
-      await expect(title(pageB)).toBeVisible({ timeout: 30_000 })
+      await expect(title(pageB)).toBeVisible({ timeout: 45_000 })
       await dmWith(pageB, LIA_NAME).click()
       await expectReadable(pageB, m1)
       await send(pageB, m2)

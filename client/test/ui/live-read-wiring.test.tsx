@@ -43,6 +43,8 @@ function fakeAcl() {
     listPanels: async () => [],
     listCommands: async () => [],
     isOrgAdmin: async () => false,
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     subscribe: (h: (e: DomainEvent) => void) => {
       handlers.add(h)
       return () => handlers.delete(h)

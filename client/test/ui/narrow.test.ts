@@ -58,7 +58,7 @@ describe('width signal: the CSS and the module use the same query', () => {
     // Touch floor: coarse pointer or narrow window.
     expect(mediaLines.filter((q) => q === COARSE_OR_NARROW)).toHaveLength(9)
     // Inline buttons that drop the floor: fine pointer and normal width (the media retry since the M4).
-    expect(mediaLines.filter((q) => q === '(not (pointer: coarse)) and (width >= 728px)')).toHaveLength(4)
+    expect(mediaLines.filter((q) => q === '(not (pointer: coarse)) and (width >= 728px)')).toHaveLength(3)
     // Narrow window only.
     expect(mediaLines.filter((q) => q === NARROW_QUERY)).toHaveLength(1)
     // No pointer query left that ignores the width.

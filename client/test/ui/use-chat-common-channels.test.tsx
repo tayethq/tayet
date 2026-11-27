@@ -100,6 +100,8 @@ function fakeAcl(over: {
     currentUser: async () => me,
     getThreadUnread: async () => ({ unread: false }),
     getTimeline: async () => ({ items: [] as Message[], nextCursor: undefined as PageCursor | undefined }),
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     subscribe: (_handler: (e: DomainEvent) => void) => noopUnsub,
     subscribeChannel: () => noopUnsub,
     sendMessage: async () => uid('txn') as unknown as Message['id'],

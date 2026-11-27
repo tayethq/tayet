@@ -11,10 +11,12 @@ custody. You host the whole stack yourself.
 ## What's in this repo
 
 - `client/` — the web client: a React SPA that reaches the server only through an Anti-Corruption Layer.
-- `escrow/` — the per-organization custody service: holds key-backup deposits and writes an append-only audit log.
+- `escrow/` — the per-organization custody service: holds key-backup deposits and the session keys deposited by the custody agent, and writes an append-only audit log. It holds the organization key and nothing else.
+- `org/` — the organization service: invites and removes people and creates and manages agents, against the identity provider and the organization channel. It holds no organization key.
 - `agent/` — the custody agent `cofre`: a member of every encrypted room that deposits room session keys with escrow.
 - `shared/` — the shared library: domain types, the translation from protocol to domain, and the protocol-leak scanner. The client and the agent sidecar consume it as `@tayet/shared`.
 - `sidecar/` — the agent sidecar `tayet-agent`: runs an agent on the operator's machine and serves it a local API; published to npm and as a container image.
+- `push/` — the push gateway: turns the homeserver's push notifications into Web Push for the browsers' push services.
 - `infra/deploy/` — the production deployment: Compose stack, Caddy, configuration templates and `deploy.sh`.
 - `infra/dev-stack/` — the local development stack that the packages run integrated against.
 
@@ -40,14 +42,14 @@ The step-by-step guide, from DNS and the Google OAuth client to backup and resto
 
 ## Development
 
-You need Node 22+. Run `npm ci` inside `client/`, `escrow/`, `agent/`, `shared/` or `sidecar/`.
-`escrow/` and `agent/` are standalone; `client/` and `sidecar/` link `shared/` from the same checkout
+You need Node 22+. Run `npm ci` inside `client/`, `escrow/`, `agent/`, `shared/`, `sidecar/`,
+`push/` or `org/`. `escrow/`, `agent/`, `push/` and `org/` are standalone; `client/` and `sidecar/` link `shared/` from the same checkout
 (`file:../shared`), so clone the whole tree. `infra/dev-stack/` brings up the local stack for
 integration work; without it, integration suites skip.
 
 Package details are in [`client/README.md`](client/README.md),
-[`escrow/README.md`](escrow/README.md), [`agent/README.md`](agent/README.md) and
-[`sidecar/README.md`](sidecar/README.md).
+[`escrow/README.md`](escrow/README.md), [`agent/README.md`](agent/README.md),
+[`sidecar/README.md`](sidecar/README.md), [`push/README.md`](push/README.md) and [`org/README.md`](org/README.md).
 
 ## Decisions
 

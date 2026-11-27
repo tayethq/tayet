@@ -107,9 +107,15 @@ The documents themselves live in the private development repository.
 - ADR-110 — Cadeia de suprimento do CI: actions por SHA, Dependabot só de actions, scan da imagem do agente no `Publish` e base `node` nova (Aceito)
 - ADR-111 — GitHub Release do agente com SBOM CycloneDX e atestado de proveniência (Aceito)
 - ADR-112 — Custódia: convite independente do mapa de conversas diretas e reparo ao abrir a conversa (Aceito)
+- ADR-114 — Leitura síncrona do estado da conexão no barrel e o sinal de rede do navegador (Aceito)
+- ADR-115 — A tela de gestão do canal oferece o que o servidor aceita (Aceito)
+- ADR-116 — Conversa direta: marcador de nascimento `{ kind: 'direct' }` e leitura além do mapa (Aceito)
+- ADR-117 — Serviço de push próprio no compose: a regra do app chega ao servidor por uma marca na regra de push (Aceito)
+- ADR-118 — Serviço de organização: o serviço `org` recebe pessoas e agentes do escrow, que volta a ser só custódia, com as mesmas URLs atrás de `/escrow`; papel de admin e "sem acesso válido" numa leitura, promover e rebaixar com trava do último admin em processo; nome e logo com leitura pública (decorre do `PLANO-ADMIN.md` §0.8; revisa ADR-083/086/087/090/082/047; toca ADR-017/054/057/088/117) (Proposto)
 
 ## Plans
 
+- PLANO-ADMIN
 - PLANO-AGENTES
 - PLANO-BOOT-STORE-ORFAO
 - PLANO-CI-INTEGRACAO
@@ -148,4 +154,4 @@ The documents themselves live in the private development repository.
 
 ---
 
-98 architecture decision records, 35 plans, tree 9d5fbf191a725810546564b70c7f016c6505f5c2.
+103 architecture decision records, 36 plans, tree c22145051919f3e2ac3b3472af64a9c89e81a896.

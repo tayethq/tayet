@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { beforeAll, describe, it, expect } from 'vitest'
 import { ESLint } from 'eslint'
 
 // Negative boundary test (PLANO-FASE-1 §3.2). Proves the ADR-007 gate actually fails the
@@ -19,6 +19,14 @@ async function ruleIdsFor(code: string, filePath: string): Promise<Array<string 
 
 const SDK_VALUE_IMPORT = `import { createClient } from 'matrix-js-sdk'\nexport const x = createClient\n`
 const SDK_TYPE_IMPORT = `import type { MatrixClient } from 'matrix-js-sdk'\nexport type X = MatrixClient\n`
+
+// Warm-up (issue #7, as in shared/test/boundary.test.ts): the first lintText of the process loads
+// ESLint, the config and its plugins (0.6–1.2 s alone, 1.2 s under load). Paid here, under its own
+// deadline, on the first test's filePath, not inside the 5 s deadline of the first test; no assertion
+// depends on it.
+beforeAll(async () => {
+  await eslint.lintText('export {}\n', { filePath: 'src/domain/__fixture__.ts' })
+}, 60_000)
 
 describe('ADR-007 boundary gate', () => {
   it('a VALUE import of matrix-js-sdk outside the ACL breaks the build', async () => {

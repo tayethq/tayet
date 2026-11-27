@@ -113,7 +113,10 @@ export type {
 
 export {
   ConnectionError,
+  LastAdminError,
   NameInUseError,
+  NotMemberError,
+  OrgAccessDeniedError,
   PeopleUnavailableError,
   PersonExistsError,
   RateLimitedError,

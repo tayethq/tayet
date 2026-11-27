@@ -1,0 +1,17 @@
+# Router of the dev-stack: the split of production's `handle_path /escrow/*`
+# (infra/deploy/Caddyfile), in plain HTTP and without the prefix, which the Vite proxy and the test
+# harness already strip. Keep the matcher equal to production's.
+{
+	admin off
+	auto_https off
+}
+
+:8090 {
+	@org path /v1/people /v1/people/* /v1/agents /v1/agents/* /v1/org/*
+	handle @org {
+		reverse_proxy org:8091
+	}
+	handle {
+		reverse_proxy escrow:8090
+	}
+}

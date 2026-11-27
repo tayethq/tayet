@@ -8,6 +8,7 @@ import { useNarrowWindow } from '../../src/ui/narrow'
 import type { KnownAccess } from '../../src/ui/components/AccountSettings'
 import type { ResetStatus } from '../../src/ui/components/ResetAccessBanner'
 import type { AgentColor, Channel, ChannelId, DeviceId, MyProfile, Person, User, UserId } from '../../src/acl'
+import { OrgAccessDeniedError } from '../../src/acl'
 import { applyLocale } from '../../src/ui/i18n'
 import { en } from '../../src/ui/i18n/en'
 import { findProtocolLeaksInText } from '@tayet/shared/leak-scan'
@@ -77,6 +78,8 @@ const PROFILE: MyProfile = { fullName: 'Marina Alves', org: { authority: 'direct
 interface Opts {
   accesses?: KnownAccess[]
   admin?: boolean
+  // R6: the role read answers the refusal, as useChat does (the role drops, then the error).
+  denyAccess?: boolean
   selected?: boolean
   resetStatus?: ResetStatus
   load?: () => Promise<MyProfile>
@@ -92,6 +95,7 @@ function mount(opts: Opts = {}) {
     const narrow = useNarrowWindow()
     const [selected, setSelected] = useState(opts.selected ? ENG.id : undefined)
     const [reset, setStatus] = useState<ResetStatus>(opts.resetStatus ?? 'idle')
+    const [admin, setAdmin] = useState(opts.admin)
     setReset = setStatus
     useStackScreens({ narrow, chat: selected !== undefined, thread: false, onPopChat: () => setSelected(undefined), onPopThread: () => {} })
     return (
@@ -106,8 +110,14 @@ function mount(opts: Opts = {}) {
         onSelectChannel={setSelected}
         onSend={() => {}}
         accesses={opts.accesses ?? MANY}
-        orgAdmin={opts.admin}
+        orgAdmin={admin}
         people={[{ user: me } as Person]}
+        onGetOrgAccess={async () => {
+          if (!opts.denyAccess) return { admins: [me.id], withoutAccess: [] }
+          setAdmin(false)
+          throw new OrgAccessDeniedError()
+        }}
+        onSetOrgAdmin={async () => {}}
         onInvitePerson={(async () => ({})) as never}
         onRemovePerson={async () => {}}
         onCreateAgent={(async (_n: string, _c: AgentColor) => ({})) as never}
@@ -327,13 +337,13 @@ describe('crossing the breakpoint', () => {
 
 describe('H2: a view with no narrow screen that was open stays a dialog until it closes', () => {
   const cases = [
-    { name: 'people', entry: copy.people.title, title: copy.people.title },
     { name: 'export', entry: copy.dataExport.entry, title: copy.dataExport.title },
     { name: 'open on phone', entry: copy.account.openOnPhone, title: copy.account.openOnPhone },
   ]
 
+  // With a coarse pointer: with a fine one the narrow window has the export entry too (V8, test below).
   it.each(cases)('$name', ({ entry, title }) => {
-    const device = fakeDevice({ narrow: false })
+    const device = fakeDevice({ narrow: false, coarse: true })
     const v = mount({ admin: true })
     v.open()
     v.press(v.entry(entry)!)
@@ -353,25 +363,45 @@ describe('H2: a view with no narrow screen that was open stays a dialog until it
     expect(v.entry(entry)).toBeUndefined()
   })
 
-  it.each([
-    { name: 'invite', button: copy.people.invite, title: copy.people.invite },
-    { name: 'agent', button: copy.agent.add, title: copy.agent.createTitle },
-  ])('$name, over people: back goes to people, then to the account', ({ button, title }) => {
+})
+
+// C7 (slice 1c): the Admin is wide only. Opened from "Sua conta", it takes the workspace's place; when the window
+// goes below 728px, with any pointer, it closes and the conversations come back.
+describe('R6: the refusal closes the Admin and takes the row away, without a reload', () => {
+  it('a 403 on the role read: back to the conversations, and "Sua conta" has no Organização', async () => {
+    fakeDevice({ narrow: false })
+    const v = mount({ admin: true, denyAccess: true })
+    v.open()
+    v.press(v.entry(copy.admin.entry)!)
+    await waitFor(() => expect(v.queryByRole('navigation', { name: copy.admin.nav })).toBeNull())
+    expect(v.container.querySelector('.workspace')!.hasAttribute('hidden')).toBe(false)
+    expect(document.activeElement).toBe(v.footer())
+    v.open()
+    expect(v.titles()).not.toContain(copy.people.orgSection)
+    expect(v.entry(copy.admin.entry)).toBeUndefined()
+  })
+})
+
+describe('C7: the Admin closes below the breakpoint', () => {
+  it('opens from "Administrar organização" in place of the workspace, and narrowing closes it', async () => {
     const device = fakeDevice({ narrow: false })
     const v = mount({ admin: true })
     v.open()
-    v.press(v.entry(copy.people.title)!)
-    v.press(v.getAllByRole('button').find((b) => b.textContent!.includes(button))!)
-    const dialog = v.getByRole('dialog', { name: title })
+    v.press(v.entry(copy.admin.entry)!)
+    expect(v.queryByRole('dialog', { name: copy.account.title })).toBeNull()
+    expect(v.getByRole('navigation', { name: copy.admin.nav })).toBeTruthy()
+    expect(v.container.querySelector('.workspace')!.hasAttribute('hidden')).toBe(true)
+    // V3: it opens on the Visão geral.
+    await waitFor(() => expect(v.getByRole('heading', { name: copy.admin.admins })).toBeTruthy())
+
     device.setNarrow(true)
     v.h.land()
-    expect(v.getByRole('dialog', { name: title })).toBe(dialog)
-    expect(v.h.depth()).toBe(3)
-    v.h.back()
-    expect(v.getByRole('dialog', { name: copy.people.title })).toBeTruthy()
-    v.h.back()
-    expect(v.queryByRole('dialog')).toBeNull()
-    expect(v.h.depth()).toBe(1)
+    await waitFor(() => expect(v.queryByRole('navigation', { name: copy.admin.nav })).toBeNull())
+    expect(v.container.querySelector('.workspace')!.hasAttribute('hidden')).toBe(false)
+    // Back to wide: it stays closed until opened again.
+    device.setNarrow(false)
+    v.h.land()
+    expect(v.queryByRole('navigation', { name: copy.admin.nav })).toBeNull()
   })
 })
 
@@ -401,7 +431,8 @@ describe('the narrow account', () => {
     expect(v.entry(copy.people.title)).toBeUndefined()
   })
 
-  it('export is a line with no action and no chevron', () => {
+  it('export, with a coarse pointer, is a line with no action and no chevron', () => {
+    fakeDevice({ coarse: true })
     const v = mount()
     v.open()
     const line = v.container.querySelector<HTMLElement>('.account-settings__desktop-only')!
@@ -410,6 +441,35 @@ describe('the narrow account', () => {
     expect(line.querySelector('button, svg, .account-settings__access-entry-chevron')).toBeNull()
     fireEvent.click(line)
     expect(v.queryByRole('dialog')).toBeNull()
+  })
+
+  // #421 P3 a (PLANO-ADMIN §8.8 V8): with a fine pointer the narrow window opens the wide dialog over the stack.
+  it('export, with a fine pointer, is the entry of the wide dialog; it opens over the stack and closes back', () => {
+    const v = mount()
+    v.open()
+    expect(v.container.querySelector('.account-settings__desktop-only')).toBeNull()
+    const entry = v.entry(copy.dataExport.entry)!
+    expect(entry.textContent).toContain(copy.dataExport.entrySummary)
+    v.press(entry)
+    expect(v.getByRole('dialog', { name: copy.dataExport.title })).toBeTruthy()
+    expect(v.screen(copy.account.title)!.hasAttribute('inert')).toBe(true)
+    expect(v.h.depth()).toBe(2)
+
+    fireEvent.click(within(v.getByRole('dialog', { name: copy.dataExport.title })).getByRole('button', { name: copy.dialog.close }))
+    v.h.land()
+    expect(v.queryByRole('dialog', { name: copy.dataExport.title })).toBeNull()
+    expect(v.screen(copy.account.title)!.hasAttribute('inert')).toBe(false)
+    expect(v.h.depth()).toBe(1)
+    // As in H2: the focus goes to the screen's back (AccountScreen), not to the entry.
+    expect(document.activeElement).toBe(v.screen(copy.account.title)!.querySelector('.ui-screen-header__back'))
+
+    // The system's back closes it too.
+    v.press(v.entry(copy.dataExport.entry)!)
+    expect(v.h.depth()).toBe(2)
+    v.h.back()
+    expect(v.queryByRole('dialog', { name: copy.dataExport.title })).toBeNull()
+    expect(v.screen(copy.account.title)).not.toBeNull()
+    expect(v.h.depth()).toBe(1)
   })
 
   it('accesses: the current first, the box last', () => {

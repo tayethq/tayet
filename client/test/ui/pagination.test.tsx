@@ -49,6 +49,8 @@ function fakeAcl(): Acl {
     getChannel: async () => channel,
     getMembers: async () => [],
     getPresence: () => 'offline' as const,
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     getDevices: async () => [],
     currentUser: async () => ({ id: uid('@me:tayet.local'), displayName: 'Me', kind: 'member' }),
     getMyProfile: async () => ({ fullName: 'Me' }),
@@ -111,6 +113,11 @@ createChannel: async () => { throw new Error('membership verb not used in this t
     updateAgent: async () => {},
     reissueAgent: () => Promise.reject(new Error('not wired')),
     removeAgent: async () => {},
+    getOrgAccess: () => Promise.reject(new Error('unused')),
+    setOrgAdmin: async () => {},
+    enableDeviceNotifications: async () => {},
+    disableDeviceNotifications: async () => {},
+    resolveNotificationTarget: async () => undefined,
     signOut: async () => {},
   }
 }

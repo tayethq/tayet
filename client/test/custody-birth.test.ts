@@ -4,6 +4,7 @@ import { roomToChannel } from '@tayet/shared/internal'
 import { CUSTODY_WAIT_MS } from '../src/acl/internal/custody'
 import type { AclTelemetry, ChannelId, DomainEvent, UserId } from '../src/acl'
 import type { Room } from 'matrix-js-sdk'
+import { directInviteHttp } from './support/direct-invite'
 
 // Nascimento de sala com cobertura estrutural (PR-4 do track CRIPTO-COBERTURA; ADR-057 dec. 2/3,
 // F1 fail-open, F3 `cofre`, F7 rotação pinada) — lado unitário, sem Synapse. Idioma de fake-client
@@ -63,12 +64,13 @@ function harness(
       cap.createRoom.push(o)
       return Promise.resolve({ room_id: ROOM })
     },
-    invite: (roomId: string, userId: string) => {
+    // The ACL invites by a direct call (ADR-057, addendum of 24/Nov/2026).
+    http: directInviteHttp((roomId: string, userId: string) => {
       cap.invites.push({ roomId, userId })
       return inviteOutcome === 'ok'
         ? Promise.resolve(undefined)
         : Promise.reject(new Error('M_FORBIDDEN'))
-    },
+    }),
     getAccountData: () => undefined,
     setAccountData: () => Promise.resolve(undefined),
   }

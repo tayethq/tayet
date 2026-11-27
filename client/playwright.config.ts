@@ -31,12 +31,13 @@ export default defineConfig({
     video: 'retain-on-failure',
   },
   projects: [
-    // The desktop suite. The narrow specs belong to the phone project only.
-    { name: 'chromium', testIgnore: /\.narrow\.spec\.ts$/, use: { ...devices['Desktop Chrome'] } },
+    // The desktop suite. The narrow specs belong to the phone project only, the push specs to the push project.
+    { name: 'chromium', testIgnore: [/\.narrow\.spec\.ts$/, /\.push\.spec\.ts$/], use: { ...devices['Desktop Chrome'] } },
     // A phone-sized Chromium with touch, running only the narrow specs (no WebKit, no second full suite).
     {
       name: 'phone',
       testMatch: /\.narrow\.spec\.ts$/,
+      testIgnore: /\.push\.spec\.ts$/,
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 390, height: 844 },
@@ -45,6 +46,9 @@ export default defineConfig({
         deviceScaleFactor: 3,
       },
     },
+    // ADR-117 (PLANO-MOBILE §0.25 N2): only the push specs, on the full Chromium build — the headless shell above
+    // keeps notifications denied, so neither the service worker's notifications nor a push can be seen there.
+    { name: 'push', testMatch: /\.push\.spec\.ts$/, use: { ...devices['Desktop Chrome'], channel: 'chromium' } },
   ],
   webServer: {
     command: `npm run preview -- --port ${SPA_PORT} --strictPort`,

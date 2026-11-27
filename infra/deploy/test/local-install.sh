@@ -64,6 +64,8 @@ TREE="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/local-install.XXXXXX")" && pwd -P)"
 DEPLOY="$TREE/infra/deploy"
 OVERRIDE="$DEPLOY/test/compose.local.yaml"
 CA="$TREE/caddy-root.crt"
+# Entry point of test/restore-proof.sh: where <tree> is, for a caller that runs this with --keep.
+if [[ -n "${LOCAL_INSTALL_TREE_FILE:-}" ]]; then printf '%s\n' "$TREE" > "$LOCAL_INSTALL_TREE_FILE"; fi
 
 # Derruba só o que é do projeto tayet-local, também em falha no meio. Primeiro o compose (down -v); se
 # o compose não carrega (falha antes do secrets, sem agent.env), varre por label do projeto.
@@ -233,6 +235,60 @@ if [[ -n "$sources" ]]; then
   die "tayet.app no compose config (acima)."
 fi
 echo "compose config com tayet.app: 0 linhas."
+
+# ── 10. /escrow routing: org and escrow behind the same prefix ────────────────────────────────
+# After 8b: the 502s of the stopped processes reach the Caddy log with the chat.<domain> host and the
+# failed resolution of the stopped service, which the 8b measurement would read as an attempt to reach
+# a public host. Without a token, org and escrow answer 401. Stopping one process at a time shows who
+# answers each path: the stopped process's path is no longer 401 (Caddy cannot reach it), the other
+# stays 401.
+step "10. roteamento do /escrow (org × escrow, um processo parado de cada vez)"
+DC=(docker compose -p "$PROJECT" --env-file secrets/deployment.env -f compose.yaml -f "$OVERRIDE")
+PEOPLE_ME="https://chat.$DOMAIN/escrow/v1/people/me"
+SECRET="https://chat.$DOMAIN/escrow/v1/secret"
+wait_code() { # <url> <code>, up to 60 s
+  local c=""
+  for _ in $(seq 1 60); do
+    c="$(code_of "$1" || true)"
+    [[ "$c" == "$2" ]] && return 0
+    sleep 1
+  done
+  die "$1 → HTTP $c, esperado $2 em 60 s."
+}
+route() { # <label> <expected code of people/me: 401 or not401> <expected code of secret: same>
+  local pm sc
+  pm="$(code_of "$PEOPLE_ME" || true)"
+  sc="$(code_of "$SECRET" || true)"
+  case "$2" in 401) [[ "$pm" == 401 ]] ;; not401) [[ "$pm" != 401 ]] ;; esac || die "$1: people/me → HTTP $pm"
+  case "$3" in 401) [[ "$sc" == 401 ]] ;; not401) [[ "$sc" != 401 ]] ;; esac || die "$1: secret → HTTP $sc"
+  pass "$1: /escrow/v1/people/me → HTTP $pm, /escrow/v1/secret → HTTP $sc"
+}
+wait_code "$PEOPLE_ME" 401
+wait_code "$SECRET" 401
+route "tudo de pé" 401 401
+"${DC[@]}" stop escrow >/dev/null
+route "escrow parado" 401 not401
+"${DC[@]}" start escrow >/dev/null
+wait_code "$SECRET" 401
+"${DC[@]}" stop org >/dev/null
+route "escrow de volta, org parado" not401 401
+"${DC[@]}" start org >/dev/null
+wait_code "$PEOPLE_ME" 401
+route "tudo religado" 401 401
+
+# ── 11. a second up promotes nobody; promote-admin recovers the org admin ─────────────────────
+# The bootstrap admin is promoted only by the up that created the account. promote-admin runs the org
+# service's own command in its container: idempotent for a live member, a non-zero refusal otherwise.
+step "11. segundo up e ./deploy.sh promote-admin"
+second_up="$(./deploy.sh up 2>&1)" || { printf '%s\n' "$second_up" >&2; die "o segundo ./deploy.sh up falhou."; }
+if grep -q '^Org admin:' <<<"$second_up"; then die "o segundo up promoveu alguém (linha Org admin:)."; fi
+pass "segundo ./deploy.sh up: sem a linha Org admin:"
+promoted="$(./deploy.sh promote-admin "$BOOTSTRAP_ADMIN_EMAIL" 2>&1)" || die "promote-admin do admin de bootstrap: $promoted"
+grep -qx "$BOOTSTRAP_ADMIN_USERNAME: already an admin" <<<"$promoted" || die "promote-admin do admin de bootstrap: $promoted"
+pass "promote-admin $BOOTSTRAP_ADMIN_EMAIL → $BOOTSTRAP_ADMIN_USERNAME: already an admin"
+if refused="$(./deploy.sh promote-admin "nobody@$DOMAIN" 2>&1)"; then die "promote-admin de email sem conta saiu 0: $refused"; fi
+grep -qx 'promote-admin: no account for this email' <<<"$refused" || die "promote-admin de email sem conta: $refused"
+pass "promote-admin nobody@$DOMAIN → recusa (status ≠ 0, no account for this email)"
 
 echo
 echo "Prova local OK: $checks conferências por curl, login no navegador, $((SECONDS - START)) s até aqui."

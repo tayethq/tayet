@@ -54,10 +54,14 @@ function harness(
       return joinResult()
     },
     getAccountData: () => undefined,
-    setAccountData: (_type: unknown, content: Record<string, unknown>) => {
-      cap.accountData.push(content)
-      cap.order.push('setAccountData')
-      return Promise.resolve(undefined)
+    // Issue #421 (F1): the map goes by a direct call to the account-data endpoint, without the echo wait.
+    http: {
+      authedRequest: (method: string, path: string, _query: unknown, content: Record<string, unknown>) => {
+        if (method !== 'PUT' || !path.endsWith('/account_data/m.direct')) throw new Error(`unexpected ${method} ${path}`)
+        cap.accountData.push(content)
+        cap.order.push('mapWrite')
+        return Promise.resolve({})
+      },
     },
   }
   const gateway = new MatrixGateway({ mode: 'strict', telemetry: noopTelemetry, serverUrl: 'http://x' })
@@ -79,7 +83,7 @@ describe('autoJoinInvite — auto-join + DM convergence (ADR-044)', () => {
     expect(cap.accountData[0]).toEqual({ [INVITER]: [ROOM] })
     // Classificação de DM gravada ANTES do join: o store já reflete a DM quando o channel.added
     // do join dispara.
-    expect(cap.order).toEqual(['setAccountData', 'joinRoom'])
+    expect(cap.order).toEqual(['mapWrite', 'joinRoom'])
     // O seam não produz nada renderável (não emite channel.added; retorno é void).
     expect(findProtocolLeaks(result)).toEqual([])
   })

@@ -111,4 +111,11 @@ default_room_version: "10"
 caches:
   sync_response_cache_duration: 0
 
+# Outbound requests to private addresses stay blocked (the default ip_range_blacklist is untouched);
+# the only exception is the push gateway on the push network (ADR-117 dec. 7), one /32 per project:
+# `spike` and `spike-ci` (dev-stack.sh derives both from the project's subnet).
+ip_range_whitelist:
+  - 10.213.78.3/32
+  - 10.213.78.11/32
+
 # vim:ft=yaml

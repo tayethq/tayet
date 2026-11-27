@@ -4,13 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
-import { createEscrowServer } from '../../src/server.ts'
-import { importOrgKey } from '../../src/crypto.ts'
-import { fileSessionStore } from '../../src/custody-store.ts'
-import { fileStore } from '../../src/store.ts'
+import { createOrgServer } from '../../src/server.ts'
 import { jsonlAudit } from '../../src/audit.ts'
 import { masAdmin } from '../../src/mas-admin.ts'
 import { createPeople, systemWriter } from '../../src/people.ts'
+import { createAdmins } from '../../src/admins.ts'
 import { createAgents, keyedMutex, normalizeName, randomDeviceId } from '../../src/agents.ts'
 import { homeserver } from '../../src/synapse.ts'
 import { fakeFetch, fakeIntrospector, ME, PROVIDER, ROOM, SERVER, seed, type Fake } from '../support/fake-org.ts'
@@ -47,14 +45,10 @@ async function start(): Promise<void> {
   const asSystem = systemWriter({ masAdmin: admin, synapse, serverName: SERVER })
   let n = 0
   let d = 0
-  server = createEscrowServer({
-    store: fileStore(dir),
+  server = createOrgServer({
     introspector: fakeIntrospector(fake),
-    orgKey: await importOrgKey(Buffer.from(new Uint8Array(32).fill(7)).toString('base64')),
     audit,
-    sessionStore: fileSessionStore(join(dir, 'sessions')),
-    custodyUsername: 'cofre',
-    accessAdmin: admin,
+    admins: createAdmins({ masAdmin: admin, synapse, audit, asSystem, serverName: SERVER, custodyUsername: 'cofre' }),
     people: createPeople({
       masAdmin: admin,
       synapse,
@@ -113,7 +107,7 @@ const audit = async (): Promise<Array<Record<string, unknown>>> =>
 const agentSessions = (): Fake['sessions'] => fake.sessions.filter((s) => s.body.actor_user_id === `U-${AGENT}`)
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'escrow-agents-'))
+  dir = await mkdtemp(join(tmpdir(), 'org-agents-'))
   fake = seed()
   calls = []
   clock = 1_000_000

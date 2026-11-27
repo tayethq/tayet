@@ -4,12 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
-import { createEscrowServer } from '../../src/server.ts'
-import { importOrgKey } from '../../src/crypto.ts'
-import { fileSessionStore } from '../../src/custody-store.ts'
-import { fileStore } from '../../src/store.ts'
+import { createOrgServer } from '../../src/server.ts'
 import { errorReason, jsonlAudit } from '../../src/audit.ts'
 import { masAdmin } from '../../src/mas-admin.ts'
+import { createAdmins } from '../../src/admins.ts'
+import { createAgents } from '../../src/agents.ts'
 import { createPeople, randomLocalpart } from '../../src/people.ts'
 import { homeserver } from '../../src/synapse.ts'
 import { fakeFetch, fakeIntrospector, ME, PROVIDER, ROOM, SERVER, seed, type Fake } from '../support/fake-org.ts'
@@ -19,39 +18,33 @@ let server: Server
 let base: string
 let fake: Fake
 
-async function start(opts: { mounted?: boolean } = {}): Promise<void> {
+async function start(): Promise<void> {
   const fetchFn = fakeFetch(fake)
   const admin = masAdmin({ url: 'http://mas:8081', tokenUrl: 'http://mas:8080/oauth2/token', clientId: 'id', clientSecret: 's', fetchFn })
   const audit = jsonlAudit(join(dir, 'audit.jsonl'))
+  const synapse = homeserver({
+    url: 'http://synapse:8008',
+    fetchFn,
+    sleep: (ms) => {
+      fake.sleeps.push(ms)
+      return Promise.resolve()
+    },
+  })
   let n = 0
-  server = createEscrowServer({
-    store: fileStore(dir),
+  server = createOrgServer({
     introspector: fakeIntrospector(),
-    orgKey: await importOrgKey(Buffer.from(new Uint8Array(32).fill(7)).toString('base64')),
     audit,
-    sessionStore: fileSessionStore(join(dir, 'sessions')),
-    custodyUsername: 'cofre',
-    accessAdmin: admin,
-    ...(opts.mounted === false
-      ? {}
-      : {
-          people: createPeople({
-            masAdmin: admin,
-            synapse: homeserver({
-              url: 'http://synapse:8008',
-              fetchFn,
-              sleep: (ms) => {
-                fake.sleeps.push(ms)
-                return Promise.resolve()
-              },
-            }),
-            audit,
-            randomId: () => `r${(n += 1)}`,
-            serverName: SERVER,
-            providerId: PROVIDER,
-            custodyUsername: 'cofre',
-          }),
-        }),
+    people: createPeople({
+      masAdmin: admin,
+      synapse,
+      audit,
+      randomId: () => `r${(n += 1)}`,
+      serverName: SERVER,
+      providerId: PROVIDER,
+      custodyUsername: 'cofre',
+    }),
+    agents: createAgents({ masAdmin: admin, synapse, audit, randomId: randomLocalpart, serverName: SERVER }),
+    admins: createAdmins({ masAdmin: admin, synapse, audit, serverName: SERVER, custodyUsername: 'cofre' }),
   })
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
@@ -80,7 +73,7 @@ const MXID = `@u-r1:${SERVER}`
 const KEY = `${ME}|u-r1:${SERVER}`
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'escrow-people-'))
+  dir = await mkdtemp(join(tmpdir(), 'org-people-'))
   fake = seed()
 })
 
@@ -310,11 +303,6 @@ describe('POST /v1/people', () => {
     expect(await res.json()).toEqual({ error: 'admin_unavailable' })
   })
 
-  it('sem o client admin as rotas não existem', async () => {
-    await start({ mounted: false })
-    expect((await invite('tok-alice')).status).toBe(404)
-  })
-
   it('o audit não carrega email nem nome', async () => {
     await start()
     await invite('tok-alice')
@@ -444,11 +432,6 @@ describe('GET /v1/people/me', () => {
   it('o motivo cabe em 200 caracteres', () => {
     expect(errorReason(new Error('x'.repeat(300)))).toHaveLength(200)
     expect(errorReason('sem Error')).toBe('sem Error')
-  })
-
-  it('sem o client admin a rota não existe', async () => {
-    await start({ mounted: false })
-    expect((await me('tok-alice')).status).toBe(404)
   })
 })
 

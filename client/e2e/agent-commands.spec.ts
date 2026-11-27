@@ -1,11 +1,11 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
 import { TAI } from './fixtures/users'
-import { accountSettings } from './support/account'
 import { expectNoProtocolLeak } from './support/assertions'
 import { ConsoleLedger, FIRST_LOGIN_404, recognizedSet404 } from './support/console'
-import { AGENTS, COMMANDS, MANAGE, PEOPLE, TIMELINE } from './support/labels'
+import { AGENTS, COMMANDS, MANAGE, TIMELINE } from './support/labels'
+import { closeAdmin, openAdmin } from './support/admin'
 import { signIn } from './support/login'
-import { createChannel, deleteChannelsNamed, deleteSharedRooms, openManage } from './support/rooms'
+import { closePicker, createChannel, deleteChannelsNamed, deleteSharedRooms, openManage } from './support/rooms'
 import { startSidecar, type SidecarRun } from './support/sidecar'
 import { channelRow, mainComposer, messages } from './support/workspace'
 
@@ -30,7 +30,6 @@ const HINT = 'semana ou data'
 // within 10 s of the declaration (the panel's budget, ADR-093 dec. 10).
 const SEEN_MS = 60_000
 
-const peoplePanel = (page: Page): Locator => page.getByRole('dialog', { name: PEOPLE.title })
 const popup = (page: Page): Locator => page.getByRole('listbox', { name: COMMANDS.popup })
 
 async function readCommand(dialog: Locator): Promise<{ command: string; credential: string }> {
@@ -76,11 +75,9 @@ test('agent commands: declare, pick in the popup, send, the agent receives and a
 
     let run!: SidecarRun
     await test.step('0b. tai creates the agent; the command shown starts the sidecar', async () => {
-      const account = await accountSettings(page)
-      await expect(account.getByText(PEOPLE.section)).toBeVisible({ timeout: 30_000 })
-      await account.getByRole('button', { name: new RegExp(`^${PEOPLE.title}`) }).click()
-      await expect(peoplePanel(page)).toBeVisible()
-      await peoplePanel(page).getByRole('button', { name: AGENTS.add }).click()
+      // Slice 1c: "Pessoas" lives in the Admin, opened from "Sua conta".
+      await openAdmin(page)
+      await page.getByRole('button', { name: AGENTS.add }).click()
       const dialog = page.getByRole('dialog', { name: AGENTS.createTitle })
       await dialog.getByLabel(AGENTS.fieldName).fill(NAME)
       await dialog.getByRole('button', { name: AGENTS.create }).click()
@@ -99,11 +96,14 @@ test('agent commands: declare, pick in the popup, send, the agent receives and a
         if ((await page.getByRole('dialog').count()) > 0) await page.keyboard.press('Escape')
         await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 1_000 })
       }).toPass({ timeout: 15_000 })
+      // Back from the Admin to the conversations.
+      await closeAdmin(page)
       await openManage(page, CHANNEL, 'private')
       const candidate = page.getByRole('dialog', { name: MANAGE.addMember }).getByRole('button', { name: new RegExp(NAME) })
       await page.getByRole('button', { name: MANAGE.addMember }).click()
       await expect(candidate).toBeVisible({ timeout: 30_000 })
       await candidate.click()
+      await closePicker(page, candidate)
       const member = page.getByRole('region', { name: MANAGE.members }).getByRole('listitem').filter({ hasText: NAME })
       await expect(member).toBeVisible({ timeout: 30_000 })
       await expect(member.getByText(MANAGE.awaiting)).toHaveCount(0, { timeout: SEEN_MS })

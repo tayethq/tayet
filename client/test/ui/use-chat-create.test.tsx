@@ -85,6 +85,8 @@ function fakeAcl(over: {
     currentUser: over.currentUser ?? (async () => ({ id: uid('@me:tayet.local'), displayName: 'Me' })),
     getThreadUnread: async () => ({ unread: false }),
     getTimeline: async () => ({ items: [] as Message[], nextCursor: undefined as PageCursor | undefined }),
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     subscribe: (handler: (e: DomainEvent) => void) => {
       if (over.emitRef) over.emitRef.emit = handler
       return noopUnsub

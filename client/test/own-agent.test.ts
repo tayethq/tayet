@@ -3,6 +3,7 @@ import { MatrixGateway } from '../src/acl/internal/matrix-client'
 import { brandChannelId, brandUserId } from '@tayet/shared/internal'
 import type { AclTelemetry } from '../src/acl'
 import { findProtocolLeaks } from '@tayet/shared/leak-scan'
+import { directInviteHttp } from './support/direct-invite'
 
 // Operador 2 (ADR-090 Proposto dec. 3/4; PLANO-AGENTES §0.3.10): the agents this session operates
 // (listOwnAgents) and the ACL backstop on addMember / openDirectMessage / createChannel. Same
@@ -58,7 +59,8 @@ function gatewayWith(rooms: unknown[]) {
     getRoom: (id: string) => rooms.find((r) => (r as { roomId: string }).roomId === id) ?? null,
     getAccountData: () => undefined,
     setAccountData: vi.fn(async () => ({})),
-    invite,
+    // The ACL invites by a direct call (ADR-057, addendum of 24/Nov/2026).
+    http: directInviteHttp(invite),
     createRoom,
   }
   const gateway = new MatrixGateway({ mode: 'strict', telemetry: noopTelemetry, serverUrl: 'http://x' })

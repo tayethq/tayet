@@ -49,6 +49,19 @@ export const ptBR = {
     languageDevice: 'Idioma deste aparelho: {language}',
     languageEverywhere: 'Em todos os seus aparelhos',
     languageFailed: 'Não foi possível mudar o idioma',
+    // ADR-117, addendum of 26/Nov/2026: the "Notificações" section (account-access.md §16).
+    notifications: 'Notificações',
+    notificationsDevice: 'Neste aparelho',
+    notificationsOff: 'Desativadas',
+    notificationsOn: 'Ativadas',
+    notificationsEnabling: 'Ativando…',
+    notificationsFailed: 'Não foi possível ativar. Tente de novo.',
+    notificationsBlocked: 'Bloqueadas no sistema',
+    notificationsTurnOn: 'Ativar',
+    notificationsTurnOff: 'Desativar',
+    notificationsHelp:
+      'Com o Tayet fechado, menções e pedidos de aprovação em canais privados não geram aviso. Eles aparecem quando você abre o Tayet.',
+    notificationsHelpBlocked: 'Para ativar, permita as notificações do Tayet nas configurações do navegador ou do sistema.',
     accessSection: 'Acesso',
     accessTitle: 'Acessos à sua conta',
     accessSubtitle: 'Onde sua conta está sendo acessada.',
@@ -63,7 +76,7 @@ export const ptBR = {
     openOnPhoneHint: 'Aponte a câmera para o código',
     openOnPhoneBody: 'Aponte a câmera do celular para o código e entre com a sua conta.',
     openOnPhoneCode: 'Código para abrir o Tayet no celular',
-    openOnPhoneHelp: 'O Tayet abre no navegador do celular. No iPhone, você pode instalar na Tela de Início.',
+    openOnPhoneHelp: 'O Tayet abre no navegador do celular. No iPhone, você pode instalar na Tela de Início para receber avisos.',
     unknownCount: { one: '{n} desconhecido', other: '{n} desconhecidos' },
     resetTitle: 'Redefinir o acesso da conta',
     resetDesc: 'Recomeça do zero. Você entra de novo aqui e em qualquer outro acesso.',
@@ -97,7 +110,7 @@ export const ptBR = {
   install: {
     sheetLabel: 'Instalar o Tayet',
     title: 'Instale o Tayet neste iPhone',
-    body: 'Com o Tayet na Tela de Início, ele abre em tela cheia, como um app.',
+    body: 'Com o Tayet na Tela de Início, você recebe avisos de mensagens e de pedidos de aprovação.',
     step1: 'Toque em {share}, na barra do Safari',
     share: 'Compartilhar',
     step2: 'Escolha {add}',
@@ -107,7 +120,7 @@ export const ptBR = {
     notNow: 'Agora não',
     section: 'Neste iPhone',
     row: 'Instalar na Tela de Início',
-    rowHint: 'Para abrir em tela cheia, como um app',
+    rowHint: 'Para receber avisos de mensagens e de pedidos de aprovação',
   },
   profile: {
     editTitle: 'Editar perfil',
@@ -334,6 +347,9 @@ export const ptBR = {
     managePrivate: 'Gerenciar Canal privado {name}', // sem artboard — fidelidade pendente
     manage: 'Gerenciar canal', // sem artboard — fidelidade pendente
     closeManage: 'Fechar gerenciamento do canal', // sem artboard — fidelidade pendente
+    details: 'Detalhes do canal',
+    openProfile: 'Ver perfil',
+    role: 'Papel',
     name: 'Nome',
     topic: 'Tópico',
     saving: 'Salvando…', // sem artboard — fidelidade pendente
@@ -342,17 +358,17 @@ export const ptBR = {
     members: 'Pessoas',
     membersCount: 'Pessoas · {n}',
     add: '+ Adicionar',
-    addMember: 'Adicionar pessoa', // sem artboard — fidelidade pendente
+    addMember: 'Adicionar pessoa',
     you: '· você',
     roleAdmin: 'Admin',
     roleMember: 'Membro',
     roleGuest: 'Convidado', // sem artboard — fidelidade pendente
-    roleFor: 'Papel de {name}', // sem artboard — fidelidade pendente
+    roleFor: 'Papel de {name}',
     roleFailed: 'Não foi possível mudar o papel. Tente de novo.', // sem artboard — fidelidade pendente
     awaiting: 'Aguardando a primeira conexão', // sem artboard — fidelidade pendente
     viewProfile: 'Ver perfil de {name}',
     removeNamed: 'Remover {name}', // sem artboard — fidelidade pendente
-    remove: 'Remover', // sem artboard — fidelidade pendente
+    remove: 'Remover',
     removeTitle: 'Remover pessoa',
     removeBody: '{name} vai sair deste canal. Você pode adicionar de novo depois.',
     archiveTitle: 'Arquivar canal',
@@ -363,10 +379,10 @@ export const ptBR = {
     leave: 'Sair',
     cancel: 'Cancelar',
     working: 'Aguarde…',
-    close: 'Fechar', // sem artboard — fidelidade pendente
+    close: 'Fechar',
     failed: 'Não foi possível concluir. Tente de novo.',
-    loading: 'Carregando…', // sem artboard — fidelidade pendente
-    noCandidates: 'Nenhuma pessoa disponível para adicionar', // sem artboard — fidelidade pendente
+    loading: 'Carregando…',
+    noCandidates: 'Nenhuma pessoa disponível para adicionar',
     rateLimited: 'Você está adicionando pessoas rápido demais. Espere alguns segundos antes de adicionar mais.', // sem artboard — fidelidade pendente
   },
   newConversation: {
@@ -547,6 +563,55 @@ export const ptBR = {
     cancelInvite: 'Cancelar convite', // sem artboard — fidelidade pendente
     cancelInviteTitle: 'Cancelar convite de {name}', // sem artboard — fidelidade pendente
     cancelInviteBody: '{name} ainda não entrou. Você pode convidar de novo depois.', // sem artboard — fidelidade pendente
+  },
+  // Admin da organização (manifesto organization-admin.md §2.1, §2.3, §4; ADR-118; PLANO-ADMIN §8.6). Copy
+  // verbatim do §4 onde há; o resto (rótulos acessíveis, vazio sem termo) sem artboard.
+  admin: {
+    entry: 'Administrar organização',
+    title: 'Organização',
+    back: 'Voltar às conversas',
+    nav: 'Organização',
+    show: 'Mostrar',
+    pillAll: 'Todas',
+    pillOrganization: 'Da organização',
+    pillGuests: 'Convidados',
+    pillPending: 'Pendentes',
+    pillAgents: 'Agentes',
+    pillAdmins: 'Admins',
+    withoutAccess: 'Sem acesso válido',
+    colName: 'Nome',
+    colStatus: 'Situação',
+    colRole: 'Papel',
+    colActions: 'Ações',
+    situationAgent: 'Agente',
+    roleAdmin: 'Admin',
+    noRole: 'Sem papel',
+    self: '{name} (você)',
+    actionsFor: 'Ações para {name}',
+    makeAdmin: 'Tornar admin',
+    dropAdmin: 'Deixar de ser admin',
+    removeFromOrg: 'Remover da organização',
+    onlyAdmin: 'Você é o único admin. Torne outra pessoa admin antes.',
+    promoteTitle: 'Tornar {name} admin?',
+    promoteBody: '{first} vai poder convidar e remover pessoas, criar agentes e ver a saúde da instalação.',
+    demoteTitle: 'Tirar {name} da administração?',
+    demoteBody: '{first} continua na organização e nas conversas, sem acesso a esta área.',
+    demoteSelfTitle: 'Deixar de ser admin?',
+    demoteSelfBody: 'Você perde o acesso a esta área na hora. Só outro admin pode devolver.',
+    empty: 'Ninguém encontrado.', // sem artboard — C8 (vazio sem termo)
+    // Visão geral (§2.2, §4; PLANO-ADMIN §8.8 V5, V6).
+    overview: 'Visão geral',
+    peopleAndAgents: 'Pessoas e agentes',
+    countOrganization: { one: 'Pessoa da organização', other: 'Pessoas da organização' },
+    countGuests: { one: 'Convidado', other: 'Convidados' },
+    countPending: { one: 'Convite pendente', other: 'Convites pendentes' },
+    countAgents: { one: 'Agente', other: 'Agentes' },
+    countSeeList: '{n} {label}, ver na lista',
+    admins: 'Administradores',
+    manageInPeople: 'Gerenciar em Pessoas',
+    onlyYou: 'Só você administra a organização. Se você perder o acesso, ninguém mais consegue convidar nem remover pessoas.',
+    addAdmin: 'Adicionar admin',
+    adminsFailed: 'Não foi possível carregar os admins. Tente de novo.', // sem artboard — V5
   },
   // Manifesto account-access.md §12.2 (ADR-096): copy do artboard DataExport, verbatim; o estado `falha` é o
   // §12.1 item 7. Os plurais saem do artboard (que só desenha o N) pelo §0.3.6 item 7 do PLANO-EXPORT-DADOS.

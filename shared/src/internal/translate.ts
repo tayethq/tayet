@@ -420,6 +420,13 @@ export function hasGroupMarker(room: Room): boolean {
   return room.currentState.getStateEvents(CONVERSATION_EVENT, '')?.getContent()?.kind === 'group'
 }
 
+// ADR-116 dec. 1 and 2: the direct conversation's birth marker, read alone. Only the exact value
+// `'direct'` counts. Whether the room IS a direct conversation (exactly one other person and a creator who is one of
+// the two, the map first) is the client's ACL answer through `ctx.isDm`; this only reads the marker.
+export function hasDirectMarker(room: Room): boolean {
+  return room.currentState.getStateEvents(CONVERSATION_EVENT, '')?.getContent()?.kind === 'direct'
+}
+
 // ADR-083 dec. 2: #all is invite-only on the server and stays a public channel in the product
 // (ADR-045 dec. 2): to everyone who sees it, it is the open channel of the organization.
 function isOrgChannel(room: Room, ctx: Ctx): boolean {

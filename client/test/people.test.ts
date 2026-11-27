@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { MatrixGateway } from '../src/acl/internal/matrix-client'
 import type { PeopleClient, PersonInviteOutcome } from '../src/acl/internal/escrow-client'
-import { PeopleUnavailableError, PersonExistsError } from '../src/acl'
+import { LastAdminError, NotMemberError, OrgAccessDeniedError, PeopleUnavailableError, PersonExistsError } from '../src/acl'
 import type { AclTelemetry, ChannelId, UserId } from '../src/acl'
 import { findProtocolLeaks } from '@tayet/shared/leak-scan'
+import { directInviteHttp } from './support/direct-invite'
 
 // Os verbos de Pessoas (ADR-083) num gateway com SDK falso: a lista sai do state de #all, o pendente
 // de membership, e o convite tem duas fases. O caminho real roda em integration/acl-people.test.ts.
@@ -40,10 +41,11 @@ function gatewayWith(rooms: Array<ReturnType<typeof fakeRoom>>, invited: string[
     getRooms: () => rooms,
     getRoom: (id: string) => rooms.find((r) => r.roomId === id) ?? null,
     getAccountData: () => undefined,
-    invite: (channel: string) => {
+    // The ACL invites by a direct call (ADR-057, addendum of 24/Nov/2026).
+    http: directInviteHttp((channel: string) => {
       invited.push(channel)
       return channel === '!falha:tayet.local' ? Promise.reject(new Error('no')) : Promise.resolve({})
-    },
+    }),
   }
   ;(gateway as unknown as { client: unknown }).client = client
   return gateway
@@ -139,9 +141,16 @@ describe('invitePerson', () => {
     await expect(gatewayWith([]).invitePerson(person)).rejects.toBeInstanceOf(PeopleUnavailableError)
   })
 
-  it('403 não é indisponibilidade', async () => {
+  it('400 não é indisponibilidade', async () => {
     const gateway = withPeople(gatewayWith([]), answered({ kind: 'rejected' }))
     await expect(gateway.invitePerson(person)).rejects.not.toBeInstanceOf(PeopleUnavailableError)
+  })
+
+  it('403 é OrgAccessDeniedError e derruba o memo do isOrgAdmin (ADR-118 dec. 6)', async () => {
+    const gateway = withPeople(gatewayWith([]), { ...answered({ kind: 'forbidden' }), isAdmin: async () => true })
+    expect(await gateway.isOrgAdmin()).toBe(true)
+    await expect(gateway.invitePerson(person)).rejects.toBeInstanceOf(OrgAccessDeniedError)
+    expect(await gateway.isOrgAdmin()).toBe(false)
   })
 })
 
@@ -174,5 +183,88 @@ describe('removePerson e isOrgAdmin', () => {
     expect(await gateway.isOrgAdmin()).toBe(true)
     expect(asked).toBe(1)
     expect(await gatewayWith([]).isOrgAdmin()).toBe(false)
+  })
+})
+
+// ADR-118 dec. 4 a 6 (fatia 1c): a leitura do papel, o verbo e a queda do memo.
+describe('getOrgAccess, setOrgAdmin e a R6', () => {
+  const ana = '@ana:tayet.local' as unknown as UserId
+  const admin = (extra: Partial<PeopleClient>): MatrixGateway => {
+    let asked = 0
+    const gateway = withPeople(gatewayWith([]), {
+      isAdmin: async () => {
+        asked += 1
+        return true
+      },
+      ...extra,
+    })
+    ;(gateway as unknown as { asked: () => number }).asked = () => asked
+    return gateway
+  }
+
+  it('lê os dois conjuntos com ids do domínio', async () => {
+    const gateway = admin({ access: async () => ({ kind: 'access', admins: [ME], withoutAccess: ['@ana:tayet.local'] }) })
+    expect(await gateway.getOrgAccess()).toEqual({ admins: [ME], withoutAccess: ['@ana:tayet.local'] })
+  })
+
+  it.each([
+    ['forbidden', OrgAccessDeniedError],
+    ['unavailable', PeopleUnavailableError],
+  ] as const)('leitura %s → %s', async (kind, Err) => {
+    const gateway = admin({ access: async () => ({ kind }) })
+    await expect(gateway.getOrgAccess()).rejects.toBeInstanceOf(Err)
+    await expect(gatewayWith([]).getOrgAccess()).rejects.toBeInstanceOf(PeopleUnavailableError)
+  })
+
+  it('403 na leitura derruba o memo, sem pergunta nova', async () => {
+    const gateway = admin({ access: async () => ({ kind: 'forbidden' }) })
+    expect(await gateway.isOrgAdmin()).toBe(true)
+    await expect(gateway.getOrgAccess()).rejects.toBeInstanceOf(OrgAccessDeniedError)
+    expect(await gateway.isOrgAdmin()).toBe(false)
+    expect((gateway as unknown as { asked: () => number }).asked()).toBe(1)
+  })
+
+  it.each([
+    ['last_admin', LastAdminError],
+    ['not_member', NotMemberError],
+    ['forbidden', OrgAccessDeniedError],
+    ['unavailable', PeopleUnavailableError],
+  ] as const)('verbo %s → %s', async (kind, Err) => {
+    const gateway = admin({ setAdmin: async () => ({ kind }) })
+    await expect(gateway.setOrgAdmin(ana, true)).rejects.toBeInstanceOf(Err)
+  })
+
+  it('verbo rejeitado é erro comum, sem derrubar o memo', async () => {
+    const gateway = admin({ setAdmin: async () => ({ kind: 'rejected' }) })
+    expect(await gateway.isOrgAdmin()).toBe(true)
+    const err = await gateway.setOrgAdmin(ana, true).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err).not.toBeInstanceOf(PeopleUnavailableError)
+    expect(await gateway.isOrgAdmin()).toBe(true)
+  })
+
+  it('promove e rebaixa outra pessoa pelo id cru; o memo fica', async () => {
+    const calls: Array<[string, boolean]> = []
+    const gateway = admin({
+      setAdmin: async (id, on) => {
+        calls.push([id, on])
+        return { kind: 'done' }
+      },
+    })
+    expect(await gateway.isOrgAdmin()).toBe(true)
+    await gateway.setOrgAdmin(ana, true)
+    await gateway.setOrgAdmin(ana, false)
+    expect(calls).toEqual([
+      ['@ana:tayet.local', true],
+      ['@ana:tayet.local', false],
+    ])
+    expect(await gateway.isOrgAdmin()).toBe(true)
+  })
+
+  it('rebaixar a si mesmo derruba o memo na hora (C6)', async () => {
+    const gateway = admin({ setAdmin: async () => ({ kind: 'done' }) })
+    expect(await gateway.isOrgAdmin()).toBe(true)
+    await gateway.setOrgAdmin(ME as unknown as UserId, false)
+    expect(await gateway.isOrgAdmin()).toBe(false)
   })
 })

@@ -11,8 +11,9 @@
 // grava a lápide `{ removed: true, kind }`, não `{}` (revisa ADR-083 dec. 8).
 
 import { randomBytes } from 'node:crypto'
+import { adminLock, type Serialize } from './admins.ts'
 import { errorReason, type AuditLog } from './audit.ts'
-import { AGENT_LOCALPART, type MasUser, type PeopleAdmin } from './mas-admin.ts'
+import { AGENT_LOCALPART, type MasUser, type PeopleAdmin, type RoleAdmin } from './mas-admin.ts'
 import type { OrgHomeserver } from './synapse.ts'
 
 export type PersonKind = 'member' | 'guest'
@@ -124,7 +125,7 @@ export function systemWriter(deps: { masAdmin: PeopleAdmin; synapse: OrgHomeserv
 }
 
 export function createPeople(deps: {
-  masAdmin: PeopleAdmin
+  masAdmin: PeopleAdmin & Pick<RoleAdmin, 'countActiveAdmins'>
   synapse: OrgHomeserver
   audit: AuditLog
   randomId: () => string
@@ -132,10 +133,13 @@ export function createPeople(deps: {
   providerId: string
   custodyUsername: string
   asSystem?: AsSystem
+  // The lock shared with demote: removing a person can leave the organization without an admin.
+  serialize?: Serialize
 }): People {
   const { masAdmin, synapse, audit, randomId, serverName, providerId, custodyUsername } = deps
   const mxidOf = (username: string): string => `@${username}:${serverName}`
   const asSystem = deps.asSystem ?? systemWriter(deps)
+  const serialize = deps.serialize ?? adminLock()
 
   // true quando o vínculo faltava.
   async function ensureLink(user: MasUser, email: string): Promise<boolean> {
@@ -196,6 +200,62 @@ export function createPeople(deps: {
   ): Promise<PeopleResult> {
     await audit.record({ ...entry, verb, outcome: 'conflict', target, kind: err.recorded, reason: err.reason })
     return { status: 409, body: { reason: err.reason, userId: target, kind: err.recorded } }
+  }
+
+  const unlocked = {
+    async removePerson(target: string, actor: Actor): Promise<PeopleResult> {
+      const entry = { sub: actor.sub, actor: actor.username, verb: 'people.remove' as const, target }
+      if (!(await masAdmin.isAdmin(actor.username))) {
+        await audit.record({ ...entry, outcome: 'forbidden' })
+        return FORBIDDEN
+      }
+
+      const username = /^@([^:]+):(.+)$/.exec(target)
+      if (
+        username === null ||
+        username[2] !== serverName ||
+        [actor.username, SYSTEM_USERNAME, custodyUsername].includes(username[1]!)
+      ) {
+        await audit.record({ ...entry, outcome: 'bad_target' })
+        return { status: 400, body: { error: 'bad_target' } }
+      }
+
+      // Agente sai por DELETE /v1/agents, que revoga a sessão antes (ADR-086 dec. 8).
+      if (AGENT_LOCALPART.test(username[1]!)) {
+        return refused({ sub: actor.sub, actor: actor.username }, 'people.remove', target, new KindRefused('is_agent', 'agent'))
+      }
+
+      const user = await masAdmin.findUserByUsername(username[1]!)
+      if (user === null) {
+        await audit.record({ ...entry, outcome: 'not_found' })
+        return { status: 404, body: { error: 'not_found' } }
+      }
+
+      // Removal deactivates the account: never the last active admin. Recounted under the lock.
+      if (user.admin && !user.deactivated && !user.locked && (await masAdmin.countActiveAdmins()) <= 1) {
+        await audit.record({ ...entry, outcome: 'conflict', reason: 'last_admin' })
+        return { status: 409, body: { reason: 'last_admin', userId: target } }
+      }
+
+      let step = 'deactivate'
+      try {
+        await masAdmin.deactivate(user.id, { skipErase: true })
+        step = 'link'
+        for (const link of await masAdmin.linksOf(user.id)) await masAdmin.deleteUpstreamLink(link.id)
+        step = 'org'
+        await asSystem(async (token, roomId) => {
+          const key = memberKey(target)
+          const current = await synapse.getState(token, roomId, ORG_MEMBER_EVENT, key)
+          await synapse.putState(token, roomId, ORG_MEMBER_EVENT, key, tombstoneOf(current))
+        })
+      } catch (err) {
+        if (err instanceof KindRefused) return refused({ sub: actor.sub, actor: actor.username }, 'people.remove', target, err)
+        await audit.record({ ...entry, outcome: 'error', step, reason: errorReason(err) })
+        return { status: 502, body: { error: 'partial', step } }
+      }
+      await audit.record({ ...entry, outcome: 'removed' })
+      return { status: 200, body: { removed: true } }
+    },
   }
 
   return {
@@ -275,52 +335,6 @@ export function createPeople(deps: {
       }
     },
 
-    async removePerson(target, actor) {
-      const entry = { sub: actor.sub, actor: actor.username, verb: 'people.remove' as const, target }
-      if (!(await masAdmin.isAdmin(actor.username))) {
-        await audit.record({ ...entry, outcome: 'forbidden' })
-        return FORBIDDEN
-      }
-
-      const username = /^@([^:]+):(.+)$/.exec(target)
-      if (
-        username === null ||
-        username[2] !== serverName ||
-        [actor.username, SYSTEM_USERNAME, custodyUsername].includes(username[1]!)
-      ) {
-        await audit.record({ ...entry, outcome: 'bad_target' })
-        return { status: 400, body: { error: 'bad_target' } }
-      }
-
-      // Agente sai por DELETE /v1/agents, que revoga a sessão antes (ADR-086 dec. 8).
-      if (AGENT_LOCALPART.test(username[1]!)) {
-        return refused({ sub: actor.sub, actor: actor.username }, 'people.remove', target, new KindRefused('is_agent', 'agent'))
-      }
-
-      const user = await masAdmin.findUserByUsername(username[1]!)
-      if (user === null) {
-        await audit.record({ ...entry, outcome: 'not_found' })
-        return { status: 404, body: { error: 'not_found' } }
-      }
-
-      let step = 'deactivate'
-      try {
-        await masAdmin.deactivate(user.id, { skipErase: true })
-        step = 'link'
-        for (const link of await masAdmin.linksOf(user.id)) await masAdmin.deleteUpstreamLink(link.id)
-        step = 'org'
-        await asSystem(async (token, roomId) => {
-          const key = memberKey(target)
-          const current = await synapse.getState(token, roomId, ORG_MEMBER_EVENT, key)
-          await synapse.putState(token, roomId, ORG_MEMBER_EVENT, key, tombstoneOf(current))
-        })
-      } catch (err) {
-        if (err instanceof KindRefused) return refused({ sub: actor.sub, actor: actor.username }, 'people.remove', target, err)
-        await audit.record({ ...entry, outcome: 'error', step, reason: errorReason(err) })
-        return { status: 502, body: { error: 'partial', step } }
-      }
-      await audit.record({ ...entry, outcome: 'removed' })
-      return { status: 200, body: { removed: true } }
-    },
+    removePerson: (target, actor) => serialize(() => unlocked.removePerson(target, actor)),
   }
 }

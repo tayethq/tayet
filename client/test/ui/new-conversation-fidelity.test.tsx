@@ -114,7 +114,7 @@ describe('NewConversationDialog — fidelity (new-conversation.md §9)', () => {
     fireEvent.click(first.getByRole('button', { name: suggest('Dan Prado') }))
     fireEvent.click(first.getByRole('button', { name: copy.newConversation.createChannel }))
     await waitFor(() =>
-      expect(onCreateChannel).toHaveBeenCalledWith({ name: 'launch', kind: 'public', members: [carol.id, dan.id] }),
+      expect(onCreateChannel).toHaveBeenCalledWith({ name: 'launch', kind: 'public', members: [carol.id, dan.id] }, expect.any(Function)),
     )
     cleanup()
 
@@ -123,7 +123,7 @@ describe('NewConversationDialog — fidelity (new-conversation.md §9)', () => {
     fireEvent.change(second.getByLabelText(copy.newConversation.name), { target: { value: 'launch' } })
     await second.findByRole('button', { name: suggest('Carol Dias') })
     fireEvent.click(second.getByRole('button', { name: copy.newConversation.createChannel }))
-    await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'launch', kind: 'public' }))
+    await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'launch', kind: 'public' }, expect.any(Function)))
   })
 
   it('reads a load failure as muted text, not an alert, and keeps the CTA live', async () => {

@@ -3,7 +3,7 @@ description: Typecheck, lint, tests, build and guards for one package of the tre
 
 inputs:
   package:
-    description: "Package to check: client, escrow, agent, shared or sidecar"
+    description: "Package to check: client, escrow, agent, shared, sidecar, push or org"
     required: true
   root:
     description: Root of the tree, which must be a git repository (the guards use git grep)
@@ -174,6 +174,38 @@ runs:
         fi
         if git grep -nE "${P}(\.\.?/)+([^'\"]*/)?shared/" -- sidecar; then
           echo "::error::sidecar imports shared/ by relative path (use @tayet/shared)"; exit 1
+        fi
+    # push/ is standalone: it imports no other package, by path or by name, and no package imports it.
+    - name: no cross-imports between push/ and the other packages
+      if: inputs.package == 'push'
+      shell: bash
+      working-directory: ${{ inputs.root }}
+      run: |
+        P="(from|import)[[:space:]]+['\"]"
+        if git grep -nE "${P}(\.\.?/)+([^'\"]*/)?(client|escrow|agent|shared|sidecar|org)/" -- push; then
+          echo "::error::push imports from another package"; exit 1
+        fi
+        if git grep -nE "${P}(@tayet/(client|escrow|custody-agent|shared|sidecar|org)|tayet-agent)" -- push; then
+          echo "::error::push imports another package by name"; exit 1
+        fi
+        if git grep -nE "${P}([^'\"]*/push/|@tayet/push)" -- client escrow agent shared sidecar org; then
+          echo "::error::a package imports from push/"; exit 1
+        fi
+    # org/ is standalone: it imports no other package, by path or by name, and no package imports it.
+    - name: no cross-imports between org/ and the other packages
+      if: inputs.package == 'org'
+      shell: bash
+      working-directory: ${{ inputs.root }}
+      run: |
+        P="(from|import)[[:space:]]+['\"]"
+        if git grep -nE "${P}(\.\.?/)+([^'\"]*/)?(client|escrow|agent|shared|sidecar|push)/" -- org; then
+          echo "::error::org imports from another package"; exit 1
+        fi
+        if git grep -nE "${P}(@tayet/(client|escrow|custody-agent|shared|sidecar|push)|tayet-agent)" -- org; then
+          echo "::error::org imports another package by name"; exit 1
+        fi
+        if git grep -nE "${P}([^'\"]*/org/|@tayet/org)" -- client escrow agent shared sidecar push; then
+          echo "::error::a package imports from org/"; exit 1
         fi
     # ADR-054 addendum: no write verb on /_synapse/admin in the provisioning scripts; exactly one
     # pre-check GET per script. Allowlist by content (ADR-069 dec. 7 closed the last DELETE, in the

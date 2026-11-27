@@ -102,7 +102,10 @@ describe('render-scan (P1) — a identidade de custódia não alcança o DOM (AD
 
     const channel = channelOf(gw, CHANNEL_ROOM)
     const dm = channelOf(gw, DM_ROOM)
-    const members = gw.getMembers(CHANNEL_ROOM as ChannelId)
+    // The fake has no #all, so the reader translates as a guest; the picker (the fourth surface) is offered
+    // only to an admin (channel-management.md §13.1 item 5), so only the reader's role is lifted here. The
+    // custody filter under test stays the real translation.
+    const members = gw.getMembers(CHANNEL_ROOM as ChannelId).map((m) => (m.self ? { ...m, role: 'admin' as const } : m))
 
     // Sanidade do insumo: as salas REALMENTE têm o cofre dentro — senão o teste passaria por
     // vacuidade e ninguém notaria.
@@ -136,6 +139,7 @@ describe('render-scan (P1) — a identidade de custódia não alcança o DOM (AD
         connection="connected"
         managing={channel}
         members={members}
+        channelAbilities={{ rename: true, editTopic: true, addPeople: true, removePeople: true, setRoles: true, archive: true }}
         onManageChannel={() => {}}
         onCloseManage={() => {}}
         onUpdateChannel={noopVerb}

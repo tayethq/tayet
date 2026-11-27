@@ -23,6 +23,7 @@
   .workspace > .compose-screen,
   .workspace > .account-screen,
   .workspace > .group-screen,
+  .workspace > .channel-screen,
   .workspace > .profile-screen,
   .workspace > .agent-form-screen,
   .workspace > .main,
@@ -381,14 +382,17 @@
     font-size: var(--font-size-field);
   }
   /* Item 11: the filter on the touch floor, its ✕ "Limpar" a touch-floor target. */
-  .compose-screen .compose-dialog__filter {
+  .compose-screen .compose-dialog__filter,
+  .channel-picker-screen .compose-dialog__filter {
     min-height: var(--density-touch-floor);
     padding: 0 0 0 var(--space-12);
   }
-  .compose-screen .compose-dialog__filter-input {
+  .compose-screen .compose-dialog__filter-input,
+  .channel-picker-screen .compose-dialog__filter-input {
     font-size: var(--font-size-field);
   }
-  .compose-screen .compose-dialog__filter-clear {
+  .compose-screen .compose-dialog__filter-clear,
+  .channel-picker-screen .compose-dialog__filter-clear {
     width: var(--density-touch-floor);
     height: calc(var(--density-touch-floor) - 2px);
     border-radius: var(--radius-md);
@@ -576,9 +580,6 @@
   .account-screen .profile-editor__load-error {
     margin: 0;
   }
-  .account-screen .profile-editor .ui-field__input::placeholder {
-    color: var(--color-muted);
-  }
   /* On the input: on ::placeholder alone it has no effect. */
   .account-screen .profile-editor .ui-field__input:placeholder-shown {
     text-overflow: ellipsis;
@@ -628,6 +629,7 @@
 /* ── Group details, profile and agent's form as screens (PLANO-MOBILE M8): the shared frame ─────────────── */
 @media (width < 728px) {
   .group-screen,
+  .channel-screen,
   .profile-screen,
   .agent-form-screen {
     display: flex;
@@ -637,6 +639,7 @@
     --presence-ring: var(--color-surface);
   }
   .ui-screen-header.group-screen__header,
+  .ui-screen-header.channel-screen__header,
   .ui-screen-header.profile-screen__header,
   .ui-screen-header.agent-form-screen__header {
     padding-right: var(--space-12);
@@ -648,6 +651,7 @@
     visibility: hidden;
   }
   .group-screen__footer,
+  .channel-screen__footer,
   .profile-screen__footer,
   .agent-form-screen__footer {
     flex: none;
@@ -659,6 +663,7 @@
   }
   /* The keyboard covers the system's bar (K1). */
   :root[data-keyboard] .group-screen__footer,
+  :root[data-keyboard] .channel-screen__footer,
   :root[data-keyboard] .profile-screen__footer,
   :root[data-keyboard] .agent-form-screen__footer {
     padding-bottom: var(--space-12);
@@ -741,6 +746,146 @@
     flex-direction: column;
     gap: var(--space-8);
     margin-top: var(--space-8);
+  }
+}
+
+/* ── A channel's details, its picker and the person's sheet (channel-management.md §13.2, §13.3) ─────────────── */
+@media (width < 728px) {
+  .channel-screen {
+    font-size: var(--font-size-ui);
+    line-height: var(--font-line-height-ui);
+  }
+  .channel-screen__body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-16);
+    padding: var(--space-16) var(--space-4) var(--space-12);
+  }
+  .channel-screen__fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    padding: 0 var(--space-12);
+  }
+  .channel-screen .channel-management-panel__input-wrap {
+    min-height: var(--density-touch-floor);
+    background: var(--color-surface-raised);
+  }
+  .channel-screen .channel-management-panel__input {
+    align-self: stretch;
+    min-height: 0;
+    padding: 0;
+    font-size: var(--font-size-field);
+  }
+  .channel-screen .channel-management-panel__roster-head {
+    padding: 0 0 0 var(--space-12);
+  }
+  .channel-screen .channel-management-panel__add-member {
+    min-height: var(--density-touch-floor);
+    padding: 0 var(--space-12);
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-ui);
+  }
+  .channel-screen .channel-management-panel__member,
+  .channel-screen .channel-management-panel__member:hover {
+    min-height: 0;
+    padding: 0;
+    background: transparent;
+  }
+  /* Item 3: the row on the touch floor, the role on the right; §23.1 item 6: no hover, --color-bg while pressed. */
+  .channel-screen__row,
+  .channel-picker-screen .channel-management-panel__picker-option {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    width: 100%;
+    min-height: var(--density-touch-floor);
+    padding: var(--space-4) var(--space-12);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--color-text);
+    font: inherit;
+    text-align: left;
+  }
+  button.channel-screen__row {
+    cursor: pointer;
+  }
+  button.channel-screen__row:active,
+  .channel-picker-screen .channel-management-panel__picker-option:active:not(:disabled) {
+    background: var(--color-bg);
+  }
+  .channel-picker-screen .channel-management-panel__picker-option:hover:not(:disabled) {
+    background: transparent;
+  }
+  button.channel-screen__row:focus-visible,
+  .channel-picker-screen .channel-management-panel__picker-option:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+  .channel-screen__row .channel-management-panel__member-role,
+  .channel-screen__row .channel-management-panel__member-pending {
+    flex: none;
+  }
+  .channel-screen__footer {
+    gap: var(--space-8);
+  }
+  /* Item 6: the filter fixed under the header, the list that scrolls. */
+  .channel-picker-screen .channel-management-panel__picker-filter {
+    flex: none;
+    padding: var(--space-12) var(--space-16) var(--space-8);
+  }
+  .channel-picker-screen .channel-management-panel__picker-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 var(--space-4) var(--space-12);
+  }
+  .channel-picker-screen .channel-management-panel__picker-empty {
+    padding: var(--space-12);
+  }
+  /* Item 4: the sheet's padding is `--space-8 --space-4`; the top and the role row are the action sheet's row. */
+  .ui-sheet:has(> .person-sheet__top) {
+    padding-right: var(--space-4);
+    padding-left: var(--space-4);
+  }
+  .person-sheet__top,
+  .person-sheet__role {
+    display: flex;
+    align-items: center;
+    min-height: var(--density-estreito-row-height);
+    padding: 0 var(--space-12);
+  }
+  .person-sheet__top {
+    gap: var(--space-8);
+  }
+  .person-sheet__name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-title);
+    font-weight: var(--font-weight-medium);
+  }
+  .person-sheet__role {
+    gap: var(--space-12);
+    font-size: var(--font-size-body);
+  }
+  .person-sheet__role-label {
+    flex: 1;
+  }
+  .person-sheet__role .ui-segmented {
+    flex: none;
+  }
+  .person-sheet__role .ui-segmented__segment {
+    padding: 0 var(--space-12);
+  }
+  .person-sheet__error {
+    padding: 0 var(--space-12);
   }
 }
 

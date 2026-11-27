@@ -50,8 +50,15 @@ MAS_CONTAINER="${TAYET_MAS_CONTAINER:-${PROJECT}-mas-1}"
 MAS_CONFIG="${TAYET_MAS_CONFIG:-/config/config.yaml}"
 WAIT_TIMEOUT_S="${TAYET_WAIT_TIMEOUT_S:-120}"
 ESCROW_PORT="${TAYET_ESCROW_PORT:-8090}"
-ESCROW_BASE="http://localhost:${ESCROW_PORT}"   # porta publicada no loopback do host
+# The router publishes the escrow's port on the host loopback and splits by path between the escrow and
+# the org service; neither of them publishes a port.
+ESCROW_BASE="http://localhost:${ESCROW_PORT}"
+ORG_CONTAINER="${PROJECT}-org-1"
+ROUTER_CONTAINER="${PROJECT}-router-1"
 ESCROW_ENV_FILE="$SCRIPT_DIR/escrow.secret.env"
+# Throwaway VAPID pair of the push service, generated once (gitignored; the integration test reads the
+# public key from it).
+PUSH_ENV_FILE="$SCRIPT_DIR/push.secret.env"
 # Templates próprios do MAS (ADR-084): gera _generated/ e dá o sha da árvore para o marcador.
 MAS_TEMPLATES_PREPARE="$REPO_ROOT/infra/mas/prepare.sh"
 
@@ -63,10 +70,30 @@ else
   AGENT_TOKEN_BASENAME="agent-token.${PROJECT}.secret"
 fi
 
+# Push network per project (ADR-117 dec. 7): a /29 whose gateway is .1, the homeserver .2 and the push
+# gateway .3. homeserver.yaml allows the push address of `spike` and `spike-ci` only, so any other
+# project must bring its own TAYET_PUSH_SUBNET (and allow that address there) to deliver pushes.
+case "$PROJECT" in
+  spike)    PUSH_SUBNET_DEFAULT="10.213.78.0/29";;
+  spike-ci) PUSH_SUBNET_DEFAULT="10.213.78.8/29";;
+  *)        PUSH_SUBNET_DEFAULT="";;
+esac
+PUSH_SUBNET="${TAYET_PUSH_SUBNET:-$PUSH_SUBNET_DEFAULT}"
+if [[ ! "$PUSH_SUBNET" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]))\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/29$ ]] || (( 10#${BASH_REMATCH[5]} % 8 != 0 || 10#${BASH_REMATCH[5]} > 248 )); then
+  echo "ERRO: TAYET_PUSH_SUBNET ('$PUSH_SUBNET') precisa ser uma /29 alinhada (a.b.c.N/29, N múltiplo de 8); projeto $PROJECT sem padrão." >&2
+  exit 1
+fi
+PUSH_SYNAPSE_IP="${BASH_REMATCH[1]}.$(( 10#${BASH_REMATCH[5]} + 2 ))"
+PUSH_IP="${BASH_REMATCH[1]}.$(( 10#${BASH_REMATCH[5]} + 3 ))"
+PUSH_PORT="${TAYET_PUSH_PORT:-8095}"
+PUSH_BASE="http://localhost:${PUSH_PORT}"   # /healthz published on the host loopback
+
 # Exporta o namespace para o compose: assim `compose()` sem --env-file (status/down/logs)
 # interpola exatamente o mesmo projeto/portas/token que o `up`.
 export TAYET_COMPOSE_PROJECT="$PROJECT" TAYET_HS_PORT="$HS_PORT" TAYET_DEX_PORT="$DEX_PORT" \
-  TAYET_MAS_PORT="$MAS_PORT" TAYET_ESCROW_PORT="$ESCROW_PORT" TAYET_AGENT_TOKEN_FILE="$AGENT_TOKEN_BASENAME"
+  TAYET_MAS_PORT="$MAS_PORT" TAYET_ESCROW_PORT="$ESCROW_PORT" TAYET_AGENT_TOKEN_FILE="$AGENT_TOKEN_BASENAME" \
+  TAYET_PUSH_SUBNET="$PUSH_SUBNET" TAYET_PUSH_SYNAPSE_IP="$PUSH_SYNAPSE_IP" TAYET_PUSH_IP="$PUSH_IP" \
+  TAYET_PUSH_PORT="$PUSH_PORT"
 
 # Configs de MAS/Dex por projeto (fase 2, §8.R2): `spike` monta os dirs commitados (mas/, dex/);
 # outro projeto monta o render em .render/<projeto>/ (gitignored), com as portas de host
@@ -142,6 +169,21 @@ ensure_org_key() {
   ( umask 077; printf 'ESCROW_ORG_KEY=%s\n' "$(openssl rand -base64 32)" > "$ESCROW_ENV_FILE" )
 }
 
+# P-256 pair from openssl: the raw scalar and the uncompressed point, base64url, cut from the 121-byte
+# SEC1 DER (same recipe as infra/deploy/deploy.sh).
+ensure_push_key() {
+  if [[ -f "$PUSH_ENV_FILE" ]] && grep -q '^PUSH_VAPID_PRIVATE_KEY=' "$PUSH_ENV_FILE" && grep -q '^PUSH_VAPID_PUBLIC_KEY=' "$PUSH_ENV_FILE"; then
+    return 0
+  fi
+  echo "Gerando o par VAPID do push (uma vez) em push.secret.env…"
+  local der
+  der="$(openssl ecparam -name prime256v1 -genkey -noout -outform DER | base64 | tr -d '\n')"
+  ( umask 077
+    printf 'PUSH_VAPID_PRIVATE_KEY=%s\n' "$(printf '%s' "$der" | base64 -d | head -c 39 | tail -c 32 | base64 | tr -d '\n=' | tr '+/' '-_')"
+    printf 'PUSH_VAPID_PUBLIC_KEY=%s\n' "$(printf '%s' "$der" | base64 -d | tail -c 65 | base64 | tr -d '\n=' | tr '+/' '-_')" ) > "$PUSH_ENV_FILE"
+  chmod 600 "$PUSH_ENV_FILE"
+}
+
 # Synapse auto-gera a signing key e cria o media_store em /data (bind-mount ./synapse) no
 # primeiro boot, ambos como UID 991. Em Linux NATIVO o UID do container não grava o dir do host
 # (o macOS mascara via Docker Desktop — por isso só o CI/Linux quebrava com PermissionError).
@@ -178,6 +220,63 @@ wait_for_escrow() {
     sleep 2
   done
   echo "Escrow OK ✅"
+}
+
+# The org service has no published port: its /healthz is read inside the container.
+org_healthy() {
+  docker exec "$ORG_CONTAINER" node -e "fetch('http://localhost:8091/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" >/dev/null 2>&1
+}
+
+check_org() {
+  if org_healthy; then
+    echo "Org OK ✅ ($ORG_CONTAINER)"
+  else
+    echo "AVISO: org não respondeu em /healthz ($ORG_CONTAINER)." >&2
+    return 1
+  fi
+}
+
+wait_for_org() {
+  local start; start=$(date +%s)
+  until org_healthy; do
+    if (( $(date +%s) - start > WAIT_TIMEOUT_S )); then
+      echo "ERRO: org não respondeu em ${WAIT_TIMEOUT_S}s. Veja: ./dev-stack.sh logs org" >&2
+      exit 1
+    fi
+    sleep 2
+  done
+  echo "Org OK ✅"
+}
+
+# The router is what answers on $ESCROW_BASE: running, and its /healthz (the escrow's) through it.
+check_router() {
+  if docker ps --format '{{.Names}}' | grep -qx "$ROUTER_CONTAINER" && curl -sf -m 3 "$ESCROW_BASE/healthz" >/dev/null 2>&1; then
+    echo "Router OK ✅ ($ESCROW_BASE → escrow, org)"
+  else
+    echo "AVISO: router ($ROUTER_CONTAINER) não está de pé ou não alcança o escrow em $ESCROW_BASE." >&2
+    return 1
+  fi
+}
+
+check_push() {
+  if curl -sf -m 3 "$PUSH_BASE/healthz" >/dev/null 2>&1; then
+    echo "Push OK ✅ ($PUSH_BASE)"
+  else
+    echo "AVISO: push não respondeu em $PUSH_BASE/healthz." >&2
+    return 1
+  fi
+}
+
+wait_for_push() {
+  local start; start=$(date +%s)
+  until curl -sf -m 3 "$PUSH_BASE/healthz" >/dev/null 2>&1; do
+    if (( $(date +%s) - start > WAIT_TIMEOUT_S )); then
+      echo "ERRO: push não respondeu em ${WAIT_TIMEOUT_S}s. Veja: ./dev-stack.sh logs push" >&2
+      exit 1
+    fi
+    sleep 2
+  done
+  echo "Push OK ✅"
 }
 
 # Read-only de propósito (PF-1): count via SELECT no DB `mas`, NUNCA register-user (muta)
@@ -697,7 +796,7 @@ seed_org_channel() {
 # de conta sem 1º login é aceito (200) e não a cria (o pré-check do sync_org_directory segue em 404).
 # ORG_GUESTS: fixture só do dev-stack. Contas da allowlist que ficam de fora de #all, para o tier E2E
 # ter guest nascido pelo Dex; em produção guest é quem o admin não convidou (P2).
-ORG_GUESTS="lua nic gho fal"
+ORG_GUESTS="lua nic gho fal enzo"
 sync_org_membership() {
   local resolved room_id room token state status allowlist line mxid membership u key code body kind backfilled=0
   allowlist=$(awk '/^[[:space:]]+username:/ { gsub(/.*username:[[:space:]]*"?|"[[:space:]]*$/, ""); print }' "$SCRIPT_DIR/dex/config.yaml")
@@ -1088,6 +1187,7 @@ cmd_up() {
   # global o revogaria no mesmo instante, deixando o comando inútil. O trap pertence ao `up`.
   trap revoke_service_sessions EXIT INT TERM
   ensure_org_key
+  ensure_push_key
   ensure_agent_storage_key
   ensure_synapse_writable
   render_project_configs
@@ -1102,11 +1202,16 @@ cmd_up() {
   # cofre nasce do MAS, que precisa estar de pé antes do mint, e o bind de
   # agent-token.secret precisa do arquivo existente antes do container (senão o docker
   # cria um diretório no lugar).
-  compose --env-file "$ESCROW_ENV_FILE" up -d postgres dex mas synapse escrow
+  # The push pair is interpolated the same way, from push.secret.env, only here.
+  PUSH_VAPID_PRIVATE_KEY="$(sed -n 's/^PUSH_VAPID_PRIVATE_KEY=//p' "$PUSH_ENV_FILE")" \
+  PUSH_VAPID_PUBLIC_KEY="$(sed -n 's/^PUSH_VAPID_PUBLIC_KEY=//p' "$PUSH_ENV_FILE")" \
+    compose --env-file "$ESCROW_ENV_FILE" up -d postgres dex mas synapse escrow org router push
   wait_for_synapse
   check_mas || true
   check_mas_keys
   wait_for_escrow
+  wait_for_org
+  wait_for_push
   # Senhas throwaway, local-only (ver aviso no README). O harness só precisa que os
   # usuários EXISTAM — os tokens são cunhados pelos testes (mintToken).
   provision_user alice alicepass123
@@ -1134,12 +1239,21 @@ cmd_up() {
   provision_user bia biapass123
   # luz: admin only for awaiting.narrow.spec.ts (PLANO-MOBILE M9b), for the same reason as mel.
   provision_user luz luzpass123
+  # cris: admin only for connection.narrow.spec.ts (PLANO-MOBILE §8.26), for the same reason as mel.
+  provision_user cris crispass123
+  # iara, davi and mila: the trio of org-admin.spec.ts (PLANO-ADMIN slice 1c). iara is the admin, for the same
+  # reason as mel; davi and mila exist before their first login so the spec can promote one of them.
+  provision_user iara iarapass123
+  provision_user davi davipass123
+  provision_user mila milapass123
   promote_org_admin alice
   promote_org_admin mel
   promote_org_admin rae
   promote_org_admin tai
   promote_org_admin bia
   promote_org_admin luz
+  promote_org_admin cris
+  promote_org_admin iara
   # FASE 2 — agente de custódia. Sem node_modules no host (caso CI: o runner não roda
   # `npm ci` em agent/) o serviço fica FORA do up, com aviso — nunca um container em
   # crash-loop mudo nem um up vermelho por dep de dev local.
@@ -1172,7 +1286,7 @@ cmd_down() {
   compose down
   echo "Stack derrubada (volumes preservados)."
 }
-cmd_reset()  { require_compose; compose down -v; echo "Stack derrubada + volumes apagados. O próximo up recria o banco e re-provisiona alice/bob."; }
+cmd_reset()  { require_compose; compose down -v; echo "Stack derrubada + volumes apagados (pgdata, escrowdata, orgdata, agentdata). O próximo up recria o banco e re-provisiona alice/bob."; }
 # Fase 2 (ADR-071 dec. 2): `down -v` do namespace do CI, e SÓ dele. Guard LITERAL do nome do
 # projeto — não é "qualquer projeto ≠ spike": é exatamente `spike-ci`. O `reset` da spike
 # (fluxo local do README) não muda. Também apaga o render e o token do projeto: no runner o
@@ -1187,7 +1301,7 @@ cmd_ci_reset() {
   require_compose
   compose down -v
   rm -rf "$SCRIPT_DIR/.render/$PROJECT" "$AGENT_TOKEN_FILE_HOST"
-  echo "spike-ci derrubada + volumes apagados + render/token do projeto removidos."
+  echo "spike-ci derrubada + volumes apagados (pgdata, escrowdata, orgdata, agentdata) + render/token do projeto removidos."
 }
 cmd_status() {
   require_compose
@@ -1196,6 +1310,9 @@ cmd_status() {
   if probe; then echo "Probe Synapse: OK ✅ ($HS_URL)"; else echo "Probe Synapse: FALHOU ❌ ($HS_URL)"; fi
   check_mas || true
   check_escrow || true
+  check_org || true
+  check_router || true
+  check_push || true
   check_agent || true
   check_seed
   check_org_channel

@@ -19,11 +19,13 @@ import type {
   NewAgent,
   AgentPatch,
   AgentColor,
+  OrgAccess,
   PageCursor,
   Person,
   PersonInvite,
   Presence,
   RosterEntry,
+  ChannelAbilities,
   SearchHit,
   SendOpts,
   ThreadUnread,
@@ -31,9 +33,12 @@ import type {
   UserId,
   UserProfile,
 } from '@tayet/client'
+import { OrgAccessDeniedError } from '@tayet/client'
 import type { ComposeResult } from './compose'
 import type { ComposerCommand } from './composer/RichComposer'
 import { createNotifier, type Notifier } from './notifier'
+import { onNotificationClick } from './service-worker'
+import { takePendingTarget, type ClickTarget } from '../sw/store'
 import { createLiveReader, type LiveReader } from './live-read'
 import { coalesce } from './coalesce'
 import { applyTitle } from './document-title'
@@ -207,6 +212,9 @@ export interface ChatState {
   // untouched (it still feeds author names on the spine). Members carry their Role for the role
   // control; the roster reconciles only on confirmed `member.changed` (never optimistically).
   members: RosterEntry[]
+  // ADR-115 (Proposto): what the session may do in the MANAGED channel, read with the roster (on open and
+  // on each member.changed of that channel). Undefined until read: the panel stays read-only.
+  channelAbilities: ChannelAbilities | undefined
   // Reply mode (PLANO-FASE-1-REPLY commit 6): the message being replied to, or undefined. The UI only
   // carries the domain Message; send() passes its stable id as SendOpts.replyTo and the ACL owns
   // the relation (ADR-011). Cleared on send, on cancel, and on channel switch.
@@ -222,8 +230,13 @@ export interface ChatState {
   // (manifesto account-access §2; gatilho do §8.A2 cumprido pelo relativeTimeOf).
   accesses: KnownAccess[]
   // ADR-083: whether the operator administers the organization, read once per connect, and its people.
+  // ADR-118 dec. 6 (R6): it turns false, without a reload, when an organization verb or read is refused
+  // (OrgAccessDeniedError) or after the operator takes their own role away.
   orgAdmin: boolean
   people: Person[]
+  // ADR-118 dec. 4 and 5: the Admin's role read and the promote/demote verb.
+  getOrgAccess: () => Promise<OrgAccess>
+  setOrgAdmin: (user: UserId, admin: boolean) => Promise<void>
   invitePerson: (person: NewPerson) => Promise<PersonInvite>
   removePerson: (user: UserId) => Promise<void>
   // ADR-086 (Proposto): agent management, pass-throughs to the barrel.
@@ -292,12 +305,12 @@ export interface ChatState {
   // nothing is inserted optimistically. Post-creation selection is driven by the `channel.added`
   // stream, never an immediate setSelectedId (seam S1 — the room is not yet in the SDK store when the
   // verb resolves, so getMembers would throw). `listKnownContacts` feeds the DM picker.
-  createChannel: (input: NewChannel) => Promise<void>
-  openDirectMessage: (user: UserId) => Promise<void>
+  createChannel: (input: NewChannel, wanted?: () => boolean) => Promise<void>
+  openDirectMessage: (user: UserId, wanted?: () => boolean) => Promise<void>
   // ADR-094 dec. 8 and 11: the group conversation of the compose dialog, selected by the same path as
   // openDirectMessage (an already-listed group — the same set — selects at once; a new one on its
   // channel.added).
-  openGroupConversation: (users: UserId[]) => Promise<void>
+  openGroupConversation: (users: UserId[], wanted?: () => boolean) => Promise<void>
   // Known-contact set for the compose DM picker (Track U/U3, F4). The raw union of visible members —
   // distinct from listCandidates: no managed-channel guard, no roster exclusion.
   listKnownContacts: () => Promise<User[]>
@@ -365,7 +378,9 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
   // ADR-039: self-identity, resolved once at boot (mirrors getChannels). Opaque domain User — the
   // footer renders displayName/avatar only; the id stays a non-rendered key.
   const [currentUser, setCurrentUser] = useState<User | null>(null)
-  const [connection, setConnection] = useState<ConnectionState>('connecting')
+  // ADR-114 dec. 2: born from the ACL's point read — the events that said the connection is good
+  // left before this screen subscribed, and the stream does not re-deliver them.
+  const [connection, setConnection] = useState<ConnectionState>(() => acl.getConnectionState())
   const [cursor, setCursor] = useState<PageCursor | undefined>(undefined)
   const [threadRoot, setThreadRoot] = useState<Message | undefined>(undefined)
   const threadRootId = threadRoot?.id
@@ -381,12 +396,13 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
   // Track U/U2 (ADR-029 — seam A1): the managed channel's roster, in its own state keyed on
   // managing.id (see the dedicated effect below). Distinct from usersById, which stays untouched.
   const [members, setMembers] = useState<RosterEntry[]>([])
+  const [channelAbilities, setChannelAbilities] = useState<ChannelAbilities | undefined>(undefined)
   const [replyTarget, setReplyTarget] = useState<Message | undefined>(undefined)
   const [newAccesses, setNewAccesses] = useState<NewAccess[]>([])
   // ADR-018: acessos conhecidos à conta, mapeados de getDevices() (Device → KnownAccess). Carregados
   // no connect; atualizados em account.newAccess para o acesso recém-aparecido também entrar na lista.
   const [accesses, setAccesses] = useState<KnownAccess[]>([])
-  const [orgAdmin, setOrgAdmin] = useState(false)
+  const [orgAdmin, setIsOrgAdmin] = useState(false)
   const [people, setPeople] = useState<Person[]>([])
   // ADR-019: device.attention raised — the recovery hit the interactive wall and the user must
   // reset. A single boolean: the offer is for THIS session, deduped by nature. Cleared when a reset
@@ -423,6 +439,7 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
     selectedRef.current = selectedId
   }, [selectedId])
   const notifierRef = useRef<Notifier | undefined>(undefined)
+  const jumpToRef = useRef<ChatState['jumpTo'] | undefined>(undefined)
   const liveReadRef = useRef<LiveReader | undefined>(undefined)
   // Search jump (U5). Mirrors of the window state the jump reads without re-creating its callback, and
   // `loadedRef`: the channel whose first page is in `messages` (undefined while it loads).
@@ -508,7 +525,7 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
     })
     void (async () => {
       if (!(await acl.isOrgAdmin()) || !alive) return
-      setOrgAdmin(true)
+      setIsOrgAdmin(true)
       read()
       unsub = acl.subscribe((e) => {
         if (e.t === 'people.changed') read()
@@ -631,6 +648,9 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
           prev[e.user] === e.presence ? prev : { ...prev, [e.user]: e.presence },
         )
     })
+    // ADR-114 dec. 2: read again now that the stream is subscribed — a state reported between the
+    // first render and this subscribe would otherwise be lost.
+    setConnection(acl.getConnectionState())
     return () => {
       alive = false
       unsub()
@@ -645,6 +665,9 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
       getChannel: (id) => channelsRef.current.find((c) => c.id === id),
       getSelectedId: () => selectedRef.current,
       select: setSelectedId,
+      // Through a ref: jumpTo is declared further down and changes with its own dependencies; the
+      // notifier lives as long as the acl.
+      jumpTo: (channel, message) => jumpToRef.current?.({ channel, message }),
       getMembers: (id) => acl.getMembers(id).then((ms) => ms.map((m) => m.user)),
       getThreadOnScreen: threadOnScreen,
     })
@@ -654,6 +677,31 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
       notifier.dispose()
     }
   }, [acl, threadOnScreen])
+
+  // ADR-117 dec. 5: a notification clicked through the service worker — posted while the app is open, or left
+  // pending when the click had to open it. The target passes the ACL's check before anything is selected; a thread
+  // reply opens its thread (the notifier's jump), anything else selects the conversation.
+  useEffect(() => {
+    let alive = true
+    const follow = (target: ClickTarget): void => {
+      acl.resolveNotificationTarget(target).then(
+        (hit) => {
+          if (!alive || !hit) return
+          if (hit.message?.threadParent !== undefined) jumpToRef.current?.({ channel: hit.channel, message: hit.message })
+          else setSelectedId(hit.channel)
+        },
+        () => undefined,
+      )
+    }
+    const off = onNotificationClick(follow)
+    void takePendingTarget(Date.now()).then((target) => {
+      if (target) follow(target)
+    })
+    return () => {
+      alive = false
+      off()
+    }
+  }, [acl])
 
   // ADR-100: the open conversation is read as messages arrive (and when the document comes back in
   // view). Fed by the same global subscription; reads the selection, the open thread and what the
@@ -830,15 +878,27 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
   // never touched here. The role rides along (the U1 indexUsers drops it; the roster needs it).
   useEffect(() => {
     const id = managing?.id
+    setChannelAbilities(undefined)
     if (!id) {
       setMembers([])
       return
     }
     let alive = true
+    // ADR-115 dec. 5: the abilities are re-read with the roster. A synchronous read that throws leaves
+    // them unread (read-only), like a roster that never arrives.
+    const readAbilities = () => {
+      try {
+        setChannelAbilities(acl.getChannelAbilities(id))
+      } catch {
+        setChannelAbilities(undefined)
+      }
+    }
+    readAbilities()
     void acl.getMembers(id).then((ms) => alive && setMembers(ms))
     const unsub = acl.subscribeChannel(id, (e) => {
-      if (e.t === 'member.changed')
-        void acl.getMembers(id).then((ms) => alive && setMembers(ms))
+      if (e.t !== 'member.changed') return
+      readAbilities()
+      void acl.getMembers(id).then((ms) => alive && setMembers(ms))
     })
     return () => {
       alive = false
@@ -1060,6 +1120,10 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
     },
     [acl, runMainJump, settleJump],
   )
+  // The notifier's view of the jump, same idiom as selectedRef.
+  useEffect(() => {
+    jumpToRef.current = jumpTo
+  }, [jumpTo])
   const clearHighlight = useCallback(() => setHighlight(undefined), [])
   const dismissJump = useCallback(() => setJump((j) => (j?.failed ? undefined : j)), [])
   // A selection by the user abandons a jump in flight (and its failure line).
@@ -1179,10 +1243,14 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
   // not found'). Instead we ARM the returned id; the channel.added handler selects it when the room
   // lands. createChannel always arms (the room is new). openDirectMessage is idempotent: if the
   // returned DM is ALREADY in `channels` no channel.added will fire, so we select it immediately.
+  //
+  // Issue #421 (F4): `wanted` is the creation surface saying it is still there. A verb that succeeds after the
+  // person closed it past the send lock's cap leaves the selection where the person is; the conversation still
+  // enters the list by its channel.added. Callers without a surface (the profile's DM button) always select.
   const createChannel = useCallback(
-    async (input: NewChannel): Promise<void> => {
+    async (input: NewChannel, wanted?: () => boolean): Promise<void> => {
       const id = await acl.createChannel(input)
-      pendingSelect.current = id
+      if (wanted?.() !== false) pendingSelect.current = id
     },
     [acl],
   )
@@ -1191,16 +1259,18 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
     else pendingSelect.current = id
   }, [])
   const openDirectMessage = useCallback(
-    async (user: UserId): Promise<void> => {
-      selectOrArm(await acl.openDirectMessage(user))
+    async (user: UserId, wanted?: () => boolean): Promise<void> => {
+      const id = await acl.openDirectMessage(user)
+      if (wanted?.() !== false) selectOrArm(id)
     },
     [acl, selectOrArm],
   )
   // ADR-094 dec. 8: opening a set that already has a group returns it (idempotent, like the DM), so the
   // same fast-path applies; a new group arms and is selected on its channel.added (seam S1).
   const openGroupConversation = useCallback(
-    async (users: UserId[]): Promise<void> => {
-      selectOrArm(await acl.openGroupConversation(users))
+    async (users: UserId[], wanted?: () => boolean): Promise<void> => {
+      const id = await acl.openGroupConversation(users)
+      if (wanted?.() !== false) selectOrArm(id)
     },
     [acl, selectOrArm],
   )
@@ -1325,12 +1395,39 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
     [acl],
   )
 
-  const invitePerson = useCallback((person: NewPerson) => acl.invitePerson(person), [acl])
-  const removePerson = useCallback((user: UserId) => acl.removePerson(user), [acl])
-  const createAgent = useCallback((name: string, color: AgentColor) => acl.createAgent(name, color), [acl])
-  const updateAgent = useCallback((user: UserId, patch: AgentPatch) => acl.updateAgent(user, patch), [acl])
-  const reissueAgent = useCallback((user: UserId) => acl.reissueAgent(user), [acl])
-  const removeAgent = useCallback((user: UserId) => acl.removeAgent(user), [acl])
+  // ADR-118 dec. 6 (R6, C2): every organization verb and read goes through here. On the refusal the ACL has
+  // already turned its isOrgAdmin memo false; the state follows, and the Admin and the "Sua conta" row go away
+  // without a reload. The error still reaches the caller.
+  const orgVerb = useCallback(
+    <T,>(run: () => Promise<T>): Promise<T> =>
+      run().catch((e: unknown) => {
+        if (e instanceof OrgAccessDeniedError) setIsOrgAdmin(false)
+        throw e
+      }),
+    [],
+  )
+  const getOrgAccess = useCallback(() => orgVerb(() => acl.getOrgAccess()), [acl, orgVerb])
+  // C6: after the 200 on oneself the ACL memo is false already; reading it (no request) carries that here.
+  const setOrgAdmin = useCallback(
+    (user: UserId, admin: boolean) =>
+      orgVerb(async () => {
+        await acl.setOrgAdmin(user, admin)
+        if (!admin && !(await acl.isOrgAdmin())) setIsOrgAdmin(false)
+      }),
+    [acl, orgVerb],
+  )
+  const invitePerson = useCallback((person: NewPerson) => orgVerb(() => acl.invitePerson(person)), [acl, orgVerb])
+  const removePerson = useCallback((user: UserId) => orgVerb(() => acl.removePerson(user)), [acl, orgVerb])
+  const createAgent = useCallback(
+    (name: string, color: AgentColor) => orgVerb(() => acl.createAgent(name, color)),
+    [acl, orgVerb],
+  )
+  const updateAgent = useCallback(
+    (user: UserId, patch: AgentPatch) => orgVerb(() => acl.updateAgent(user, patch)),
+    [acl, orgVerb],
+  )
+  const reissueAgent = useCallback((user: UserId) => orgVerb(() => acl.reissueAgent(user)), [acl, orgVerb])
+  const removeAgent = useCallback((user: UserId) => orgVerb(() => acl.removeAgent(user)), [acl, orgVerb])
 
   // ADR-056: presença pro dialog — pass-throughs estáveis (identidade só muda com o acl, como
   // loadUserProfile; o Dialog assina num efeito de mount e um callback instável re-assinaria).
@@ -1360,12 +1457,15 @@ export function useChat(acl: Acl, { narrow = false }: { narrow?: boolean } = {})
     threadUnreadByRoot,
     managing,
     members,
+    channelAbilities,
     replyTarget,
     newAccesses,
     dismissAccess,
     accesses,
     orgAdmin,
     people,
+    getOrgAccess,
+    setOrgAdmin,
     invitePerson,
     removePerson,
     createAgent,

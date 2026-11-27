@@ -1,13 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Channel, ChannelId, Presence, RosterEntry, UserId } from '@tayet/client'
-import { Avatar, BottomSheet, Button, Field, ScreenHeader } from '../primitives'
-import { AgentAvatar, agentColorOf } from './AgentAvatar'
-import { useMedia } from '../MediaContext'
+import { Button, Field, ScreenHeader } from '../primitives'
 import { useCoveringScreen } from '../covering-screen'
 import { useStackBack, useStackDialog } from '../stack'
 import { useMounted } from '../use-mounted'
-import { ConfirmBody, ConfirmFooter, ConfirmTitle, ManageShell } from './ManageShell'
+import { ConfirmBody, ConfirmFooter, ConfirmSheet, ConfirmTitle, ManageShell, MemberAvatar, MemberName } from './ManageShell'
 import { GLYPH, t } from '../i18n'
 
 // The group conversation's details panel (ADR-094 dec. 9 and 13; channel-management.md §10). Its own
@@ -161,7 +159,16 @@ function GroupDetails({
           {participants}
         </GroupScreen>
         {confirm === 'leave' && (
-          <LeaveSheet pending={pending} failed={failed} onLeave={() => void handleConfirm()} onClose={closeConfirm} />
+          <ConfirmSheet
+            title={t('group.leave')}
+            body={t('group.leaveBody')}
+            action={t('channel.leave')}
+            tone="danger"
+            pending={pending}
+            failed={failed}
+            onConfirm={() => void handleConfirm()}
+            onClose={closeConfirm}
+          />
         )}
       </>
     )
@@ -273,57 +280,9 @@ function GroupScreen({
   )
 }
 
-// §11.1 item 4, G3: the two actions stacked and the confirm's failure under them. The first focus is never
-// the danger, and it moves to Cancel while the danger waits disabled, so Esc is still heard.
-function LeaveSheet({
-  pending,
-  failed,
-  onLeave,
-  onClose,
-}: {
-  pending: boolean
-  failed: boolean
-  onLeave: () => void
-  onClose: () => void
-}) {
-  const [opener] = useState(() => document.activeElement as HTMLElement | null)
-  const panel = useRef<HTMLDivElement | null>(null)
-  useLayoutEffect(() => {
-    panel.current?.querySelector<HTMLElement>('[data-first-focus]')?.focus()
-  }, [pending])
-  return (
-    <BottomSheet
-      role="alertdialog"
-      ariaLabel={t('group.leave')}
-      onClose={onClose}
-      returnFocus={opener}
-      padding="form"
-      panelRef={panel}
-    >
-      <div className="leave-sheet">
-        <h2 className="leave-sheet__title">{t('group.leave')}</h2>
-        <p className="leave-sheet__text">{t('group.leaveBody')}</p>
-        <div className="leave-sheet__actions">
-          <Button variant="danger-fill" onClick={onLeave} disabled={pending} aria-busy={pending || undefined}>
-            {pending ? t('channel.working') : t('channel.leave')}
-          </Button>
-          <Button variant="secondary" data-first-focus="" onClick={onClose}>
-            {t('channel.cancel')}
-          </Button>
-        </div>
-        {failed && (
-          <p className="manage-dialog__error" role="alert">
-            {t('channel.failed')}
-          </p>
-        )}
-      </div>
-    </BottomSheet>
-  )
-}
-
 // One participant (§10.1 item 2): the roster row's avatar and name, "· você" on the reader's own; the
-// picker's presence dot on whoever is online; an agent with its avatar and, when known, its operator.
-// No role, no Remove.
+// picker's presence dot on whoever is online; an agent with its avatar and, when known, its operator on a
+// second line (§13.1 item 4). No role, no Remove.
 function ParticipantRow({
   member,
   onOpenProfile,
@@ -334,8 +293,6 @@ function ParticipantRow({
   presence?: Presence
 }) {
   const { user, self } = member
-  const agent = agentColorOf(user)
-  const avatar = useMedia(user.avatar, 'thumbnail').url
   return (
     <li className="channel-management-panel__member">
       <div className="channel-management-panel__member-line">
@@ -345,28 +302,8 @@ function ParticipantRow({
           onClick={() => onOpenProfile?.(user.id)}
           aria-label={t('channel.viewProfile', { name: user.displayName })}
         >
-          {agent !== undefined ? (
-            // ADR-086: an agent carries the agent avatar — no photo, never presence.
-            <AgentAvatar color={agent} size="gestao" />
-          ) : (
-            <Avatar
-              size="gestao"
-              variant={self ? 'accent' : 'greige'}
-              label={user.displayName.slice(0, 1)}
-              src={avatar}
-              presence={presence}
-            />
-          )}
-          <span className="channel-management-panel__member-name">
-            <span className="channel-management-panel__member-label">{user.displayName}</span>
-            {self && <span className="channel-management-panel__member-you"> {t('channel.you')}</span>}
-            {agent !== undefined && user.operatorName !== undefined && (
-              <span className="channel-management-panel__member-you" data-agent-operator="">
-                {' '}
-                {GLYPH.dot} {t('agent.operatedBy', { name: user.operatorName })}
-              </span>
-            )}
-          </span>
+          <MemberAvatar user={user} self={self} presence={presence} />
+          <MemberName user={user} self={self} />
         </button>
       </div>
     </li>

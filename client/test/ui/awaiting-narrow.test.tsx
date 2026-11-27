@@ -76,6 +76,8 @@ function fakeAcl() {
     getChannel: async (id: ChannelId) => [FIN, DM, GRP].find((c) => c.id === id),
     getMembers: async () => [{ user: me, role: 'admin', state: 'active' as const, self: true }],
     getPresence: () => 'offline' as const,
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     getDevices: async () => [],
     currentUser: async () => me,
     getMyProfile: async () => ({ fullName: me.displayName }),

@@ -84,3 +84,29 @@ export class NameInUseError extends Error {
     this.name = 'NameInUseError'
   }
 }
+
+// ADR-118 dec. 5: the change would leave the organization without an admin. Carries no id.
+export class LastAdminError extends Error {
+  constructor() {
+    super('Last admin')
+    this.name = 'LastAdminError'
+  }
+}
+
+// ADR-118 dec. 5: the person is not a member of the organization (a guest, a removed or deactivated
+// account), so the role cannot be given. Carries no id.
+export class NotMemberError extends Error {
+  constructor() {
+    super('Not a member')
+    this.name = 'NotMemberError'
+  }
+}
+
+// ADR-118 dec. 6: the organization service refused this session an organization verb or read, because it
+// is not (or no longer) an admin. The surface closes on it. Carries no id.
+export class OrgAccessDeniedError extends Error {
+  constructor() {
+    super('Organization access denied')
+    this.name = 'OrgAccessDeniedError'
+  }
+}

@@ -53,6 +53,8 @@ function fakeAcl(threadItems: Message[]) {
       items: opts?.thread ? threadItems : [root],
       nextCursor: undefined as PageCursor | undefined,
     }),
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     subscribe: () => () => {},
     subscribeChannel: () => () => {},
     markRead,

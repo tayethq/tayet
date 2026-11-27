@@ -5,7 +5,7 @@ import { ConsoleLedger, FIRST_LOGIN_404, recognizedSet404 } from './support/cons
 import { signIn } from './support/login'
 import { conversations } from './support/workspace'
 import { expectNoProtocolLeak } from './support/assertions'
-import { deleteSharedRooms } from './support/rooms'
+import { closePicker, deleteSharedRooms } from './support/rooms'
 import { LIST, MANAGE, NEW_CONVERSATION } from './support/labels'
 
 // ADR-076: archive and restore a channel, end to end, with the sidebar's Archived section (manifest
@@ -83,6 +83,7 @@ test('archive: the channel moves to Arquivados for both, a member cannot restore
         await expect(contact).toBeVisible({ timeout: 5_000 })
       }).toPass({ timeout: 60_000 })
       await contact.click()
+      await closePicker(pageA, contact)
       await expect(pageA.getByRole('region', { name: MANAGE.members })).toContainText(UNA_NAME)
       // The invite is auto-joined on una's side (ADR-044).
       await expect(channelRow(pageB)).toBeVisible({ timeout: 60_000 })

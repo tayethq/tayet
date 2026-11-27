@@ -18,7 +18,8 @@
 #      existe); o caminho da cópia vira /__REPO__;
 #   3. o Caddyfile adaptado para JSON pela imagem do Caddy pinada no compose.yaml, com TAYET_DOMAIN no
 #      ambiente do contêiner.
-# Depois, as guardas do domínio (test/domain-guards.sh) rodam sobre cópias da mesma cópia pristina.
+# Depois, as guardas do domínio (test/domain-guards.sh) e as recusas de backup e restore
+# (test/backup-refusals.sh) rodam sobre cópias da mesma cópia pristina.
 #
 # Copia só os arquivos que o git conhece (rastreados ou novos não ignorados), com o conteúdo do working
 # tree: nada gitignored (um secrets/ real, o _generated/ do MAS) entra na cópia. Nenhum container de
@@ -116,9 +117,9 @@ produce() { # <domínio> <saída>
 for d in "${DOMAINS[@]}"; do produce "$d" "$WORK/out/$d"; done
 
 # ── onde o domínio aparece (empresa.example) ───────────────────────────────────────────────
-# Fora de comentário, nenhum `tayet.app` (o log config é synapse/log.config desde o PR 4a,
-# PLANO-DEPLOY-DOMINIO §0.3.4); nome do servidor, homeserver do MAS e ESCROW_SERVER_NAME
-# são o domínio; os hosts do Caddy são os cinco derivados dele.
+# Outside comments, no `tayet.app` (the log config has been synapse/log.config since PR 4a); the
+# server name, the MAS homeserver and ORG_SERVER_NAME are the domain; the Caddy hosts are the five
+# derived from it.
 check_example() {
   local d=empresa.example dir="$WORK/out/empresa.example" bad=0 f leftover hosts want
   for f in "$dir"/*; do
@@ -132,13 +133,13 @@ check_example() {
   grep -qx "server_name: \"$d\"" "$dir/homeserver.yaml" || { echo "ERRO: server_name ≠ $d" >&2; bad=1; }
   grep -qx "  homeserver: $d" "$dir/mas-config.yaml" || { echo "ERRO: homeserver do MAS ≠ $d" >&2; bad=1; }
   for f in compose.config.yaml compose.site.config.yaml; do
-    grep -qx "      ESCROW_SERVER_NAME: $d" "$dir/$f" || { echo "ERRO: ESCROW_SERVER_NAME ≠ $d em $f" >&2; bad=1; }
+    grep -qx "      ORG_SERVER_NAME: $d" "$dir/$f" || { echo "ERRO: ORG_SERVER_NAME ≠ $d em $f" >&2; bad=1; }
   done
   hosts="$(awk '/"host": \[/{f=1; next} f && /\]/{f=0} f' "$dir/Caddyfile.json" | tr -d ' \t",' | LC_ALL=C sort | paste -sd ' ' -)"
   want="$(printf '%s\n' "$d" "chat.$d" "matrix.$d" "auth.$d" "login.$d" | LC_ALL=C sort | paste -sd ' ' -)"
   [[ "$hosts" == "$want" ]] || { echo "ERRO: hosts do Caddy ($d): [$hosts], esperado [$want]" >&2; bad=1; }
   if [[ "$bad" != 0 ]]; then return 1; fi
-  echo "empresa.example: nenhum tayet.app fora de comentário; server_name, homeserver do MAS e ESCROW_SERVER_NAME = $d; hosts [$hosts]."
+  echo "empresa.example: nenhum tayet.app fora de comentário; server_name, homeserver do MAS e ORG_SERVER_NAME = $d; hosts [$hosts]."
 }
 # Falha aqui e nas guardas não interrompe: a comparação com as linhas de base roda de qualquer forma,
 # para o diff aparecer junto; o exit final soma tudo.
@@ -147,6 +148,9 @@ check_example || rc=1
 
 # ── guardas do domínio ─────────────────────────────────────────────────────────────────────
 bash "$TEST_DIR/domain-guards.sh" "$PRISTINE" "$WORK" || rc=1
+
+# ── backup and restore refusals ────────────────────────────────────────────────────────────
+bash "$TEST_DIR/backup-refusals.sh" "$PRISTINE" "$WORK" || rc=1
 
 # ── comparar ou regravar ───────────────────────────────────────────────────────────────────
 if [[ "$MODE" == update ]]; then

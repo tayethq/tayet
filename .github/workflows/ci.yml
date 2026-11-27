@@ -54,6 +54,24 @@ jobs:
         with:
           package: sidecar
 
+  push:
+    name: push (typecheck · lint · unit · no cross-imports)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/checks
+        with:
+          package: push
+
+  org:
+    name: org (typecheck · lint · unit · no cross-imports)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/checks
+        with:
+          package: org
+
   secret-scan:
     name: secret scan (gitleaks)
     runs-on: ubuntu-latest

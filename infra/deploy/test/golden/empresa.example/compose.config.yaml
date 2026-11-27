@@ -80,6 +80,9 @@ services:
       mas:
         condition: service_started
         required: true
+      org:
+        condition: service_started
+        required: true
       synapse:
         condition: service_started
         required: true
@@ -117,15 +120,12 @@ services:
       ESCROW_BIND: 0.0.0.0
       ESCROW_CLIENT_ID: 00000000000000000000ESCR0W
       ESCROW_CLIENT_SECRET: fake-escrow-client-0000000000000
-      ESCROW_HS_URL: http://synapse:8008
       ESCROW_INTROSPECTION_URL: http://mas:8080/oauth2/introspect
       ESCROW_MAS_ADMIN_CLIENT_ID: 000000000000000000ESCADM1N
       ESCROW_MAS_ADMIN_CLIENT_SECRET: fake-escrow-admin-0000000000000
       ESCROW_MAS_ADMIN_URL: http://mas:8081
       ESCROW_ORG_KEY: fake-org-key-0000000000000000000
-      ESCROW_PEOPLE_PROVIDER_ID: 01M6EV4GP9QK3T7YH2ZD8NXGG1
       ESCROW_PORT: "8090"
-      ESCROW_SERVER_NAME: empresa.example
       ESCROW_STORE_DIR: /data
     image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
     networks:
@@ -186,6 +186,53 @@ services:
       postgres:
         condition: service_healthy
         required: true
+  org:
+    restart: unless-stopped
+    command:
+      - node
+      - --experimental-strip-types
+      - src/server.ts
+    environment:
+      ORG_BIND: 0.0.0.0
+      ORG_CLIENT_ID: 00000000000000000000RG1NTR
+      ORG_CLIENT_SECRET: fake-org-client-000000000000000000
+      ORG_HS_URL: http://synapse:8008
+      ORG_INTROSPECTION_URL: http://mas:8080/oauth2/introspect
+      ORG_MAS_ADMIN_CLIENT_ID: 0000000000000000000RGADM1N
+      ORG_MAS_ADMIN_CLIENT_SECRET: fake-org-admin-0000000000000000000
+      ORG_MAS_ADMIN_URL: http://mas:8081
+      ORG_PEOPLE_PROVIDER_ID: 01M6EV4GP9QK3T7YH2ZD8NXGG1
+      ORG_PORT: "8091"
+      ORG_SERVER_NAME: empresa.example
+      ORG_STORE_DIR: /data
+    image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
+    networks:
+      default: null
+    stop_grace_period: 10s
+    volumes:
+      - type: bind
+        source: /__REPO__/org
+        target: /app
+        read_only: true
+        bind: {}
+      - type: volume
+        source: orgdata
+        target: /data
+        volume: {}
+    working_dir: /app
+    depends_on:
+      mas:
+        condition: service_started
+        required: true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://localhost:8091/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      timeout: 5s
+      interval: 5s
+      retries: 20
   postgres:
     restart: unless-stopped
     environment:
@@ -218,11 +265,46 @@ services:
       timeout: 3s
       interval: 3s
       retries: 20
+  push:
+    restart: unless-stopped
+    command:
+      - node
+      - --experimental-strip-types
+      - src/server.ts
+    environment:
+      PUSH_BIND: 0.0.0.0
+      PUSH_PORT: "8095"
+      PUSH_VAPID_PRIVATE_KEY: fake-push-vapid-private
+      PUSH_VAPID_PUBLIC_KEY: fake-push-vapid-public
+      PUSH_VAPID_SUBJECT: https://chat.empresa.example
+    image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
+    networks:
+      push:
+        ipv4_address: 10.213.77.3
+    stop_grace_period: 10s
+    volumes:
+      - type: bind
+        source: /__REPO__/push
+        target: /app
+        read_only: true
+        bind: {}
+    working_dir: /app
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://localhost:8095/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      timeout: 5s
+      interval: 5s
+      retries: 20
   synapse:
     restart: unless-stopped
     image: ghcr.io/element-hq/synapse@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6
     networks:
       default: null
+      push:
+        ipv4_address: 10.213.77.2
     volumes:
       - type: bind
         source: /__REPO__/infra/deploy/secrets/rendered/homeserver.yaml
@@ -259,6 +341,11 @@ services:
 networks:
   default:
     name: tayet_default
+  push:
+    name: tayet_push
+    ipam:
+      config:
+        - subnet: 10.213.77.0/29
 volumes:
   agentdata:
     name: tayet_agentdata
@@ -268,6 +355,8 @@ volumes:
     name: tayet_caddydata
   escrowdata:
     name: tayet_escrowdata
+  orgdata:
+    name: tayet_orgdata
   pgdata:
     name: tayet_pgdata
   synapsedata:

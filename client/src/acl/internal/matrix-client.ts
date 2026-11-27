@@ -56,6 +56,7 @@ import type {
   AclOptions,
   DomainEvent,
   ConnectionState,
+  ChannelAbilities,
   Unsubscribe,
   OutgoingBody,
   SendOpts,
@@ -72,10 +73,13 @@ import type {
   NewPerson,
   NewAgent,
   AgentPatch,
+  OrgAccess,
   PersonInvite,
   DataExportOptions,
   DataExportPart,
   AccountPreferences,
+  DeviceNotificationSubscription,
+  NotificationTarget,
 } from '../types'
 import { runDataExport, EXPORT_PAGE_SIZE } from './data-export'
 import type { OpaqueSession } from '../session'
@@ -181,7 +185,10 @@ import { guarded } from './handler-guard'
 import { ServerUnreadStore } from './server-unread'
 import {
   ConnectionError,
+  LastAdminError,
   NameInUseError,
+  NotMemberError,
+  OrgAccessDeniedError,
   PeopleUnavailableError,
   PersonExistsError,
   RateLimitedError,
@@ -215,6 +222,7 @@ import {
   CONVERSATION_EVENT,
   isGroupConversation,
   hasGroupMarker,
+  hasDirectMarker,
   EDIT_REDACTION_FIELD,
   undecryptedArrival,
 } from '@tayet/shared/internal'
@@ -225,6 +233,8 @@ import { CommandAggregator, fetchCommandsPage } from './command-state'
 import { FormReplies, FormSession, fetchFormPage, formRelatedOf, realClock, type FormClock, type SubmitOutcome } from './form-state'
 import { isReaderCopy } from './anchored-state'
 import { ensureFoldRules } from './fold-rules'
+import { PushRuleKeeper, type ConversationTag } from './push-rules'
+import { assertSubscription, notificationTarget, registerSubscription, unregisterSubscription } from './device-notifications'
 import { isAgentColor, normalizeName } from '@tayet/shared/internal'
 
 // Localpart of the organization channel's canonical alias (ADR-045 dec. 2/4). The full alias is
@@ -237,6 +247,17 @@ const ORG_CHANNEL_LOCALPART = 'all'
 // the system account on the organization channel. Its state_key is the mxid WITHOUT the sigil: the
 // server refuses another account's `@…` state_key, even at PL 100.
 const ORG_MEMBER_EVENT = 'io.tayet.member'
+// ADR-026: the reversible archive flag. One name for the verb that writes it and for getChannelAbilities,
+// which asks whether this session may write it (ADR-115).
+const ARCHIVED_EVENT = 'io.tayet.archived'
+const NO_CHANNEL_ABILITIES: ChannelAbilities = Object.freeze({
+  rename: false,
+  editTopic: false,
+  addPeople: false,
+  removePeople: false,
+  setRoles: false,
+  archive: false,
+})
 
 // ADR-086 (Proposto) dec. 1: the reserved agent localpart — `a-` + 12 of lowercase base32, the
 // alphabet of the escrow's random localparts (sibling of the `u-` of ADR-083). Only the escrow creates it.
@@ -297,6 +318,16 @@ async function bounded(work: Promise<unknown>, ms: number, label: string): Promi
     clearTimeout(timer)
   }
 }
+
+// Issue #421 (F2): the session client's HTTP deadline, a hypothesis measured against the slowest request of each
+// route on the local stack (PLANO-RELEASE-PUBLICA §8.159). Past it the SDK aborts the request and the caller gets
+// the fetch's AbortError, not a ConnectionError: retryNetworkOperation does not repeat it, nothing reads it as a
+// lost session, and the connection band (ADR-114) does not see it (the sync has its own deadline). The points that
+// translate a network failure read it as one through isConnectionFailure (R2).
+export const SESSION_HTTP_TIMEOUT_MS = 30_000
+
+// ADR-094 dec. 3 and ADR-116 dec. 10: the safety deadline of a held channel.added (group and direct).
+const GROUP_HOLD_MS = 3_000
 
 function isNetworkFailure(e: unknown): boolean {
   return e instanceof SdkConnectionError || (e as Error | null)?.name === 'ConnectionError'
@@ -431,6 +462,12 @@ export const STORE_WIPE_BOUND_MS = 2_000
 // de seguir para o wipe. Mesmo regime do bound acima: limita a espera, não aborta o request. Uma
 // tentativa; estourado ou falho, o sign-out local segue e o reaper do servidor (D3) cobre o resto.
 export const REVOKE_BOUND_MS = 2_000
+// PR 3 of the push track, fork 7: how long signOut waits for this session's subscription to be removed before it
+// goes on. The same regime as REVOKE_BOUND_MS (limits the wait, never aborts the request).
+export const PUSH_OFF_BOUND_MS = REVOKE_BOUND_MS
+// PR 5a of the push track, fork 5: how long a notification click waits for the thread reply before it settles for
+// the conversation alone.
+export const NOTIFICATION_TARGET_READ_MS = 3_000
 // PLANO-RELEASE-PUBLICA §8.37 D1: how many delivered-but-not-yet-in-the-room events the ACL keeps as
 // read targets (owner's cap). Oldest first out; an entry only lives until the SDK places the event.
 const READ_TARGET_CAP = 500
@@ -453,9 +490,26 @@ interface AnchoredReader {
 // nor /messages says so by itself. /sync sends a prev_batch for every room, even one delivered whole
 // (and from that token /messages replays the same events), and /messages drops `end` only on the
 // empty page after this one. A later joiner who cannot see this event gets the missing `end`.
+// Issue #421: the incremental /sync uses the SDK's stored filter, which sets no timeline limit, so the
+// server's default (10 events) applies to a room joined after the first sync. A new room with more events
+// than that (a direct conversation with its birth marker, a group) reaches its joiner without this event.
+// In a room whose join this session saw (joinsSeen), timelinePage's first read of a window without this event
+// fetches one page back (FIRST_READ_FILL_MS) before it answers, and keeps it only when all of it decrypts. The own
+// join in the window is no sign of a recent entry: a session born after it gets it in the initial sync's window of a
+// quiet room (CI run 45519024444).
 function reachesRoomStart(events: MatrixEvent[]): boolean {
   return events.some((ev) => ev.getType() === EventType.RoomCreate)
 }
+
+// Not decrypted after the settle: a decryption failure, or an encrypted event without its clear content (the
+// awaiting-approvals predicate).
+const unreadable = (ev: MatrixEvent): boolean => ev.isDecryptionFailure() || (ev.isEncrypted() && ev.getClearContent() === null)
+
+// Issue #421: the first read of a live window without the room's start, in a room whose join this session saw,
+// fetches one page back, with its own deadline; past it, on a failure, or with a fetched event that does not decrypt, the read answers with the
+// live window and its cursor, as before.
+export const FIRST_READ_FILL_MS = 3_000
+const TIMELINE_PAGE = 30
 
 export class MatrixGateway {
   private client: MatrixClient | undefined
@@ -517,10 +571,32 @@ export class MatrixGateway {
   // at emission). No persistence by design: presence is ephemeral and dies with the instance.
   private readonly presenceByUser = new Map<string, Presence>()
 
+  // ADR-114 (Proposto): the connection state. `syncConnection` is the last state mapped from the
+  // SDK's sync; `browserOffline` is the browser's network signal (offline/online events). The
+  // reported state combines them — while the browser says it is offline, 'offline', and a
+  // 'connected' from the sync is held back — and `reportedConnection` is the last one emitted, the
+  // source of getConnectionState for the screen that subscribes after it. Reset on disconnect.
+  private syncConnection: ConnectionState = 'connecting'
+  private browserOffline = false
+  private reportedConnection: ConnectionState = 'connecting'
+
   // openDirectMessage idempotency memo (this session): rawUserId → the DM room id created/found for
-  // them. Closes the m.direct sync-echo window so a fast second call returns the same id; the durable
-  // copy lives in the m.direct account-data map (ADR-026 decision 5). Cleared on disconnect.
+  // them, trusted without a membership check (the id is valid before the room's first sync). The
+  // durable copy lives in the m.direct account-data map (ADR-026 decision 5). Cleared on disconnect.
   private readonly directRoomByUser = new Map<string, string>()
+  // Issue #421 (F1): what this session wrote or is writing to the m.direct map, room → peer. The write no
+  // longer waits for the sync echo, so dmPeerByRoom reads the map ∪ this overlay (the map wins where the two
+  // differ) and every write merges it into its base. Kept apart from the memo on purpose: an entry here only
+  // classifies, it never hands openDirectMessage a room whose join may have failed. Cleared on disconnect.
+  private readonly directOverlay = new Map<string, string>()
+  // The map writes go one at a time, each building its content when its turn comes (last write wins per key).
+  private directWrites: Promise<void> = Promise.resolve()
+  // ADR-116 dec. 2 and 5: the joined rooms carrying the `'direct'` marker, kept incrementally (the
+  // first sync's scan, the →join transition, the marker's state event) so ctx() never sweeps every room; and
+  // the marked rooms whose map entry this session already wrote back once. Cleared on disconnect.
+  private readonly markedDirectRooms = new Set<string>()
+  private readonly directRewritten = new Set<string>()
+  private readonly directRewriteTimers = new Map<string, ReturnType<typeof setTimeout>>()
   // openGroupConversation idempotency memo (this session, ADR-094 dec. 8): the exact set of others (raw ids,
   // sorted, joined) → the group room created/found for it. Same lifecycle as directRoomByUser; an entry is
   // re-checked on every hit (groupRoomFor) and dropped when its room no longer matches or is converted.
@@ -528,10 +604,17 @@ export class MatrixGateway {
   // ADR-094 (Proposto) dec. 3: the creator's channel.added is held until the group is whole, by knowledge —
   // the openings in flight (createRoom not yet answered), the rooms of answered openings with their set, and
   // the held rooms with their 3 s safety timer and the openings they wait for. Cleared on disconnect.
-  private readonly groupOpenings = new Set<object>()
+  private readonly openings = new Set<object>()
   private readonly openedGroupRooms = new Map<string, string>()
+  // ADR-116 dec. 10: the same hold for the creator's direct conversation. openDirectMessage's openings
+  // join `openings` (a room that arrives while any opening is in flight is held); an answered one maps its room to
+  // the peer and the room is released once whole (the `'direct'` marker and the peer in the store).
+  private readonly openedDirectRooms = new Map<string, string>()
+  private readonly directOpeningPeers = new Map<object, string>()
   private readonly heldGroupRooms = new Map<string, { timer: ReturnType<typeof setTimeout>; waitFor: Set<object> }>()
   private orgChannelId: string | undefined
+  // The organization channel as last checked (checkOrgChannel): its first appearance re-reads the people list.
+  private lastOrgChannelId: string | undefined
 
   // ADR-068 D7: own thread replies already sent whose remote echo has not arrived yet — the read
   // receipt on them goes when it does (readOwnSend). Cleared on disconnect.
@@ -542,6 +625,18 @@ export class MatrixGateway {
   // before stopping the client — so no ACL request outlives the session that made it. Requests
   // internal to the SDK (its crypto outgoing-request loop) are not tracked here.
   private readonly inflight = new Set<Promise<unknown>>()
+
+  // ADR-117 dec. 2: the marked room rule of each direct conversation and group (push-rules.ts). Reset on connect and
+  // disconnect.
+  private readonly pushRules = new PushRuleKeeper({
+    client: () => (this.live && !this.sessionLost ? this.client : undefined),
+    desired: () => this.desiredPushRules(),
+    telemetry: { untranslated: (e) => this.opts.telemetry.untranslated(e) },
+    detach: (work) => this.detach(work),
+  })
+  // ADR-117 dec. 6: the key of the subscription this session registered (enableDeviceNotifications), so that
+  // disable and signOut remove it. Cleared on disconnect.
+  private registeredSubscription: string | undefined
 
   private detach(work: Promise<unknown>): void {
     this.inflight.add(work)
@@ -572,6 +667,11 @@ export class MatrixGateway {
   // that. An entry leaves this set when its receipt goes, so one entry gets at most one receipt. Cleared
   // on disconnect.
   private readonly entryReceiptsOwed = new Set<string>()
+  // PR #515 (CI run 45519024444): the rooms whose transition to join this session saw, after its first sync. Only
+  // these fill the first read (timelinePage): a session born after the entry sees its own join in the initial
+  // sync's window of a quiet room, and that entry is not news to it. Kept for the whole session; cleared on
+  // disconnect.
+  private readonly joinsSeen = new Set<string>()
 
   // ── Encrypted inbound pipeline (PLANO-FASE-2 §4.3) ────────────────────────────────────────
   // True once the FIRST sync has PREPARED (set at the end of connect). Decryption settles
@@ -583,6 +683,13 @@ export class MatrixGateway {
   // decrypt SETTLES (never emit from raw m.room.encrypted: the common case decrypts instantly
   // and emitting early would flash a placeholder for every message).
   private readonly pendingDecrypt = new Set<string>()
+  // #421: real event ids of the thread replies the initial sync brought in (seen on the timeline
+  // while `live` is still false). The SDK's ThreadEvent.NewReply fires for them too, only after the
+  // Thread fetched its root and relations — with the session already live and no live-tail signal
+  // — so onThreadReply checks this set before either branch. Keyed by the event id, not the object:
+  // the Thread's initialisation reads the same event again from /relations as a second MatrixEvent.
+  // Cleared on disconnect.
+  private readonly bootThreadReplies = new Set<string>()
   // Real event id → stable domain id of every message emitted (or page-returned) as
   // `unavailable`. When the key later arrives, the SDK re-emits Decrypted and the ACL upgrades
   // via message.edited under that SAME stable id (ADR-015: zero new mechanism).
@@ -806,6 +913,34 @@ export class MatrixGateway {
       if (set) for (const h of set) h(e)
     }
     if (e.t === 'channel.removed') this.awaiting.updateAll()
+    // ADR-117 dec. 2: each conversation that enters, changes or leaves is checked against its rule (no request when
+    // nothing differs). A removed room still joined (archived) keeps its rule, as the next sweep would.
+    if (e.t === 'channel.added' || e.t === 'channel.changed') {
+      const kind = e.channel.kind
+      this.pushRules.check(channelIdToRaw(e.channel.id), kind === 'dm' ? 'direct' : kind === 'group' ? 'group' : undefined)
+    } else if (e.t === 'channel.removed') {
+      const room = this.client?.getRoom(channelIdToRaw(e.channelId))
+      this.pushRules.check(channelIdToRaw(e.channelId), room ? this.conversationTag(room, this.ctx()) : undefined)
+    }
+  }
+
+  // ADR-117 dec. 2: the conversations that carry a marked rule — joined, and read as a direct conversation or a group.
+  private conversationTag(room: Room, ctx: Ctx): ConversationTag | undefined {
+    if (room.getMyMembership() !== 'join') return undefined
+    if (ctx.isDm(room.roomId)) return 'direct'
+    return isGroupConversation(room, ctx) ? 'group' : undefined
+  }
+
+  private desiredPushRules(): Map<string, ConversationTag> {
+    const out = new Map<string, ConversationTag>()
+    const client = this.client
+    if (!client) return out
+    const ctx = this.ctx()
+    for (const room of client.getRooms()) {
+      const tag = this.conversationTag(room, ctx)
+      if (tag) out.set(room.roomId, tag)
+    }
+    return out
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────────────────
@@ -919,6 +1054,9 @@ export class MatrixGateway {
       accessToken,
       refreshToken,
       store: serverUnread,
+      // Issue #421 (F2): the deadline of every request that does not carry its own (the sync, the crypto queue
+      // and the upload do). The SDK's own timer covers the wait for the response, not the body.
+      localTimeoutMs: SESSION_HTTP_TIMEOUT_MS,
       tokenRefreshFunction,
       userId: who.user_id,
       deviceId: who.device_id,
@@ -1008,6 +1146,25 @@ export class MatrixGateway {
     // handler so it can be re-attached on the raw self User once startClient has minted it (below).
     const onPresence = this.wireEvents(client)
 
+    // ADR-114 dec. 4: the browser's network signal, registered before startClient so a cut during
+    // the first sync already counts. The initial value reads navigator.onLine. Only in the browser: a
+    // runtime with a partial `window` (the OIDC renewer's stub in node) has no events to listen to.
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      const onOffline = (): void => {
+        this.browserOffline = true
+        this.reportConnection('offline')
+      }
+      const onOnline = (): void => {
+        this.browserOffline = false
+        this.reportConnection(this.syncConnection)
+      }
+      window.addEventListener('offline', onOffline)
+      window.addEventListener('online', onOnline)
+      this.disposers.push(() => window.removeEventListener('offline', onOffline))
+      this.disposers.push(() => window.removeEventListener('online', onOnline))
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) onOffline()
+    }
+
     // Resolve on the first PREPARED sync — after which getRooms()/timelines are populated.
     await new Promise<void>((resolve, reject) => {
       const onSync = (state: SyncState): void => {
@@ -1023,6 +1180,9 @@ export class MatrixGateway {
       // on, the SDK routes thread replies to per-thread timelines while the main timeline stays clean.
       client.startClient({ initialSyncLimit: 30, threadSupport: true }).catch(reject)
     })
+    // ADR-116 dec. 2: the one sweep of the marked set, over what the first sync brought; from here on
+    // the listeners keep it (→join and the marker's state event).
+    for (const room of client.getRooms()) this.noteDirectMarker(room)
 
     // The SDK's startClient stores a RAW self User (new User(userId), no reEmitter —
     // lib/client.js:531-532), so UserEvent.LastPresenceTs for our own EDUs dies on the
@@ -1075,6 +1235,11 @@ export class MatrixGateway {
     // Fire-and-forget and tolerant: a failure is signalled, never a connect failure.
     this.detach(ensureFoldRules(client, this.opts.telemetry))
 
+    // ADR-117 dec. 2: the one full sweep of the marked room rules per connection, with the same discipline: tracked,
+    // never a connect failure. From here on each channel event checks its own room.
+    this.pushRules.reset()
+    this.pushRules.sweep()
+
     // Passive new-access detection (ADR-018 / D2): fire-and-forget after the first sync. It reads
     // the recognized set from account data BEFORE wiring/scanning (PF-2 cold-start ordering), then
     // watches the own-user device list. NOT awaited — it is a notification, never a login gate.
@@ -1123,7 +1288,7 @@ export class MatrixGateway {
     if (!crypto || !deviceId) return
     const own = await crypto.getOwnDeviceKeys()
     const res = await client.downloadKeysForUsers([userId]).catch((e: unknown) => {
-      if (isNetworkFailure(e)) throw new ConnectionError()
+      if (this.isConnectionFailure(e, client)) throw new ConnectionError()
       throw e
     })
     const published = res.device_keys?.[userId]?.[deviceId]?.keys?.[`ed25519:${deviceId}`]
@@ -1524,9 +1689,12 @@ export class MatrixGateway {
       // Encrypted reply still decrypting → defer to the settled-decrypt path (§4.3). NewReply
       // does NOT re-fire after decryption, so the Decrypted handler is the one that emits it
       // (threadParent comes from the envelope relation — PF-1 item 3).
+      // #421: a reply the initial sync brought in is history, not a received message — decrypted,
+      // failed or still pending alike, so before both branches below.
+      const replyId = event.getId()
+      if (replyId && this.bootThreadReplies.has(replyId)) return
       if (event.isEncrypted() && (event.isBeingDecrypted() || event.shouldAttemptDecryption())) {
-        const id = event.getId()
-        if (id && this.live) this.pendingDecrypt.add(id)
+        if (replyId && this.live) this.pendingDecrypt.add(replyId)
         return
       }
       // Our own attachment echo, as in onTimeline: the local-ref bubble emitted by the send stays
@@ -1615,6 +1783,11 @@ export class MatrixGateway {
       if (!this.client || !room) return
       // Before the live-only filter: a Thread fills from /relations with non-live insertions (§8.37).
       this.settleReadTarget(event, room)
+      // #421: before the session is live, a thread reply on any timeline came with the initial sync.
+      if (!this.live && event.isRelation(RelationType.Thread)) {
+        const id = event.getId()
+        if (id) this.bootThreadReplies.add(id)
+      }
       if (toStartOfTimeline || data?.liveEvent === false) return
       if (event.getType() === EventType.RoomRedaction && hasServerId(event)) {
         const target = event.getAssociatedId()
@@ -1641,7 +1814,13 @@ export class MatrixGateway {
       // makeEncrypted retains the plaintext clearEvent (PF-1 item 4), so it falls through with
       // the clear type as before. Settled events (clearEvent present) also fall through —
       // a settled FAILURE is translated to `unavailable` by eventToMessage.
+      // A thread reply is not deferred here: its one emission path is onThreadReply (ThreadEvent.NewReply,
+      // which defers it itself while it decrypts). Deferring it here too made onDecrypted emit it and
+      // onThreadReply emit it again — every thread reply notified twice (#421, N6). The thread relation is
+      // in clear on the envelope.
       if (event.isEncrypted() && (event.isBeingDecrypted() || event.shouldAttemptDecryption())) {
+        const wireRel = (event.getWireContent() as Record<string, unknown>)['m.relates_to'] as { rel_type?: string } | undefined
+        if (wireRel?.rel_type === RelationType.Thread) return
         const realId = event.getId()
         if (realId && this.live) this.pendingDecrypt.add(realId)
         return
@@ -1843,6 +2022,7 @@ export class MatrixGateway {
     const onRoom = (room: Room): void => {
       this.attachRoom(room)
       this.emitChannelChanged(room)
+      this.checkOrgChannel()
     }
 
     // Membership/role changes (join/leave/role). role=null means no longer a member.
@@ -1856,7 +2036,9 @@ export class MatrixGateway {
         if (this.custodyRepairs.has(member.roomId)) this.detach(this.discardOnceRepaired(member.roomId))
         return
       }
-      this.reviewHeldGroupRoom(member.roomId)
+      // ADR-116 dec. 10: the peer entering the held room of a direct opening releases its one
+      // channel.added; the re-translation below would only repeat it.
+      const releasedDirect = this.reviewHeldGroupRoom(member.roomId)
       // A3-5: an agent joining, leaving or renamed moves the conversation's panels (filter and order);
       // A4-1: and its commands.
       if (this.isAgentAccount(member.userId)) for (const { agg } of this.anchored) agg.recompute(member.roomId)
@@ -1881,6 +2063,7 @@ export class MatrixGateway {
       // ADR-094 (Proposto) dec. 5: in a group conversation EVERY member event re-translates it — the
       // group's name and `participants` are its people (join/invite). Custody and system churn returned
       // above; a room that is neither a group nor a DM keeps the old contract.
+      if (releasedDirect) return // already out as channel.added, with the peer
       if (this.dmPeerByRoom().get(member.roomId) === member.userId) {
         const room = this.client?.getRoom(member.roomId)
         if (room) this.emitChannelChanged(room)
@@ -1888,6 +2071,9 @@ export class MatrixGateway {
         const room = this.client?.getRoom(member.roomId)
         // The marker alone first: only a room that carries it pays for the translation context.
         if (room && hasGroupMarker(room) && isGroupConversation(room, this.ctx())) this.emitChannelChanged(room)
+        // ADR-116 dec. 2: a room with the `'direct'` marker is a DM only while it has exactly one other
+        // person (and was created by this session or that person), so any member event there may move it in or out.
+        else if (room && this.markedDirectRooms.has(member.roomId)) this.emitChannelChanged(room)
       }
     }
 
@@ -1897,8 +2083,14 @@ export class MatrixGateway {
     // channels). Membership is KnownMembership | string — compared as plain strings.
     const onMyMembership = (room: Room, membership: string, prevMembership?: string): void => {
       if (!this.client || room.isSpaceRoom()) return
+      this.checkOrgChannel()
       if (prevMembership !== 'join' && membership === 'join') {
-        if (this.groupOpenings.size > 0 || this.openedGroupRooms.has(room.roomId)) this.holdGroupRoom(room.roomId)
+        // The first sync's rooms also come through here (no previous membership → join): only a join after it
+        // is one this session saw happen.
+        if (this.live) this.joinsSeen.add(room.roomId)
+        this.noteDirectMarker(room)
+        if (this.openings.size > 0 || this.openedGroupRooms.has(room.roomId) || this.openedDirectRooms.has(room.roomId))
+          this.holdGroupRoom(room.roomId)
         else this.emit({ t: 'channel.added', channel: roomToChannel(room, this.ctx(room)) })
         this.sendEntryReceipt(room)
       } else if (prevMembership === 'join' && (membership === 'leave' || membership === 'ban')) {
@@ -1929,11 +2121,14 @@ export class MatrixGateway {
         if (state.roomId === this.joinedOrgChannel()?.roomId) this.emit({ t: 'people.changed' })
         return
       }
+      if (event.getType() === 'm.room.canonical_alias') this.checkOrgChannel()
       // ADR-094 (Proposto) dec. 5: the conversation marker changing (group ↔ channel) re-classifies the
       // room in place: kind, name and `participants` move. emitChannelChanged carries the guards.
+      // ADR-116 dec. 2: the same event keeps the set of rooms with the `'direct'` marker.
       if (event.getType() === CONVERSATION_EVENT) {
-        this.reviewHeldGroupRoom(state.roomId)
         const room = this.client.getRoom(state.roomId)
+        if (room) this.noteDirectMarker(room)
+        if (this.reviewHeldGroupRoom(state.roomId)) return // the direct room's one channel.added just went out
         if (room) this.emitChannelChanged(room)
         return
       }
@@ -1959,10 +2154,14 @@ export class MatrixGateway {
 
     // Connection state (P4 hook).
     const onSync = (state: SyncState): void => {
+      this.checkOrgChannel()
       const cs = toConnectionState(state)
       if (!cs) return
-      this.emit({ t: 'connection.changed', state: cs })
-      this.awaiting.connection(cs === 'connected')
+      this.syncConnection = cs
+      // ADR-114 dec. 4: while the browser says it is offline, a sync that still succeeds (the
+      // request already in flight at the cut) does not say the connection is good.
+      if (this.browserOffline && cs === 'connected') return
+      this.reportConnection(this.browserOffline ? 'offline' : cs)
     }
 
     // ADR-056 dec. 3: presence EDUs → user.presence, backed by the ACL-side map. We listen on
@@ -2194,6 +2393,10 @@ export class MatrixGateway {
     this.people = undefined
     this.orgAdmin = undefined
     for (const off of this.disposers.splice(0)) off()
+    // ADR-114: the connection state dies with the session (the listeners went with the disposers).
+    this.syncConnection = 'connecting'
+    this.browserOffline = false
+    this.reportedConnection = 'connecting'
     this.roomWired = new WeakSet<Room>()
     this.threadSummaryEmitted.clear()
     this.pagedThreadLatest.clear()
@@ -2216,11 +2419,21 @@ export class MatrixGateway {
     this.localMedia.clear()
     this.localEchoTxns.clear()
     this.directRoomByUser.clear()
+    this.directOverlay.clear()
+    this.pushRules.reset()
+    this.registeredSubscription = undefined
+    this.directWrites = Promise.resolve()
+    this.markedDirectRooms.clear()
+    this.directRewritten.clear()
+    for (const timer of this.directRewriteTimers.values()) clearTimeout(timer)
+    this.directRewriteTimers.clear()
     this.groupRoomBySet.clear()
     for (const held of this.heldGroupRooms.values()) clearTimeout(held.timer)
     this.heldGroupRooms.clear()
     this.openedGroupRooms.clear()
-    this.groupOpenings.clear()
+    this.openedDirectRooms.clear()
+    this.directOpeningPeers.clear()
+    this.openings.clear()
     // Revoke every object URL this session minted (PLANO-FASE-2-MEDIA §0.2 item 2 — the ONE
     // revocation trigger this slice has; no LRU/active policy) and drop the decrypt worker.
     for (const url of this.objectUrls) URL.revokeObjectURL(url)
@@ -2234,11 +2447,13 @@ export class MatrixGateway {
     this.custodyAttempted.clear()
     this.custodyRepairs.clear()
     this.pendingDecrypt.clear()
+    this.bootThreadReplies.clear()
     this.unavailableEmitted.clear()
     this.ownSendsAwaitingEcho.clear()
     this.readTargets.clear()
     this.pendingReadTarget.clear()
     this.entryReceiptsOwed.clear()
+    this.joinsSeen.clear()
     this.acknowledgedDevices.clear()
     this.notifiedDevices.clear()
     this.ackServerRead = undefined
@@ -2303,6 +2518,13 @@ export class MatrixGateway {
             refreshToken: client.getRefreshToken() ?? undefined,
           }
         : undefined
+    // ADR-117 dec. 6: the subscription this session registered goes before the disconnect, bounded; a failure or the
+    // bound never holds the sign-out (the access's revocation removes it on the server too). A lost session makes
+    // no request.
+    const registered = this.registeredSubscription
+    if (client && registered && this.live && !this.sessionLost) {
+      await bounded(unregisterSubscription(client, registered), PUSH_OFF_BOUND_MS, 'notifications off')
+    }
     await this.disconnect()
     if (!client) return
     if (revoke) await bounded(revokeSessionTokens(revoke), REVOKE_BOUND_MS, 'session revoke')
@@ -2315,6 +2537,68 @@ export class MatrixGateway {
     await bounded(wipeSearchIndexes(account), STORE_WIPE_BOUND_MS, 'search index wipe')
   }
 
+  // ADR-117 dec. 6: this access's subscription. The shape is checked before any request; the error never carries the
+  // subscription nor the SDK's error.
+  async enableDeviceNotifications(subscription: DeviceNotificationSubscription): Promise<void> {
+    assertSubscription(subscription)
+    const client = this.require()
+    try {
+      await registerSubscription(client, subscription)
+    } catch (e) {
+      throw this.notificationsError(e, client)
+    }
+    const { p256dh } = subscription.keys
+    if (this.client === client) this.registeredSubscription = p256dh
+  }
+
+  async disableDeviceNotifications(): Promise<void> {
+    const registered = this.registeredSubscription
+    if (!registered) return
+    const client = this.require()
+    try {
+      await unregisterSubscription(client, registered)
+    } catch (e) {
+      throw this.notificationsError(e, client)
+    }
+    if (this.registeredSubscription === registered) this.registeredSubscription = undefined
+  }
+
+  // ADR-117 dec. 5: the target is checked against the rooms the session holds (a local lookup) before anything
+  // reaches the server: joined, not a space, not archived, as getChannels lists them.
+  async resolveNotificationTarget(input: NotificationTarget): Promise<{ channel: ChannelId; message?: Message } | undefined> {
+    const target = notificationTarget(input)
+    const client = this.client
+    if (!target || !client) return undefined
+    const room = client.getRoom(target.conversation)
+    if (!room || room.getMyMembership() !== 'join' || room.isSpaceRoom() || this.isArchived(room)) return undefined
+    const channel = brandChannelId(room.roomId)
+    if (target.message === undefined || target.thread === undefined) return { channel }
+    let timer: unknown
+    const late = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), NOTIFICATION_TARGET_READ_MS)
+    })
+    const read = this.getMessage(channel, brandMessageId(target.message)).catch(() => undefined)
+    const message = await Promise.race([read, late]).finally(() => clearTimeout(timer as number))
+    return message ? { channel, message } : { channel }
+  }
+
+  private notificationsError(e: unknown, client: MatrixClient): Error {
+    if (this.isConnectionFailure(e, client)) return new ConnectionError()
+    if (e instanceof MatrixError && e.errcode === 'M_LIMIT_EXCEEDED') return new RateLimitedError()
+    return new Error('device notifications failed')
+  }
+
+  // Issue #421 (R2): no answer from the server — the network, or the session client's own deadline
+  // (SESSION_HTTP_TIMEOUT_MS) aborting the request. stopClient() does not abort the requests in flight (measured on
+  // matrix-js-sdk 41.6.0: only the sync and logout(true) are aborted), so a request of a session that ended ends by
+  // its own deadline, with the same AbortError. It is told apart by the session's state: disconnect() clears
+  // this.client before it stops the SDK, so by then the request's client is no longer the session's; a request whose
+  // client is not the session's, or of a session already lost, is not the network.
+  private isConnectionFailure(e: unknown, client: MatrixClient): boolean {
+    if (isNetworkFailure(e)) return true
+    return (e as Error | null)?.name === 'AbortError' && this.client === client && !this.sessionLost
+  }
+
   private require(): MatrixClient {
     if (!this.client) throw new Error('ACL not connected')
     return this.client
@@ -2325,7 +2609,23 @@ export class MatrixGateway {
   // dmRoomIds used to discard IS the peer. Deterministic on a malformed map that lists the same
   // room under two users: the FIRST key (account-data object iteration order) wins — the map is
   // written one key at a time by addDirectRoom, so in practice each room has exactly one owner.
+  // Issue #421 (F1) and ADR-116 dec. 3: then this session's overlay, then the joined rooms with the
+  // `'direct'` marker, exactly one other person and a creator who is this session or that person (markedPeer). The map
+  // wins: a later source never re-assigns a room.
   private dmPeerByRoom(): Map<string, string> {
+    const out = this.mapPeerByRoom()
+    for (const [roomId, peer] of this.directOverlay) if (!out.has(roomId)) out.set(roomId, peer)
+    for (const roomId of this.markedDirectRooms) {
+      if (out.has(roomId)) continue
+      const peer = this.markedPeer(roomId)
+      if (!peer) continue
+      out.set(roomId, peer)
+      this.rewriteDirect(roomId, peer)
+    }
+    return out
+  }
+
+  private mapPeerByRoom(): Map<string, string> {
     const ev = this.require().getAccountData(EventType.Direct as keyof AccountDataEvents)
     const content = (ev?.getContent() ?? {}) as Record<string, unknown>
     const out = new Map<string, string>()
@@ -2335,6 +2635,52 @@ export class MatrixGateway {
       }
     }
     return out
+  }
+
+  // ADR-116 dec. 2: the only other person (join or invite, without this session, the custody and the
+  // system account) of a joined room carrying the `'direct'` marker; nobody else or more than one → undefined. The
+  // room's creator (the sender of its `m.room.create` in the state) must be this session or that person: a room
+  // created by a third party who invited two people and left is not read by the marker, nor one without the create
+  // event in the state. The one place for the three uses (dmPeerByRoom, rewriteDirect, openDirectMessage).
+  private markedPeer(roomId: string): string | undefined {
+    const room = this.client?.getRoom(roomId)
+    const me = this.client?.getUserId()
+    if (!room || !me || room.getMyMembership() !== 'join' || !hasDirectMarker(room)) return undefined
+    const custodian = custodyMxidFor(me)
+    const system = systemMxidFor(me)
+    const others = room
+      .getMembers()
+      .filter((m) => m.membership === 'join' || m.membership === 'invite')
+      .filter((m) => m.userId !== me && m.userId !== custodian && m.userId !== system)
+    if (others.length !== 1) return undefined
+    const peer = others[0]!.userId
+    const creator = room.currentState.getStateEvents(EventType.RoomCreate, '')?.getSender()
+    return creator === me || creator === peer ? peer : undefined
+  }
+
+  // The marked set follows a room's own marker: called on the first sync's scan, on →join and on the marker's
+  // state event.
+  private noteDirectMarker(room: Room): void {
+    if (hasDirectMarker(room)) this.markedDirectRooms.add(room.roomId)
+    else this.markedDirectRooms.delete(room.roomId)
+  }
+
+  // ADR-116 dec. 5: a marked room read outside the map gets its entry written back once per session,
+  // without retry and out of the reader's way. The write waits GROUP_HOLD_MS and reads the room again: a room created
+  // with several invites comes in pieces and has "exactly one other person" for a moment (measured on the local
+  // stack, PLANO-RELEASE-PUBLICA §8.159), and the map, once written, would win over the marker for good. A room that
+  // no longer reads the same is not written (a later read may try again). A failure is silent: the marker keeps
+  // classifying the room.
+  private rewriteDirect(roomId: string, peer: string): void {
+    if (this.directRewritten.has(roomId) || this.directRewriteTimers.has(roomId)) return
+    const client = this.client
+    const timer = setTimeout(() => {
+      this.directRewriteTimers.delete(roomId)
+      if (this.client !== client || this.mapPeerByRoom().has(roomId) || this.markedPeer(roomId) !== peer) return
+      this.directRewritten.add(roomId)
+      this.detach(this.addDirectRoom(peer, roomId, { retry: false }).catch(() => {}))
+    }, GROUP_HOLD_MS)
+    this.directRewriteTimers.set(roomId, timer)
   }
 
   private dmRoomIds(): Set<string> {
@@ -2683,6 +3029,21 @@ export class MatrixGateway {
       throw new Error('Only the agent\'s operator can add it to a conversation')
   }
 
+  // Every invite the ACL sends goes through here (ADR-057 norm 1, addendum of 24/Nov/2026). The SDK's
+  // `invite` is not used on purpose: in 41.6.0 it calls `shareRoomHistoryWithUser` before the membership
+  // change whenever the room's history visibility is `shared` (ours, norm 3), so the inviter's device
+  // builds and uploads a bundle with the room's history keys and sends the invitee a pointer to it. A
+  // private channel's history starts at entry; whether the invitee imports that bundle only depends on
+  // the order of its own join. This sends the same request as the SDK's membershipChange
+  // (POST /rooms/{roomId}/invite with { user_id }) through the same authedRequest, so errors keep their
+  // shape (MatrixError with errcode and retry_after_ms) and every caller's handling stays as it was.
+  // A test guard reproves any other call to the SDK invite under src/acl.
+  private async inviteDirect(client: MatrixClient, roomId: string, userId: string): Promise<void> {
+    await client.http.authedRequest(Method.Post, `/rooms/${encodeURIComponent(roomId)}/invite`, undefined, {
+      user_id: userId,
+    })
+  }
+
   // FAIL-OPEN COM SINAL (F1, ratificado). Duas coisas que este método NÃO faz, ambas deliberadas:
   //
   //  1. Não entra no array `invite` do createRoom. Lá, uma recusa do servidor derruba a criação
@@ -2699,7 +3060,7 @@ export class MatrixGateway {
     if (!custodian) return this.signalUncovered(CUSTODY_SIGNAL_INVITE_FAILED)
     this.custodyAttempted.add(roomId)
     try {
-      await this.require().invite(roomId, custodian)
+      await this.inviteDirect(this.require(), roomId, custodian)
       this.noteInviteAccepted(roomId)
     } catch (err) {
       // F11 (ratificado): o /invite do cofre consome o rc_message do CRIADOR — sob rajada
@@ -2835,7 +3196,7 @@ export class MatrixGateway {
           continue
         }
         try {
-          await client.invite(roomId, custodian)
+          await this.inviteDirect(client, roomId, custodian)
           this.noteInviteAccepted(roomId)
           // Sucesso tardio: a espera de membership do caminho imediato NÃO se aplica — o
           // verbo já resolveu há muito. Sessões nascidas antes deste invite são aceitas
@@ -2879,7 +3240,7 @@ export class MatrixGateway {
     this.assertNotGroup(id)
     await this.require().sendStateEvent(
       channelIdToRaw(id) as string,
-      'io.tayet.archived' as never,
+      ARCHIVED_EVENT as never,
       { active: true } as never,
       '',
     )
@@ -2891,7 +3252,7 @@ export class MatrixGateway {
   async unarchiveChannel(id: ChannelId): Promise<void> {
     await this.require().sendStateEvent(
       channelIdToRaw(id) as string,
-      'io.tayet.archived' as never,
+      ARCHIVED_EVENT as never,
       { active: false } as never,
       '',
     )
@@ -2927,7 +3288,7 @@ export class MatrixGateway {
     this.assertNotGroup(channelId)
     this.assertNotOthersAgent(userIdToRaw(user))
     try {
-      await this.require().invite(channelIdToRaw(channelId), userIdToRaw(user))
+      await this.inviteDirect(this.require(), channelIdToRaw(channelId), userIdToRaw(user))
     } catch (e) {
       if (e instanceof MatrixError && e.errcode === 'M_LIMIT_EXCEEDED') throw new RateLimitedError()
       throw e
@@ -2940,6 +3301,7 @@ export class MatrixGateway {
     const outcome = await (this.people?.invite({ name, email, kind }) ?? { kind: 'unavailable' as const })
     if (outcome.kind === 'exists') throw new PersonExistsError()
     if (outcome.kind === 'unavailable') throw new PeopleUnavailableError()
+    if (outcome.kind === 'forbidden') this.orgAccessDenied()
     if (outcome.kind === 'rejected') throw new Error('Invite rejected')
     const id = brandUserId(outcome.userId)
     const failedChannels: ChannelId[] = []
@@ -2952,6 +3314,7 @@ export class MatrixGateway {
   async removePerson(user: UserId): Promise<void> {
     const outcome = await (this.people?.remove(userIdToRaw(user)) ?? { kind: 'unavailable' as const })
     if (outcome.kind === 'unavailable') throw new PeopleUnavailableError()
+    if (outcome.kind === 'forbidden') this.orgAccessDenied()
     if (outcome.kind === 'rejected') throw new Error('Removal rejected')
   }
 
@@ -2961,6 +3324,7 @@ export class MatrixGateway {
     const outcome = await (this.people?.createAgent({ name, color }) ?? { kind: 'unavailable' as const })
     if (outcome.kind === 'name_taken') throw new NameInUseError()
     if (outcome.kind === 'unavailable') throw new PeopleUnavailableError()
+    if (outcome.kind === 'forbidden') this.orgAccessDenied()
     if (outcome.kind === 'rejected') throw new Error('Agent rejected')
     return { userId: brandUserId(outcome.userId), token: outcome.token }
   }
@@ -2969,12 +3333,14 @@ export class MatrixGateway {
     const outcome = await (this.people?.updateAgent(userIdToRaw(user), patch) ?? { kind: 'unavailable' as const })
     if (outcome.kind === 'name_taken') throw new NameInUseError()
     if (outcome.kind === 'unavailable') throw new PeopleUnavailableError()
+    if (outcome.kind === 'forbidden') this.orgAccessDenied()
     if (outcome.kind === 'rejected') throw new Error('Agent update rejected')
   }
 
   async reissueAgent(user: UserId): Promise<{ token: string }> {
     const outcome = await (this.people?.reissueAgent(userIdToRaw(user)) ?? { kind: 'unavailable' as const })
     if (outcome.kind === 'unavailable') throw new PeopleUnavailableError()
+    if (outcome.kind === 'forbidden') this.orgAccessDenied()
     if (outcome.kind === 'rejected') throw new Error('Agent reissue rejected')
     return { token: outcome.token }
   }
@@ -2982,6 +3348,7 @@ export class MatrixGateway {
   async removeAgent(user: UserId): Promise<void> {
     const outcome = await (this.people?.removeAgent(userIdToRaw(user)) ?? { kind: 'unavailable' as const })
     if (outcome.kind === 'unavailable') throw new PeopleUnavailableError()
+    if (outcome.kind === 'forbidden') this.orgAccessDenied()
     if (outcome.kind === 'rejected') throw new Error('Agent removal rejected')
   }
 
@@ -2990,13 +3357,41 @@ export class MatrixGateway {
     return this.orgAdmin
   }
 
+  // ADR-118 dec. 6: the service refused this session an organization verb, so it is not an admin any more.
+  // The memo of isOrgAdmin turns false here, without a read and without a live notice.
+  private orgAccessDenied(): never {
+    this.orgAdmin = Promise.resolve(false)
+    throw new OrgAccessDeniedError()
+  }
+
+  async getOrgAccess(): Promise<OrgAccess> {
+    const outcome = await (this.people?.access() ?? { kind: 'unavailable' as const })
+    if (outcome.kind === 'forbidden') this.orgAccessDenied()
+    if (outcome.kind === 'unavailable') throw new PeopleUnavailableError()
+    if (outcome.kind === 'rejected') throw new Error('Access read rejected')
+    return { admins: outcome.admins.map(brandUserId), withoutAccess: outcome.withoutAccess.map(brandUserId) }
+  }
+
+  async setOrgAdmin(user: UserId, admin: boolean): Promise<void> {
+    const raw = userIdToRaw(user)
+    const outcome = await (this.people?.setAdmin(raw, admin) ?? { kind: 'unavailable' as const })
+    if (outcome.kind === 'forbidden') this.orgAccessDenied()
+    if (outcome.kind === 'unavailable') throw new PeopleUnavailableError()
+    if (outcome.kind === 'last_admin') throw new LastAdminError()
+    if (outcome.kind === 'not_member') throw new NotMemberError()
+    if (outcome.kind === 'rejected') throw new Error('Role change rejected')
+    // Taking its own role away ends this session's admin surface at once (ADR-118 dec. 6).
+    if (!admin && raw === this.client?.getUserId()) this.orgAdmin = Promise.resolve(false)
+  }
+
   async removeMember(channelId: ChannelId, user: UserId): Promise<void> {
     this.assertNotGroup(channelId)
     await this.require().kick(channelIdToRaw(channelId), userIdToRaw(user))
   }
 
   // Role → power level (admin/50, member/0 — roleToPowerLevel). NO special handling of the Matrix PL
-  // guardrails: a server error (demoting the creator/100, promoting above one's own PL) becomes a
+  // guardrails: the server refuses every role change made by anyone but the channel's creator (measured
+  // in #508, ADR-026 addendum; the UI no longer offers it to them, ADR-115), and that error becomes a
   // DOMAIN rejection, not a fix. Owner-tier (PL 100) is deliberately outside Role (ADR-026).
   // ADR-083 dec. 4: a guest is never promoted — same honest rejection, decided here because the
   // server has no notion of kind and would accept the PL.
@@ -3012,10 +3407,10 @@ export class MatrixGateway {
   }
 
   // Open (or reveal) a 1:1 DM — IDEMPOTENT (PLANO-MEMBERSHIP-CANAIS §0.2 / ADR-026 decision 5): an
-  // existing DM with this user is never duplicated. We look it up via the m.direct account-data map
-  // (keyed by user) AND an in-session memo, then create + mark m.direct only when none exists. The
-  // in-session memo closes the m.direct sync-echo window so a fast second call still returns the same
-  // room id (the durable copy lives in m.direct; this mirror keeps idempotency robust this session).
+  // existing DM with this user is never duplicated. We look it up via an in-session memo, the m.direct
+  // account-data map (keyed by user) and the rooms born with the `'direct'` marker (ADR-116, Proposto),
+  // then create + mark m.direct only when none exists. The memo returns the same room id before its
+  // first sync; the durable copies are the map and the room's own marker.
   async openDirectMessage(user: UserId): Promise<ChannelId> {
     const client = this.require()
     const rawUser = userIdToRaw(user)
@@ -3041,12 +3436,38 @@ export class MatrixGateway {
         return brandChannelId(roomId)
       }
     }
-    const res = await client.createRoom({
-      preset: Preset.TrustedPrivateChat,
-      is_direct: true,
-      invite: [rawUser],
-      initial_state: encryptedBirthState(),
-    })
+    // ADR-116 dec. 4: after the map, a joined room born with the `'direct'` marker whose only other
+    // person is this one (a map write that failed in an earlier session). The map wins over the marker (dec. 3).
+    const mapped = this.mapPeerByRoom()
+    for (const roomId of this.markedDirectRooms) {
+      if (mapped.has(roomId) || this.markedPeer(roomId) !== rawUser) continue
+      this.directRoomByUser.set(rawUser, roomId)
+      this.rewriteDirect(roomId, rawUser)
+      return brandChannelId(roomId)
+    }
+    // Dec. 1: born with the marker, so the room says what it is even if the map write below fails. Dec. 10: the
+    // opening is known before createRoom, so the creator's channel.added of a room that arrives meanwhile is held
+    // (the room comes in pieces: the creation and the join first, the marker and the peer's invite in later syncs).
+    const opening = {}
+    this.openings.add(opening)
+    this.directOpeningPeers.set(opening, rawUser)
+    let res: { room_id: string }
+    try {
+      res = await client.createRoom({
+        preset: Preset.TrustedPrivateChat,
+        is_direct: true,
+        invite: [rawUser],
+        initial_state: [...encryptedBirthState(), { type: CONVERSATION_EVENT, state_key: '', content: { kind: 'direct' } }],
+      })
+      this.openedDirectRooms.set(res.room_id, rawUser)
+    } finally {
+      this.openings.delete(opening)
+      this.directOpeningPeers.delete(opening)
+      for (const [roomId, held] of this.heldGroupRooms) {
+        held.waitFor.delete(opening)
+        this.reviewHeldGroupRoom(roomId)
+      }
+    }
     this.directRoomByUser.set(rawUser, res.room_id)
     // Um DM passa a ter TRÊS membros no protocolo (eu, o par, o cofre) e continuar sendo um 1:1 no
     // produto: o cofre é filtrado em getMembers/member.changed, e roomToChannel o exclui do nome,
@@ -3085,7 +3506,7 @@ export class MatrixGateway {
     for (const u of raws) if (this.kindOf(u) === 'member') powerUsers[u] = 50
     // ADR-094 dec. 3: the opening is known before createRoom, so a join that lands before the answer is held.
     const opening = {}
-    this.groupOpenings.add(opening)
+    this.openings.add(opening)
     let res: { room_id: string }
     try {
       res = await client.createRoom({
@@ -3096,7 +3517,7 @@ export class MatrixGateway {
       })
       this.openedGroupRooms.set(res.room_id, key)
     } finally {
-      this.groupOpenings.delete(opening)
+      this.openings.delete(opening)
       for (const [roomId, held] of this.heldGroupRooms) {
         held.waitFor.delete(opening)
         this.reviewHeldGroupRoom(roomId)
@@ -3111,24 +3532,40 @@ export class MatrixGateway {
   // ADR-094 (Proposto) dec. 3: hold the creator's channel.added (an opening in flight, or the room of an answered
   // one), with a 3 s safety deadline from the join; a room that is already whole goes at once.
   private holdGroupRoom(roomId: string): void {
-    const timer = setTimeout(() => this.releaseGroupRoom(roomId), 3000)
-    this.heldGroupRooms.set(roomId, { timer, waitFor: new Set(this.groupOpenings) })
+    const timer = setTimeout(() => this.releaseGroupRoom(roomId), GROUP_HOLD_MS)
+    this.heldGroupRooms.set(roomId, { timer, waitFor: new Set(this.openings) })
     this.reviewHeldGroupRoom(roomId)
   }
 
   // Release when the room is the opening's and whole (the marker, and its people exactly the set), or when it
   // is another room and every opening in flight at its join has answered (or failed).
-  private reviewHeldGroupRoom(roomId: string): void {
+  // ADR-116 dec. 10: the room of a direct opening is released once whole — the marker and its peer as the
+  // only other person — and the call says so (true), so the caller does not repeat it as a channel.changed.
+  private reviewHeldGroupRoom(roomId: string): boolean {
     const held = this.heldGroupRooms.get(roomId)
-    if (!held) return
+    if (!held) return false
+    const peer = this.openedDirectRooms.get(roomId)
+    if (peer !== undefined) {
+      if (this.markedPeer(roomId) !== peer) return false
+      this.releaseGroupRoom(roomId)
+      return true
+    }
     const key = this.openedGroupRooms.get(roomId)
     const room = this.client?.getRoom(roomId)
     if (key === undefined) {
+      // Whole before its createRoom answer: the marker and, as the only other person, the peer of a direct opening
+      // this room waits for.
+      const whole = this.markedPeer(roomId)
+      if (whole !== undefined && [...held.waitFor].some((o) => this.directOpeningPeers.get(o) === whole)) {
+        this.releaseGroupRoom(roomId)
+        return true
+      }
       if (held.waitFor.size === 0) this.releaseGroupRoom(roomId)
-      return
+      return false
     }
     if (room && hasGroupMarker(room) && isGroupConversation(room, this.ctx()) && this.groupPeopleKey(room) === key)
       this.releaseGroupRoom(roomId)
+    return false
   }
 
   private releaseGroupRoom(roomId: string): void {
@@ -3137,6 +3574,7 @@ export class MatrixGateway {
     clearTimeout(held.timer)
     this.heldGroupRooms.delete(roomId)
     this.openedGroupRooms.delete(roomId)
+    this.openedDirectRooms.delete(roomId)
     const room = this.client?.getRoom(roomId)
     if (!room || room.getMyMembership() !== 'join' || room.isSpaceRoom()) return
     this.emit({ t: 'channel.added', channel: roomToChannel(room, this.ctx(room)) })
@@ -3222,19 +3660,33 @@ export class MatrixGateway {
     return Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : []
   }
 
-  // Read-union-write the m.direct map (last-write-wins per key, so re-read immediately before
-  // writing). Mirrors persistAcknowledged; the key is a protocol detail that never crosses the barrel.
-  private async addDirectRoom(rawUser: string, roomId: string): Promise<void> {
+  // Read-union-write the m.direct map (last-write-wins per key). Issue #421 (F1): a direct call to the
+  // account-data endpoint, with the SDK's network retry, in the shape of drainAcknowledged — the SDK's
+  // setAccountData waits for the sync echo without a limit. The overlay entry is set before the write, so this
+  // session reads the room as a DM from now on, and the base of the union is the synced map plus every entry this
+  // session wrote or is writing (a synced copy behind our own last write would otherwise drop it). Writes are
+  // serialized. The key is a protocol detail that never crosses the barrel.
+  private addDirectRoom(rawUser: string, roomId: string, opts: { retry?: boolean } = {}): Promise<void> {
     const client = this.client
-    if (!client) return
-    const ev = client.getAccountData(EventType.Direct as keyof AccountDataEvents)
-    const content = { ...((ev?.getContent() ?? {}) as Record<string, string[]>) }
-    const list = Array.isArray(content[rawUser]) ? content[rawUser] : []
-    if (!list.includes(roomId)) content[rawUser] = [...list, roomId]
-    await client.setAccountData(
-      EventType.Direct as keyof WritableAccountDataEvents,
-      content as unknown as AccountDataEvents[keyof WritableAccountDataEvents],
-    )
+    if (!client) return Promise.resolve()
+    this.directOverlay.set(roomId, rawUser)
+    const write = this.directWrites.then(async () => {
+      const userId = client.getUserId()
+      if (this.client !== client || !userId) return
+      const ev = client.getAccountData(EventType.Direct as keyof AccountDataEvents)
+      const content = { ...((ev?.getContent() ?? {}) as Record<string, string[]>) }
+      const listed = new Set(Object.values(content).flatMap((v) => (Array.isArray(v) ? v : [])))
+      for (const [room, peer] of this.directOverlay) {
+        if (listed.has(room)) continue
+        content[peer] = [...(Array.isArray(content[peer]) ? content[peer] : []), room]
+        listed.add(room)
+      }
+      const path = `/user/${encodeURIComponent(userId)}/account_data/${encodeURIComponent(EventType.Direct)}`
+      const put = () => client.http.authedRequest(Method.Put, path, undefined, content)
+      await (opts.retry === false ? put() : retryNetworkOperation(5, put))
+    })
+    this.directWrites = write.catch(() => {})
+    return write
   }
 
   // Auto-join an invite WITHOUT explicit acceptance (ADR-044). In a corporate Model B you don't
@@ -3257,11 +3709,12 @@ export class MatrixGateway {
     const inviter = inviteEvent?.getSender()
     this.joiningInvites.add(roomId)
     try {
-      // Mark m.direct BEFORE joining: setAccountData awaits the sync echo (41.6.0), so by the time
-      // joinRoom fires the invite->join transition, the store already reflects m.direct and the
-      // resulting channel.added classifies this room as a DM on the invitee side (no AccountData
-      // listener reclassifies after the fact). On a non-direct (channel) invite this is skipped and
-      // the room correctly stays a non-DM.
+      // Mark m.direct BEFORE joining (ADR-044 dec. 4). addDirectRoom puts the room in this session's overlay
+      // before its write starts (issue #421, F1), so by the time joinRoom fires the invite->join transition the
+      // resulting channel.added already classifies this room as a DM on the invitee side, without waiting for
+      // the map's sync echo (no AccountData listener reclassifies after the fact). The write itself has no echo
+      // wait either; its failure skips the join, as before. On a non-direct (channel) invite this is skipped
+      // and the room correctly stays a non-DM.
       if (direct && inviter) await this.addDirectRoom(inviter, roomId)
       // Owed before joining: the sync may deliver the join (and the ->join transition) before joinRoom
       // resolves. Whichever sees the join event first sends the receipt.
@@ -3355,6 +3808,14 @@ export class MatrixGateway {
       }
     }
     return names
+  }
+
+  // A people list read before #all counted as joined was empty, and the first sync emits nothing that re-reads it.
+  private checkOrgChannel(): void {
+    const current = this.joinedOrgChannel()?.roomId
+    const appeared = current !== undefined && this.lastOrgChannelId === undefined
+    this.lastOrgChannelId = current
+    if (appeared) this.emit({ t: 'people.changed' })
   }
 
   // Memoized: kindOf runs once per roster line, and the roster of the organization channel is the
@@ -3490,6 +3951,41 @@ export class MatrixGateway {
   // stream has not spoken about resolves 'offline' (unknown ≡ offline, no fourth state).
   getPresence(user: UserId): Presence {
     return this.presenceByUser.get(userIdToRaw(user)) ?? 'offline'
+  }
+
+  // ADR-114: the last connection state reported on the stream; 'connecting' before the first.
+  getConnectionState(): ConnectionState {
+    return this.reportedConnection
+  }
+
+  // ADR-115: what this session may do in a channel, read off the room state the SDK holds — no network.
+  // Name, topic, roles and archive are the state events each verb writes; adding is the SDK's own invite
+  // check; removing is the kick threshold against this session's level. Per channel, not per person: the
+  // server's per-target guardrail (a target at or above this session's level) still refuses the verb.
+  // Outside the room, in a DM or in a group conversation (ADR-094 dec. 13): nothing.
+  getChannelAbilities(id: ChannelId): ChannelAbilities {
+    const me = this.client?.getUserId()
+    const room = me ? this.client?.getRoom(channelIdToRaw(id) as string) : null
+    const ctx = room ? this.ctx() : null
+    if (!me || !room || !ctx || room.getMyMembership() !== 'join' || ctx.isDm(room.roomId) || isGroupConversation(room, ctx))
+      return NO_CHANNEL_ABILITIES
+    const state = room.currentState
+    return {
+      rename: state.maySendStateEvent(EventType.RoomName, me),
+      editTopic: state.maySendStateEvent(EventType.RoomTopic, me),
+      addPeople: room.canInvite(me),
+      removePeople: state.hasSufficientPowerLevelFor('kick', room.getMember(me)?.powerLevel ?? 0),
+      setRoles: state.maySendStateEvent(EventType.RoomPowerLevels, me),
+      archive: state.maySendStateEvent(ARCHIVED_EVENT, me),
+    }
+  }
+
+  // ADR-114: every connection state the ACL reports goes through here — the stream, the cards
+  // awaiting this person (ADR-099), and the point read.
+  private reportConnection(cs: ConnectionState): void {
+    this.reportedConnection = cs
+    this.emit({ t: 'connection.changed', state: cs })
+    this.awaiting.connection(cs === 'connected')
   }
 
   // ── Self-identity (ADR-039) ───────────────────────────────────────────────────────────────
@@ -4217,7 +4713,7 @@ export class MatrixGateway {
         event = new MatrixEvent(await client.fetchRoomEvent(roomId, realId))
       } catch (e) {
         if (e instanceof MatrixError && (e.errcode === 'M_NOT_FOUND' || e.errcode === 'M_FORBIDDEN')) return undefined
-        if (isNetworkFailure(e)) throw new ConnectionError()
+        if (this.isConnectionFailure(e, client)) throw new ConnectionError()
         throw e
       }
     }
@@ -4303,17 +4799,78 @@ export class MatrixGateway {
       await this.settleDecryption(events)
       const items = this.mainTimelineItems(events, ctx)
       const token = timeline.getPaginationToken(Direction.Backward)
-      return { items, nextCursor: token && !reachesRoomStart(events) ? (token as PageCursor) : undefined }
+      if (!token || reachesRoomStart(events)) return { items, nextCursor: undefined }
+      // Issue #421: a window without the room's start (reachesRoomStart), in a room whose transition to join this
+      // session saw after its first sync (joinsSeen: the room came by the join's sync, cut at the server's default),
+      // fetches one page back before answering — one request, no loop. Any other room never fetches here, even with
+      // the own join in its window: a session born after the entry gets the initial sync's window, and in a quiet
+      // room that window holds the join (CI run 45519024444). The page stays in the answer and does not enter the
+      // SDK's timeline, exactly like a page the cursor branch returns: id resolution, threads and the jump treat its
+      // events as they treat any older page already on screen. A deadline, a failure or a fetched event that does
+      // not decrypt answers as before.
+      if (this.joinsSeen.has(room.roomId)) {
+        const older = await this.firstReadFill(room.roomId, token).catch(() => undefined)
+        // The live window is read again after the request: what the stream delivered meanwhile (an event that
+        // finished decrypting, a new one) must be in the answer the screen replaces its list with.
+        const now = timeline.getEvents()
+        await this.settleDecryption(now)
+        const liveItems = this.mainTimelineItems(now, ctx)
+        if (!older) return { items: liveItems, nextCursor: token as PageCursor }
+        const live = new Set(now.map((ev) => ev.getId()))
+        const before = older.events.filter((ev) => !live.has(ev.getId()))
+        // PR #515 review: the page enters only if all of it reads. Someone added to a private channel with history
+        // cannot decrypt what came before the entry, and the page would open the conversation with rows of
+        // "message unavailable"; then the answer is the live window and its token, as without the fetch.
+        if (before.some(unreadable)) return { items: liveItems, nextCursor: token as PageCursor }
+        return { items: [...this.mainTimelineItems(before, ctx), ...liveItems], nextCursor: older.nextCursor }
+      }
+      return { items, nextCursor: token as PageCursor }
     }
 
     const res = await this.require().createMessagesRequest(
       channelIdToRaw(id),
       opts.cursor as string,
-      30,
+      TIMELINE_PAGE,
       Direction.Backward,
     )
+    const older = await this.olderPage(res.chunk, res.end)
+    return { items: this.mainTimelineItems(older.events, ctx), nextCursor: older.nextCursor }
+  }
+
+  // One /messages page back from the live window's token, under FIRST_READ_FILL_MS: the request's abortSignal and
+  // a race against the timer (the awaiting-approvals idiom).
+  private async firstReadFill(roomId: string, from: string): Promise<{ events: MatrixEvent[]; nextCursor: PageCursor | undefined }> {
+    const client = this.require()
+    const own = new AbortController()
+    const timer = setTimeout(() => own.abort(), FIRST_READ_FILL_MS)
+    try {
+      const ended = new Promise<never>((_, reject) => {
+        own.signal.addEventListener('abort', () => reject(new Error('first read fill ended')), { once: true })
+      })
+      // The finally aborts after a settled race too: nobody awaits `ended` then.
+      ended.catch(() => {})
+      const res = await Promise.race([
+        client.http.authedRequest<{ chunk: IEvent[]; end?: string }>(
+          Method.Get,
+          `/rooms/${encodeURIComponent(roomId)}/messages`,
+          { from, dir: Direction.Backward, limit: String(TIMELINE_PAGE) },
+          undefined,
+          { abortSignal: own.signal },
+        ),
+        ended,
+      ])
+      return await Promise.race([this.olderPage(res.chunk.map((raw) => ({ ...raw, room_id: roomId })), res.end), ended])
+    } finally {
+      clearTimeout(timer)
+      own.abort()
+    }
+  }
+
+  // A /messages page (dir=b, newest first) as the cursor branch reads it: chronological, decrypted, the author's
+  // bundled edit applied, the thread summaries noted; no cursor once the page holds the room's start.
+  private async olderPage(chunk: Partial<IEvent>[], end: string | undefined): Promise<{ events: MatrixEvent[]; nextCursor: PageCursor | undefined }> {
     // /messages dir=b yields newest→oldest; reverse to chronological for prepend-above.
-    const events = res.chunk.map((raw) => new MatrixEvent(raw)).reverse()
+    const events = chunk.map((raw) => new MatrixEvent(raw)).reverse()
     for (const ev of events) {
       const evId = ev.getId()
       const latest = latestReplyFromAggregation(ev)
@@ -4329,10 +4886,7 @@ export class MatrixGateway {
     for (const { ev, edit } of replaced) {
       if (!edit.isDecryptionFailure() && editAppliesTo(edit.getSender(), ev.getSender())) ev.makeReplaced(edit)
     }
-    return {
-      items: this.mainTimelineItems(events, ctx),
-      nextCursor: res.end && !reachesRoomStart(events) ? (res.end as PageCursor) : undefined,
-    }
+    return { events, nextCursor: end && !reachesRoomStart(events) ? (end as PageCursor) : undefined }
   }
 
   // ── Inbound: send ────────────────────────────────────────────────────────────────────────
@@ -5024,7 +5578,7 @@ export class MatrixGateway {
     if (bytes === undefined) {
       // The caught error is never attached (it is the SDK's): only its kind decides.
       if (signal?.aborted) throw signal.reason
-      if (isNetworkFailure(failure)) throw new ConnectionError()
+      if (this.isConnectionFailure(failure, client)) throw new ConnectionError()
       if (failure instanceof MatrixError && failure.errcode === 'M_LIMIT_EXCEEDED') throw failure
       throw new Error('media fetch failed')
     }
@@ -5172,7 +5726,7 @@ export class MatrixGateway {
         media: (ref, signal) => this.mediaBlob(ref, 'full', signal),
         mediaType: (ref) => this.mediaByToken.get(mediaRefToRaw(ref))?.mimetype,
         classify: (err) => {
-          if (isNetworkFailure(err) || err instanceof ConnectionError) return { kind: 'connection' }
+          if (this.isConnectionFailure(err, client) || err instanceof ConnectionError) return { kind: 'connection' }
           if (err instanceof RateLimitedError) return { kind: 'rateLimit' }
           if (err instanceof MatrixError && err.errcode === 'M_LIMIT_EXCEEDED') {
             const waitMs = rateLimitWaitMs(err)

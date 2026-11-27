@@ -84,6 +84,7 @@ function harness(members: User[] = [
       getChannel: (id) => CHANNELS[id],
       getSelectedId: () => undefined,
       select: () => {},
+      jumpTo: () => {},
       getMembers: async () => members,
     },
     env,

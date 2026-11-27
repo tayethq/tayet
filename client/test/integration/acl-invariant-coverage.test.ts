@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { createAcl } from '../../src/acl'
-import type { Acl, AclTelemetry, ChannelId, DomainEvent } from '../../src/acl'
+import type { Acl, AclTelemetry, ChannelId, DomainEvent, UserId } from '../../src/acl'
 import { HOMESERVER, synapseReachable, whoami, invite, leave, findOwnEvent } from '../support/synapse'
 import { registerUser } from '../support/escrow-harness'
 import { mintOidcSession } from '../support/mint-oidc'
@@ -260,7 +260,9 @@ describe.skipIf(!SYNAPSE)('gate do invariante — device zumbi + acesso novo dec
       // B entra na sala DEPOIS do nascimento da sessão — o servidor marca a membership no
       // evento (leave) e o reason cai na família stalled (norma 1); com a consulta desta
       // sessão de uso feita e a sessão ausente do import, o grau assenta em 'lost'.
-      await invite(tokenA, deadRoomRaw, mxidB)
+      // Added through the ACL verb (adendo de 24/Nov/2026): the product path, so the norm is
+      // proved on the invite the product actually sends.
+      await withRetry(() => alice.addMember(deadRoomId, mxidB as unknown as UserId))
       await until('controle: canal do controle negativo visível no B2 (auto-join)', async () =>
         (await bob2!.getChannels()).some((c) => c.id === deadRoomId) ? true : undefined,
       )

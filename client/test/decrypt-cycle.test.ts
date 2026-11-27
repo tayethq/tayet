@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { RoomEvent, MatrixEventEvent } from 'matrix-js-sdk'
+import { RoomEvent, MatrixEventEvent, ThreadEvent } from 'matrix-js-sdk'
 import { DecryptionFailureCode } from 'matrix-js-sdk/lib/crypto-api'
 import { MatrixGateway } from '../src/acl/internal/matrix-client'
 import { CustodyReconsult } from '../src/acl/internal/key-recovery'
@@ -136,7 +136,10 @@ function harness(opts?: { mode?: 'strict' | 'lenient'; encryptedRoom?: boolean; 
     getLiveTimeline: () => ({ getEvents: () => [] }),
     relations: { getChildEventsForEvent: () => undefined },
     hasEncryptionStateEvent: () => opts?.encryptedRoom ?? true,
+    on: (name: string, h: Handler) => roomHandlers.set(name, [...(roomHandlers.get(name) ?? []), h]),
+    off: () => {},
   }
+  const roomHandlers = new Map<string, Handler[]>()
   const handlers = new Map<string, Handler[]>()
   const uploadContent = vi.fn(async () => ({ content_uri: 'mxc://x/y' }))
   const sendMessage = vi.fn(async () => ({ event_id: '$sent' }))
@@ -163,10 +166,11 @@ function harness(opts?: { mode?: 'strict' | 'lenient'; encryptedRoom?: boolean; 
     telemetry: noopTelemetry,
     serverUrl: 'http://x',
   })
-  const g = gateway as unknown as { client: unknown; live: boolean; wireEvents(c: unknown): void }
+  const g = gateway as unknown as { client: unknown; live: boolean; wireEvents(c: unknown): void; attachRoom(r: unknown): void }
   g.client = fakeClient
   g.wireEvents(fakeClient)
   g.live = true
+  g.attachRoom(fakeRoom)
   const events: DomainEvent[] = []
   gateway.subscribe((e) => events.push(e))
   const fire = (name: string, ...args: unknown[]): void => {
@@ -175,10 +179,15 @@ function harness(opts?: { mode?: 'strict' | 'lenient'; encryptedRoom?: boolean; 
   const fireTimeline = (ev: unknown): void =>
     fire(RoomEvent.Timeline as string, ev, fakeRoom, false, false, { liveEvent: true })
   const fireDecrypted = (ev: unknown): void => fire(MatrixEventEvent.Decrypted as string, ev)
+  // ThreadEvent.NewReply on the room (Thread.onEcho in the SDK), with the thread the reply belongs to.
+  const fireNewReply = (ev: unknown, rootId: string): void => {
+    const thread = { id: rootId, length: 1, replyToEvent: null, rootEvent: undefined, room: fakeRoom }
+    for (const h of roomHandlers.get(ThreadEvent.NewReply as string) ?? []) (h as (...a: unknown[]) => void)(thread, ev)
+  }
   const register = (ev: Record<string, unknown>): void => {
     known.set((ev['getId'] as () => string)(), ev)
   }
-  return { gateway, events, fireTimeline, fireDecrypted, uploadContent, sendMessage, register }
+  return { gateway, events, fireTimeline, fireDecrypted, fireNewReply, uploadContent, sendMessage, register }
 }
 
 // No crypto/protocol vocabulary may survive into an emitted domain event (P1 — gate assert 7
@@ -211,13 +220,16 @@ describe('encrypted inbound pipeline — decrypt cycle (unit fixtures)', () => {
   })
 
   it('settled failure emits `unavailable` (no payload) with relations from the WIRE envelope', () => {
-    const { events, fireTimeline, fireDecrypted } = harness()
+    const { events, fireTimeline, fireDecrypted, fireNewReply } = harness()
     const enc = fakeEncryptedEvent({
       id: '$e2:tayet.local',
       wireRelates: { rel_type: 'm.thread', event_id: '$root:tayet.local' },
     })
 
+    // A thread reply reaches the stream through ThreadEvent.NewReply only (#421 N6): the timeline leaves it
+    // alone, NewReply defers it while it decrypts, and the settled failure emits it.
     fireTimeline(enc.ev)
+    fireNewReply(enc.ev, '$root:tayet.local')
     enc.settleFailure()
     fireDecrypted(enc.ev)
 

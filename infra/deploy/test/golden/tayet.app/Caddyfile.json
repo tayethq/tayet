@@ -91,6 +91,27 @@
 										{
 											"handle": [
 												{
+													"handler": "headers",
+													"response": {
+														"set": {
+															"Cache-Control": [
+																"no-cache"
+															]
+														}
+													}
+												}
+											],
+											"match": [
+												{
+													"path": [
+														"/sw.js"
+													]
+												}
+											]
+										},
+										{
+											"handle": [
+												{
 													"encodings": {
 														"gzip": {},
 														"zstd": {}
@@ -104,7 +125,7 @@
 											]
 										},
 										{
-											"group": "group10",
+											"group": "group13",
 											"handle": [
 												{
 													"handler": "subroute",
@@ -140,7 +161,7 @@
 											]
 										},
 										{
-											"group": "group10",
+											"group": "group13",
 											"handle": [
 												{
 													"handler": "subroute",
@@ -154,12 +175,55 @@
 															]
 														},
 														{
+															"group": "group5",
 															"handle": [
 																{
-																	"handler": "reverse_proxy",
-																	"upstreams": [
+																	"handler": "subroute",
+																	"routes": [
 																		{
-																			"dial": "escrow:8090"
+																			"handle": [
+																				{
+																					"handler": "reverse_proxy",
+																					"upstreams": [
+																						{
+																							"dial": "org:8091"
+																						}
+																					]
+																				}
+																			]
+																		}
+																	]
+																}
+															],
+															"match": [
+																{
+																	"path": [
+																		"/v1/people",
+																		"/v1/people/*",
+																		"/v1/agents",
+																		"/v1/agents/*",
+																		"/v1/org/*"
+																	]
+																}
+															]
+														},
+														{
+															"group": "group5",
+															"handle": [
+																{
+																	"handler": "subroute",
+																	"routes": [
+																		{
+																			"handle": [
+																				{
+																					"handler": "reverse_proxy",
+																					"upstreams": [
+																						{
+																							"dial": "escrow:8090"
+																						}
+																					]
+																				}
+																			]
 																		}
 																	]
 																}
@@ -177,7 +241,7 @@
 											]
 										},
 										{
-											"group": "group10",
+											"group": "group13",
 											"handle": [
 												{
 													"handler": "subroute",
@@ -255,7 +319,7 @@
 											]
 										},
 										{
-											"group": "group12",
+											"group": "group15",
 											"handle": [
 												{
 													"handler": "subroute",
@@ -294,7 +358,7 @@
 											]
 										},
 										{
-											"group": "group12",
+											"group": "group15",
 											"handle": [
 												{
 													"handler": "subroute",
@@ -333,7 +397,7 @@
 									"handler": "subroute",
 									"routes": [
 										{
-											"group": "group14",
+											"group": "group17",
 											"handle": [
 												{
 													"handler": "subroute",
@@ -379,7 +443,7 @@
 											]
 										},
 										{
-											"group": "group14",
+											"group": "group17",
 											"handle": [
 												{
 													"handler": "subroute",
@@ -415,7 +479,7 @@
 											]
 										},
 										{
-											"group": "group14",
+											"group": "group17",
 											"handle": [
 												{
 													"handler": "subroute",

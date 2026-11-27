@@ -43,6 +43,8 @@ const SAME_IN_BOTH: Record<string, string> = {
   'composer.link#': 'loanword',
   'composer.linkUrl#': 'acronym',
   'channel.roleAdmin#': 'loanword',
+  'admin.roleAdmin#': 'loanword',
+  'admin.pillAdmins#': 'loanword',
   'people.fieldEmail#': 'loanword',
   'account.languagePt#': "each language is named in its own words, in both catalogs",
   'account.languageEn#': "each language is named in its own words, in both catalogs",

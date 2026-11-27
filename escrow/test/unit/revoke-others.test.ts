@@ -70,7 +70,9 @@ function fakeMas(sessions: FakeSession[], opts: { failFinishOf?: string; pageSiz
       const user = url.searchParams.get('filter[user]')
       const rows = sessions.filter((s) => s.kind === list[1] && s.user === user && !s.finished)
       const after = Number(url.searchParams.get('page[after]') ?? 0)
-      const size = opts.pageSize ?? rows.length
+      // Browser sessions are drained from the first page, never paged (MAS 1.27.0 cursor loop): the
+      // forced page size applies to the paged kinds; user-sessions honors the requested page[first].
+      const size = list[1] === 'user-sessions' ? Number(url.searchParams.get('page[first]')) : (opts.pageSize ?? rows.length)
       const page = rows.slice(after, after + size)
       return json(200, {
         data: page.map((s) => ({
@@ -262,5 +264,28 @@ describe('masAdmin', () => {
     expect(deviceOfScope('openid urn:matrix:client:device:XYZ urn:matrix:client:api:*')).toBe('XYZ')
     expect(deviceOfScope('openid')).toBeNull()
     expect(deviceOfScope(undefined)).toBeNull()
+  })
+})
+
+// People and agents moved to the org service. With the MAS admin client wired, the
+// escrow still answers their routes with 404, before any introspection or MAS call.
+describe('people and agents are not the escrow’s', () => {
+  it.each([
+    ['GET', '/v1/people/me'],
+    ['POST', '/v1/people'],
+    ['POST', '/v1/agents'],
+    ['POST', '/v1/agents/x/reissue'],
+  ])('%s %s → 404', async (method, path) => {
+    const mas = fakeMas(sessions)
+    await start(mas.admin)
+    const res = await fetch(`${base}${path}`, {
+      method,
+      headers: { Authorization: 'Bearer tok-ana', 'content-type': 'application/json' },
+      ...(method === 'POST' ? { body: '{}' } : {}),
+    })
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'not_found' })
+    expect(mas.calls).toEqual([])
+    expect(await audit()).toEqual([])
   })
 })

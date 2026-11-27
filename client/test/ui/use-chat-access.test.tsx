@@ -24,6 +24,8 @@ function fakeAcl(devices: () => Device[], emitRef: { emit?: (e: DomainEvent) => 
     currentUser: async () => ({ id: '@me:tayet.local' as unknown as UserId, displayName: 'Me' }),
     getThreadUnread: async () => ({ unread: false }),
     getTimeline: async () => ({ items: [], nextCursor: undefined }),
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     subscribe: (handler: (e: DomainEvent) => void) => {
       emitRef.emit = handler
       return noopUnsub

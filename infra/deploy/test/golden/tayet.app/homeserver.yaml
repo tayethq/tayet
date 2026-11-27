@@ -47,6 +47,11 @@ trusted_key_servers:
 # conversa com o dogfood. Aditivo/reversível — gatilho de religar no PLANO §0.2/§6.
 federation_domain_whitelist: []
 
+# Outbound requests to private addresses stay blocked (the default ip_range_blacklist is untouched);
+# the one exception is the push service, on its own network (ADR-117 dec. 7), and only its address.
+ip_range_whitelist:
+  - 10.213.77.3/32
+
 # Delegação de auth ao MAS (top-level, não experimental_features.msc3861). O secret casa
 # com matrix.secret na config do MAS (mesmo valor renderizado nos dois lados).
 matrix_authentication_service:

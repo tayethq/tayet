@@ -158,11 +158,12 @@ upstream_oauth2:
           action: require
           template: "{{ user.email }}"
 
-# ADR-082 dec. 3: só este client pode pedir urn:mas:admin (a policy padrão do MAS recusa os demais).
+# Only these clients (escrow and org) may request urn:mas:admin (the MAS default policy refuses the others).
 policy:
   data:
     admin_clients:
       - 000000000000000000ESCADM1N
+      - 0000000000000000000RGADM1N
 
 # Fatia C1 (escrow): cliente de introspecção RFC 7662 do serviço de escrow — segredo
 # throwaway, local-only, mesma classe de aviso do README. A entrada vive NA config
@@ -176,6 +177,14 @@ clients:
   - client_id: 000000000000000000ESCADM1N
     client_auth_method: client_secret_basic
     client_secret: tayet-dev-stack-throwaway-escrow-mas-admin
+  # The org service's own introspection and admin clients. Throwaway secrets, same
+  # class of warning as the escrow's above.
+  - client_id: 00000000000000000000RG1NTR
+    client_auth_method: client_secret_basic
+    client_secret: tayet-dev-stack-throwaway-org-introspection
+  - client_id: 0000000000000000000RGADM1N
+    client_auth_method: client_secret_basic
+    client_secret: tayet-dev-stack-throwaway-org-mas-admin
   # Web client (SPA) — público, authorization_code + PKCE, sem secret (ADR-032 §Decisão 1). Estático
   # na config porque o `config sync --prune` do up removeria um client de DCR. redirect_uri = origin
   # de DEV do SPA (Vite, raiz — o callback é detectado no Boot, sem router, ADR-032 §Decisão 3). O pin

@@ -74,6 +74,7 @@ function harness(opts: { members?: () => Promise<User[]>; permission?: Notificat
     permission: opts.permission ?? ('granted' as NotificationPermissionState),
     focusCalls: 0,
     selectCalls: [] as ChannelId[],
+    jumpCalls: [] as Array<{ channelId: ChannelId; message: Message }>,
     membersCalls: 0,
   }
   const env: NotifierEnv = {
@@ -100,6 +101,7 @@ function harness(opts: { members?: () => Promise<User[]>; permission?: Notificat
     getChannel: (id) => CHANNELS[id],
     getSelectedId: () => state.selected,
     select: (id) => void state.selectCalls.push(id),
+    jumpTo: (channelId, message) => void state.jumpCalls.push({ channelId, message }),
     getMembers: () => {
       state.membersCalls++
       return opts.members ? opts.members() : Promise.resolve([{ id: ALICE, displayName: 'Alice Souza', kind: 'member' }])
@@ -292,7 +294,56 @@ describe('notifier — suppression and click (dec. 4)', () => {
     h.shown[0]!.handle.onclick?.(new Event('click'))
     expect(h.state.focusCalls).toBe(1)
     expect(h.state.selectCalls).toEqual([DM])
+    expect(h.state.jumpCalls).toEqual([])
     expect(h.shown[0]!.handle.closed).toBe(true)
+  })
+
+  // ADR-073 addendum (2026-11-23): a thread reply's notification opens the thread on the reply.
+  it('click on a thread reply jumps to it (message and channel), without selecting; focus and close stay', async () => {
+    const h = harness()
+    const reply = msg(DM, { threadParent: mid('$root') })
+    h.notifier.handle(received(reply))
+    await h.flush()
+    h.shown[0]!.handle.onclick?.(new Event('click'))
+    expect(h.state.jumpCalls).toEqual([{ channelId: DM, message: reply }])
+    expect(h.state.selectCalls).toEqual([])
+    expect(h.state.focusCalls).toBe(1)
+    expect(h.shown[0]!.handle.closed).toBe(true)
+  })
+
+  it('click on a thread reply mentioning me in a channel jumps; a channel message mentioning me selects', async () => {
+    const h = harness()
+    const reply = msg(ORG, { threadParent: mid('$root'), mentionsMe: true })
+    h.notifier.handle(received(reply))
+    h.notifier.handle(received(msg(ORG, { mentionsMe: true })))
+    await h.flush()
+    expect(h.shown).toHaveLength(2)
+    for (const s of h.shown) s.handle.onclick?.(new Event('click'))
+    expect(h.state.jumpCalls).toEqual([{ channelId: ORG, message: reply }])
+    expect(h.state.selectCalls).toEqual([ORG])
+  })
+
+  it('expired UTD: the generic notification of a thread reply jumps; of a conversation message, selects', async () => {
+    const h = harness()
+    const reply = msg(DM, { body: unavailable, threadParent: mid('$root') })
+    h.notifier.handle(received(reply))
+    h.notifier.handle(received(msg(DM, { body: unavailable })))
+    h.advance(UTD_WAIT_MS)
+    await h.flush()
+    expect(h.shown.map((s) => s.body)).toEqual(['Nova mensagem', 'Nova mensagem'])
+    for (const s of h.shown) s.handle.onclick?.(new Event('click'))
+    expect(h.state.jumpCalls).toEqual([{ channelId: DM, message: reply }])
+    expect(h.state.selectCalls).toEqual([DM])
+  })
+
+  it('suppression is unchanged for a thread reply: selected + visible + focused, no thread screen → nothing', async () => {
+    const h = harness()
+    h.state.selected = DM
+    h.state.visible = true
+    h.state.focused = true
+    h.notifier.handle(received(msg(DM, { threadParent: mid('$root') })))
+    await h.flush()
+    expect(h.shown).toHaveLength(0)
   })
 })
 

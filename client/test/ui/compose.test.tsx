@@ -47,7 +47,7 @@ describe('NewConversationDialog — behaviour (Track U/U3)', () => {
     fireEvent.click(getByRole('button', { name: copy.newConversation.createChannel }))
 
     await waitFor(() =>
-      expect(onCreateChannel).toHaveBeenCalledWith({ name: 'launch', kind: 'private', topic: 'ship it' }),
+      expect(onCreateChannel).toHaveBeenCalledWith({ name: 'launch', kind: 'private', topic: 'ship it' }, expect.any(Function)),
     )
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
   })
@@ -59,7 +59,7 @@ describe('NewConversationDialog — behaviour (Track U/U3)', () => {
     fireEvent.change(getByLabelText(copy.newConversation.name), { target: { value: 'general' } })
     fireEvent.click(getByRole('button', { name: copy.newConversation.createChannel }))
 
-    await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'general', kind: 'public' }))
+    await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'general', kind: 'public' }, expect.any(Function)))
   })
 
   it('keeps the dialog open with an inline error when the verb rejects', async () => {
@@ -95,7 +95,7 @@ describe('NewConversationDialog — behaviour (Track U/U3)', () => {
     expect(submit.disabled).toBe(false)
     fireEvent.click(submit)
 
-    await waitFor(() => expect(onOpenDirectMessage).toHaveBeenCalledWith(uid('@carol:tayet.local')))
+    await waitFor(() => expect(onOpenDirectMessage).toHaveBeenCalledWith(uid('@carol:tayet.local'), expect.any(Function)))
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
   })
 

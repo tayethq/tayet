@@ -62,7 +62,7 @@ describe('the screen (§11.1)', () => {
       `Marina Alves ${copy.channel.you}`,
       'Bruna Lima',
       'Rafael Souza',
-      `Ledger · ${fill(copy.agent.operatedBy, { name: 'Bruna Lima' })}`,
+      `Ledger${fill(copy.agent.operatedBy, { name: 'Bruna Lima' })}`,
     ])
     expect(v.rows()[3]!.querySelector('[data-agent-avatar]')).not.toBeNull()
     expect(v.details()!.querySelector('select, .channel-management-panel__member-remove')).toBeNull()
@@ -340,7 +340,9 @@ describe('R1 and R2: the section head and the suffix of a row', () => {
     const [label, suffix] = [...name.children]
     expect(name.childNodes).toHaveLength(2)
     expect(label!.textContent).toBe('Ledger')
-    expect(suffix!.textContent).toContain(fill(copy.agent.operatedBy, { name: 'Bruna Lima' }))
+    expect(suffix!.textContent).toBe(fill(copy.agent.operatedBy, { name: 'Bruna Lima' }))
+    // §13.6 item 3: the operator's line no longer depends on fitting beside the name.
+    expect(suffix!.classList.contains('channel-management-panel__member-sub')).toBe(true)
     expect(rule('.group-screen .channel-management-panel__member-name')).toContain('flex-wrap: wrap;')
     expect(rule('.group-screen .channel-management-panel__member-name > span')).toContain('text-overflow: ellipsis;')
   })

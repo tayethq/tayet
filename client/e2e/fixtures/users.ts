@@ -20,7 +20,10 @@
 // only to copy-text.spec.ts; ted and ula only to actions.narrow.spec.ts; ivy and joe only to composer.narrow.spec.ts; kit and lou only to
 // search.narrow.spec.ts; max and ned only to compose.narrow.spec.ts; gael, iris and noe only to
 // group-profile.narrow.spec.ts; bia and caio only to agent-form.narrow.spec.ts; luz and rui only to
-// awaiting.narrow.spec.ts.
+// awaiting.narrow.spec.ts; edu and flo only to notifications.narrow.spec.ts; tito, vani and yara only to
+// channel-details.narrow.spec.ts; cris and duda only to connection.narrow.spec.ts; beto, ciro and enzo only to
+// channel-abilities.spec.ts; rafa and sofi only to service-worker.push.spec.ts; nina and omar only to
+// notifications-row.push.spec.ts; iara, davi and mila only to org-admin.spec.ts.
 export interface E2eUser {
   /** Login no form do Dex (password DB: o campo é o email). */
   email: string
@@ -128,6 +131,34 @@ export const BIA: E2eUser = { email: 'bia@tayet.local', password: 'biapass123' }
 export const CAIO: E2eUser = { email: 'caio@tayet.local', password: 'caiopass123' }
 export const LUZ: E2eUser = { email: 'luz@tayet.local', password: 'luzpass123' }
 export const RUI: E2eUser = { email: 'rui@tayet.local', password: 'ruipass123' }
+// Pair of notifications.narrow.spec.ts only (phone project): edu is notified at 390×844 and taps a thread reply's
+// notification, flo writes to edu on a wide window.
+export const EDU: E2eUser = { email: 'edu@tayet.local', password: 'edupass123' }
+export const FLO: E2eUser = { email: 'flo@tayet.local', password: 'flopass123' }
+// channel-details.narrow.spec.ts (phone project): tito administers, vani is a member, yara is added and removed.
+export const TITO: E2eUser = { email: 'tito@tayet.local', password: 'titopass123' }
+export const VANI: E2eUser = { email: 'vani@tayet.local', password: 'vanipass123' }
+export const YARA: E2eUser = { email: 'yara@tayet.local', password: 'yarapass123' }
+// Pair of connection.narrow.spec.ts only (phone project): cris (org admin) creates the agent and watches the sidebar's
+// connection line on a wide window, duda watches the connection strip at 390×844.
+export const CRIS: E2eUser = { email: 'cris@tayet.local', password: 'crispass123' }
+export const DUDA: E2eUser = { email: 'duda@tayet.local', password: 'dudapass123' }
+// Trio of channel-abilities.spec.ts only (ADR-115): beto creates a private channel and adds ciro, a member who adds
+// enzo; enzo, a guest (ORG_GUESTS in dev-stack.sh), creates his own channel, renames it and archives it.
+export const BETO: E2eUser = { email: 'beto@tayet.local', password: 'betopass123' }
+export const CIRO: E2eUser = { email: 'ciro@tayet.local', password: 'ciropass123' }
+export const ENZO: E2eUser = { email: 'enzo@tayet.local', password: 'enzopass123' }
 // The iPhone's Safari as it names itself (PLANO-MOBILE M7 I1), for the specs of the install sheet.
 export const IPHONE_SAFARI_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1'
+
+// Pair of service-worker.push.spec.ts only (the push project, ADR-117): sofi writes, rafa is notified.
+export const RAFA: E2eUser = { email: 'rafa@tayet.local', password: 'rafapass123' }
+export const SOFI: E2eUser = { email: 'sofi@tayet.local', password: 'sofipass123' }
+export const NINA: E2eUser = { email: 'nina@tayet.local', password: 'ninapass123' }
+export const OMAR: E2eUser = { email: 'omar@tayet.local', password: 'omarpass123' }
+// Trio of org-admin.spec.ts only (PLANO-ADMIN slice 1c): iara is the admin (pre-created by `up` for the flag); davi
+// and mila are members, pre-created so davi can be promoted before his first login.
+export const IARA: E2eUser = { email: 'iara@tayet.local', password: 'iarapass123' }
+export const DAVI: E2eUser = { email: 'davi@tayet.local', password: 'davipass123' }
+export const MILA: E2eUser = { email: 'mila@tayet.local', password: 'milapass123' }

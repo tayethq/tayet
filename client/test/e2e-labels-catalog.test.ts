@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { copy, fill } from './support/copy'
 import {
   APP,
+  CONNECTION,
   LIST,
   NEW_CONVERSATION,
   GROUP,
@@ -16,10 +17,12 @@ import {
   SESSION,
   ACCOUNT,
   ACCOUNT_PHONE,
+  DEVICE_NOTIFICATIONS,
   DATA_EXPORT,
   PROFILE_EDITOR,
   PROFILE,
   PEOPLE,
+  ADMIN,
   AGENTS,
   APPROVAL,
   AWAITING,
@@ -39,6 +42,7 @@ import { en } from '../src/ui/i18n/en'
 describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
   it('shell, list and search', () => {
     expect(APP).toEqual({ title: APP_NAME, account: copy.shell.account })
+    expect(CONNECTION).toEqual({ connecting: copy.shell.connecting, reconnecting: copy.shell.reconnecting, offline: copy.shell.offline })
     expect(LIST.unread(3)).toBe(fill(copy.list.unread.other, { n: 3 }))
     expect(LIST.unread(1)).toBe(fill(copy.list.unread.one, { n: 1 }))
     for (const n of [1, 3]) expect(`cid ${LIST.unread(n)}`).toMatch(LIST.unreadSuffix)
@@ -108,12 +112,52 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
     })
   })
 
+  it('admin (slice 1c)', () => {
+    expect(ADMIN.actionsFor('Ana')).toBe(fill(copy.admin.actionsFor, { name: 'Ana' }))
+    expect(ADMIN.promoteTitle('Ana')).toBe(fill(copy.admin.promoteTitle, { name: 'Ana' }))
+    expect(ADMIN.self('Ana')).toBe(fill(copy.admin.self, { name: 'Ana' }))
+    const { actionsFor: _a, promoteTitle: _p, self: _s, ...admin } = ADMIN
+    expect(admin).toEqual({
+      entry: copy.admin.entry,
+      nav: copy.admin.nav,
+      back: copy.admin.back,
+      show: copy.admin.show,
+      pillAdmins: copy.admin.pillAdmins,
+      roleAdmin: copy.admin.roleAdmin,
+      withoutAccess: copy.admin.withoutAccess,
+      makeAdmin: copy.admin.makeAdmin,
+      dropAdmin: copy.admin.dropAdmin,
+      removeFromOrg: copy.admin.removeFromOrg,
+      onlyAdmin: copy.admin.onlyAdmin,
+      demoteSelfTitle: copy.admin.demoteSelfTitle,
+      cancel: copy.account.cancel,
+      overview: copy.admin.overview,
+      peopleAndAgents: copy.admin.peopleAndAgents,
+      admins: copy.admin.admins,
+      manageInPeople: copy.admin.manageInPeople,
+      onlyYou: copy.admin.onlyYou,
+      addAdmin: copy.admin.addAdmin,
+      pillAll: copy.admin.pillAll,
+      pillOrganization: copy.admin.pillOrganization,
+      pillGuests: copy.admin.pillGuests,
+      pillPending: copy.admin.pillPending,
+      pillAgents: copy.admin.pillAgents,
+      countOrganization: copy.admin.countOrganization,
+      countGuests: copy.admin.countGuests,
+      countPending: copy.admin.countPending,
+      countAgents: copy.admin.countAgents,
+      countSeeListSuffix: fill(copy.admin.countSeeList, { n: 0, label: '' }).replace(/^0 /, ''),
+    })
+  })
+
   it('agents', () => {
     expect(AGENTS.operatedBy('Ana')).toBe(fill(copy.agent.operatedBy, { name: 'Ana' }))
     expect(AGENTS.edit('Ana')).toBe(fill(copy.agent.editLabel, { name: 'Ana' }))
     expect(AGENTS.remove('Ana')).toBe(fill(copy.agent.removeLabel, { name: 'Ana' }))
     const { operatedBy: _o, edit: _e, remove: _r, ...agents } = AGENTS
     expect(agents).toEqual({
+      editItem: copy.agent.edit,
+      removeItem: copy.agent.remove,
       mark: copy.agent.label,
       add: copy.agent.add,
       createTitle: copy.agent.createTitle,
@@ -161,11 +205,13 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
     expect(MANAGE.open('#board')).toBe(fill(copy.channel.manageNamed, { name: '#board' }))
     expect(MANAGE.role('Ana')).toBe(fill(copy.channel.roleFor, { name: 'Ana' }))
     expect(MANAGE.remove('Ana')).toBe(fill(copy.channel.removeNamed, { name: 'Ana' }))
-    const { open: _o, role: _r, remove: _m, ...fixed } = MANAGE
+    expect(MANAGE.noResults('zz')).toBe(fill(copy.people.noResults, { term: 'zz' }))
+    const { open: _o, role: _r, remove: _m, noResults: _n, ...fixed } = MANAGE
     expect(fixed).toEqual({
       addMember: copy.channel.addMember,
       members: copy.channel.members,
       close: copy.channel.closeManage,
+      closePicker: copy.channel.close,
       name: copy.channel.name,
       topic: copy.channel.topic,
       saved: copy.channel.saved,
@@ -180,6 +226,15 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
       confirmLeave: copy.channel.leave,
       archive: copy.channel.archiveTitle,
       confirmArchive: copy.channel.archive,
+      details: copy.channel.details,
+      openProfile: copy.channel.openProfile,
+      roleLabel: copy.channel.role,
+      filter: copy.newConversation.filterPeople,
+      clearFilter: copy.people.clearFilter,
+      noCandidates: copy.channel.noCandidates,
+      removeTitle: copy.channel.removeTitle,
+      cancel: copy.channel.cancel,
+      failed: copy.channel.failed,
     })
   })
 
@@ -314,6 +369,14 @@ describe('e2e labels mirror the catalog (ADR-080 D5)', () => {
       resetNotDone: copy.account.resetNotDone,
       resetTryAgain: copy.account.resetTryAgain,
       resetBannerTitle: copy.account.resetBannerTitle,
+    })
+    expect(DEVICE_NOTIFICATIONS).toEqual({
+      section: copy.account.notifications,
+      device: copy.account.notificationsDevice,
+      off: copy.account.notificationsOff,
+      on: copy.account.notificationsOn,
+      turnOn: copy.account.notificationsTurnOn,
+      turnOff: copy.account.notificationsTurnOff,
     })
     expect(PROFILE_EDITOR).toEqual({
       dialog: copy.profile.editTitle,

@@ -15,6 +15,13 @@ export const APP = {
   account: 'Sua conta',
 } as const
 
+// The connection state, in the strip (narrow) and in the sidebar's line (wide). Fonte: Workspace.tsx:70-74.
+export const CONNECTION = {
+  connecting: 'Conectando…',
+  reconnecting: 'Reconectando…',
+  offline: 'Sem conexão',
+} as const
+
 // The sidebar. Fonte: ChannelList.tsx:33-37 (sections, add buttons), :73 (nav), :192 (archived),
 // :275 (dot, pill); ChannelLabel.tsx:13 (private mark — the list's and the channel header's).
 export const LIST = {
@@ -82,6 +89,7 @@ export const MANAGE = {
   addMember: 'Adicionar pessoa',
   members: 'Pessoas',
   close: 'Fechar gerenciamento do canal',
+  closePicker: 'Fechar', // the picker's ✕ and its footer (§9 item 4)
   name: 'Nome',
   topic: 'Tópico',
   saved: 'Salvo',
@@ -98,6 +106,17 @@ export const MANAGE = {
   confirmLeave: 'Sair',
   archive: 'Arquivar canal',
   confirmArchive: 'Arquivar',
+  // The narrow window (channel-management.md §13.2) and the picker's filter (§9 item 6).
+  details: 'Detalhes do canal',
+  openProfile: 'Ver perfil',
+  roleLabel: 'Papel',
+  filter: 'Filtrar por nome',
+  clearFilter: 'Limpar',
+  noResults: (term: string) => `Ninguém encontrado para “${term}”.`,
+  noCandidates: 'Nenhuma pessoa disponível para adicionar',
+  removeTitle: 'Remover pessoa',
+  cancel: 'Cancelar',
+  failed: 'Não foi possível concluir. Tente de novo.', // a confirm whose verb the server refused
 } as const
 
 
@@ -300,6 +319,17 @@ export const ACCOUNT_PHONE = {
   notNow: 'Agora não',
 } as const
 
+// "Notificações" in "Sua conta" (account-access.md §16; ADR-117, addendum of 26/Nov/2026). Fonte: AccountSettings.tsx
+// (NotificationsSection).
+export const DEVICE_NOTIFICATIONS = {
+  section: 'Notificações',
+  device: 'Neste aparelho',
+  off: 'Desativadas',
+  on: 'Ativadas',
+  turnOn: 'Ativar',
+  turnOff: 'Desativar',
+} as const
+
 // "Seus dados" → "Exportar seus dados" (manifesto account-access.md §12). Fonte: AccountSettings.tsx (entry),
 // DataExportDialog.tsx (dialog, actions, end titles). `readmeFirstLine` is the first line of the README.txt
 // inside the zip (the catalog's dataExport.readme).
@@ -343,8 +373,8 @@ export const PROFILE = {
   presenceOffline: 'Offline',
 } as const
 
-// "Pessoas" (manifesto account-access.md §9). Fonte: AccountSettings.tsx (section, rows),
-// InvitePersonDialog.tsx (form, success).
+// "Pessoas" (manifesto account-access.md §9; on the wide window inside the Admin since slice 1c). Fonte:
+// AccountSettings.tsx (section), AdminPeople.tsx (rows), OrgAdmin.tsx (confirms), InvitePersonDialog.tsx (form, success).
 export const PEOPLE = {
   section: 'Organização',
   title: 'Pessoas',
@@ -365,6 +395,45 @@ export const PEOPLE = {
   cancelInviteOf: (name: string) => `Cancelar convite de ${name}`,
 } as const
 
+// A Admin da organização (organization-admin.md §2.1, §2.3, §4; PLANO-ADMIN slice 1c). Fonte: OrgAdmin.tsx (shell,
+// confirms) and AdminPeople.tsx (pills, table, ⋯ menu). "Pessoas" opens from "Administrar organização" in "Sua conta".
+export const ADMIN = {
+  entry: 'Administrar organização',
+  nav: 'Organização',
+  back: 'Voltar às conversas',
+  show: 'Mostrar',
+  pillAdmins: 'Admins',
+  roleAdmin: 'Admin',
+  withoutAccess: 'Sem acesso válido',
+  actionsFor: (name: string) => `Ações para ${name}`,
+  makeAdmin: 'Tornar admin',
+  dropAdmin: 'Deixar de ser admin',
+  removeFromOrg: 'Remover da organização',
+  onlyAdmin: 'Você é o único admin. Torne outra pessoa admin antes.',
+  promoteTitle: (name: string) => `Tornar ${name} admin?`,
+  demoteSelfTitle: 'Deixar de ser admin?',
+  cancel: 'Cancelar',
+  self: (name: string) => `${name} (você)`,
+  // Slice 1d: the Visão geral (organization-admin.md §2.2, §4; PLANO-ADMIN §8.8 V2–V6).
+  overview: 'Visão geral',
+  peopleAndAgents: 'Pessoas e agentes',
+  admins: 'Administradores',
+  manageInPeople: 'Gerenciar em Pessoas',
+  onlyYou: 'Só você administra a organização. Se você perder o acesso, ninguém mais consegue convidar nem remover pessoas.',
+  addAdmin: 'Adicionar admin',
+  pillAll: 'Todas',
+  pillOrganization: 'Da organização',
+  pillGuests: 'Convidados',
+  pillPending: 'Pendentes',
+  pillAgents: 'Agentes',
+  countOrganization: { one: 'Pessoa da organização', other: 'Pessoas da organização' },
+  countGuests: { one: 'Convidado', other: 'Convidados' },
+  countPending: { one: 'Convite pendente', other: 'Convites pendentes' },
+  countAgents: { one: 'Agente', other: 'Agentes' },
+  // "{n} {label}, ver na lista": the card's accessible name.
+  countSeeListSuffix: ', ver na lista',
+} as const
+
 // Agentes (manifesto account-access.md §11; ADR-086 Proposto). Fonte: AgentAvatar.tsx (rótulo
 // acessível), PeoplePanel.tsx (ações da linha) e AgentDialog.tsx (estados). A marca é o avatar
 // (`[data-agent-avatar]` + `[data-agent-mark]`), nunca um selo de texto.
@@ -374,6 +443,9 @@ export const AGENTS = {
   add: 'Adicionar agente',
   edit: (name: string) => `Editar ${name}`,
   remove: (name: string) => `Remover ${name}`,
+  // The agent row's ⋯ items in the Admin (organization-admin.md §2.3 item 5).
+  editItem: 'Editar',
+  removeItem: 'Remover',
   createTitle: 'Adicionar agente',
   createdTitle: 'Agente criado',
   editTitle: 'Editar agente',

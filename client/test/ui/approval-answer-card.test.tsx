@@ -140,6 +140,8 @@ function fakeAcl(initial: Message, answer: Acl['answerApproval']): { acl: Acl; e
     getTimeline: async () => ({ items: [initial] }),
     getMembers: async () => [{ user: ME, role: 'admin' as const, state: 'active' as const, self: true }],
     getPresence: () => 'offline' as const,
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     getDevices: async () => [],
     currentUser: async () => ME,
     getMyProfile: async () => ({ fullName: ME.displayName }),
@@ -212,6 +214,11 @@ function fakeAcl(initial: Message, answer: Acl['answerApproval']): { acl: Acl; e
     updateAgent: noop,
     reissueAgent: () => Promise.reject(new Error('unused')),
     removeAgent: noop,
+    getOrgAccess: () => Promise.reject(new Error('unused')),
+    setOrgAdmin: noop,
+    enableDeviceNotifications: noop,
+    disableDeviceNotifications: noop,
+    resolveNotificationTarget: async () => undefined,
     signOut: noop,
   }
   return { acl, emit }

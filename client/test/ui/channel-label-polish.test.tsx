@@ -100,8 +100,10 @@ function renderPanel(channel: Channel, onUpdateChannel: (id: ChannelId, patch: C
   return render(
     <MediaProvider resolve={async () => ({ url: '', release: () => {} })}>
       <ChannelManagementPanel
+        abilities={{ rename: true, editTopic: true, addPeople: true, removePeople: true, setRoles: true, archive: true }}
         channel={channel}
-        members={[]}
+        // The reader, admin, with every answer (ADR-115: the fields are editable behind rename and editTopic).
+        members={[{ user: { id: 'me' as unknown as UserId, displayName: 'Eu', kind: 'member' }, role: 'admin', state: 'active', self: true }]}
         onUpdateChannel={onUpdateChannel}
         onArchiveChannel={async () => {}}
         onLeaveChannel={async () => {}}

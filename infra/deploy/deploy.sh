@@ -3,8 +3,8 @@
 # deploy.sh — orquestra a stack de PRODUÇÃO do Tayet sob o domínio base do deployment
 # (ADR-046/047/048 e ADR-095; o deployment de referência usa `tayet.app`). Análogo do
 # infra/dev-stack/dev-stack.sh, mas para produção:
-#   postgres + synapse + mas + dex + escrow + caddy + agent — com secrets FRESCOS gerados fora
-#   do repo (gitignored), TLS automático via Caddy. O Dex é o IdP do dogfood (ADR-048).
+#   postgres + synapse + mas + dex + escrow + org + push + caddy + agent, with FRESH secrets generated outside
+#   the repo (gitignored) and automatic TLS through Caddy. Dex is the dogfood IdP.
 #
 # Alvo de execução: host Linux (VPS). Mas o GATE da fatia roda no macOS/BSD do owner →
 # este script é 100% BSD-safe: nenhum `sed -i`, nenhum flag GNU-only; renderização
@@ -23,7 +23,14 @@
 #                         # 2ª fase: provisiona o cofre, garante o token e sobe o agente de custódia (ADR-069)
 #   ./deploy.sh down      # derruba PRESERVANDO volumes (JAMAIS -v — ver comentário no cmd_down)
 #   ./deploy.sh check     # read-only: containers + alias #all + renders em dia + config do Synapse = render
-#                         # + healthz e StartedAt do escrow + último backup + agente; falha nos dois do render
+#                         # + healthz and StartedAt of escrow, org and push + last backup + agent; fails on the two render items
+#   ./deploy.sh backup [DIR]  # stack up: DIR/<UTC>/keys/ (secrets.tgz) and DIR/<UTC>/data/ (dumps + synapsedata,
+#                         # escrowdata and orgdata), each with a MANIFEST; default DIR $HOME/tayet-backup
+#   ./deploy.sh restore KEYS_DIR DATA_DIR  # no secrets/, stack down: checks both manifests, puts secrets/ back,
+#                         # restores both databases and the volumes, empties agentdata; then up and check
+#   ./deploy.sh promote-admin EMAIL  # stack up: makes the active account with this email an organization admin;
+#                         # recovery when nobody can administer the organization. Refuses an account that is
+#                         # not a live member of #all (guest, removed, agent, deactivated or locked)
 #
 # NÃO há `reset`/`down -v`: produção não tem mundo descartável (PLANO-TRILHA-A §2).
 set -euo pipefail
@@ -85,6 +92,12 @@ AGENT_DIR="$REPO_ROOT/agent"
 AGENT_ENV="$SECRETS_DIR/agent.env"
 AGENT_TOKEN_FILE="$SECRETS_DIR/agent-token.secret"
 AGENT_DISABLED_FLAG="$SECRETS_DIR/agent.disabled"
+# Push key pair of this installation (ADR-117 dec. 8): PUSH_VAPID_PRIVATE_KEY and PUSH_VAPID_PUBLIC_KEY,
+# base64url, env_file of the push service; the public key is also baked into the client by `build`.
+PUSH_ENV="$SECRETS_DIR/push.env"
+# Client secrets of the org service: ORG_CLIENT_SECRET (introspection) and
+# ORG_MAS_ADMIN_CLIENT_SECRET (MAS admin API), env_file of the org service and rendered into the MAS.
+ORG_ENV="$SECRETS_DIR/org.env"
 
 # Imagem do MAS (1.27.0) — digest fixado em TRÊS lugares: aqui, infra/deploy/compose.yaml e
 # infra/dev-stack/compose.yaml. Usada só no `secrets` para rodar `mas-cli config generate`
@@ -195,7 +208,7 @@ warn_unpersisted_domain() {
 # Nome do projeto compose e três portas do host. O `secrets` lê do ambiente os que estiverem presentes,
 # valida e grava em deployment.env (linha ausente vale o padrão); os demais comandos os releem dali, e
 # variável do ambiente diferente do valor do deployment aborta sem escrever nada, como o domínio.
-DEPLOY_PARAMS=(TAYET_COMPOSE_PROJECT TAYET_HS_PORT TAYET_HTTP_PORT TAYET_HTTPS_PORT)
+DEPLOY_PARAMS=(TAYET_COMPOSE_PROJECT TAYET_HS_PORT TAYET_HTTP_PORT TAYET_HTTPS_PORT TAYET_PUSH_SUBNET)
 PROJECT_RE='^[a-z0-9][a-z0-9_-]*$'
 param_default() {
   case "$1" in
@@ -203,19 +216,40 @@ param_default() {
     TAYET_HS_PORT) echo 8008;;
     TAYET_HTTP_PORT) echo 80;;
     TAYET_HTTPS_PORT) echo 443;;
+    TAYET_PUSH_SUBNET) echo 10.213.77.0/29;;
   esac
 }
 valid_param() { # <nome> <valor>
   case "$1" in
     TAYET_COMPOSE_PROJECT) [[ "$2" =~ $PROJECT_RE ]];;
+    TAYET_PUSH_SUBNET) valid_push_subnet "$2";;
     *) [[ "$2" =~ ^[1-9][0-9]{0,4}$ ]] && (( 10#$2 <= 65535 ));;
   esac
 }
 param_rule() {
   case "$1" in
     TAYET_COMPOSE_PROJECT) echo "lowercase letters, digits, '_' and '-', starting with a letter or digit";;
+    TAYET_PUSH_SUBNET) echo "an IPv4 /29 starting on a multiple of 8 (a.b.c.N/29), unused by any other Docker network on the host";;
     *) echo "integer from 1 to 65535";;
   esac
+}
+
+# The push network (ADR-117 dec. 7): a /29 whose gateway is .1, the homeserver .2 and the push service .3.
+valid_push_subnet() {
+  local o="(0|[1-9][0-9]{0,2})"
+  [[ "$1" =~ ^$o\.$o\.$o\.$o/29$ ]] || return 1
+  local i
+  for i in 1 2 3 4; do (( BASH_REMATCH[i] <= 255 )) || return 1; done
+  (( BASH_REMATCH[4] % 8 == 0 ))
+}
+# Exports TAYET_PUSH_SYNAPSE_IP and TAYET_PUSH_IP for compose, and PUSH_IP for the homeserver render.
+derive_push_addresses() {
+  local net="${TAYET_PUSH_SUBNET%/29}" last
+  last="${net##*.}"
+  TAYET_PUSH_SYNAPSE_IP="${net%.*}.$(( 10#$last + 2 ))"
+  TAYET_PUSH_IP="${net%.*}.$(( 10#$last + 3 ))"
+  PUSH_IP="$TAYET_PUSH_IP"
+  export TAYET_PUSH_SYNAPSE_IP TAYET_PUSH_IP
 }
 
 # `secrets`: só os presentes no ambiente, validados antes de gerar qualquer arquivo. PARAMS_FROM_ENV
@@ -267,10 +301,12 @@ resolve_params() {
 case "${1:-}" in
   secrets) require_domain_from_env; require_params_from_env;;
   render|up|db-password) resolve_domain; resolve_params;;
-  build|down|check) resolve_domain; resolve_params; warn_unpersisted_domain;;
+  build|down|check|backup|promote-admin) resolve_domain; resolve_params; warn_unpersisted_domain;;
+  # restore: secrets/ does not exist yet; cmd_restore resolves from the restored deployment.env.
 esac
 
 # Derivados dos parâmetros (com os padrões, os valores de sempre: tayet, tayet_agentdata, 8008).
+if [[ -n "${TAYET_PUSH_SUBNET:-}" ]]; then derive_push_addresses; fi
 PROJECT="${TAYET_COMPOSE_PROJECT:-tayet}"
 AGENT_VOLUME="${PROJECT}_agentdata"
 HS_URL="http://127.0.0.1:${TAYET_HS_PORT:-8008}"
@@ -299,6 +335,14 @@ fi
 compose() {
   if [[ ! -f "$AGENT_ENV" ]]; then
     echo "ERROR: $AGENT_ENV missing — run ./deploy.sh up (it generates the AGENT_STORAGE_KEY once, ADR-069)." >&2
+    exit 1
+  fi
+  if [[ ! -f "$PUSH_ENV" ]]; then
+    echo "ERROR: $PUSH_ENV missing — run ./deploy.sh build or up (they generate the push key pair once, ADR-117)." >&2
+    exit 1
+  fi
+  if [[ ! -f "$ORG_ENV" ]]; then
+    echo "ERROR: $ORG_ENV missing — run ./deploy.sh render (it generates the org service's client secrets once)." >&2
     exit 1
   fi
   # --env-file com o domínio base (ADR-095) quando o arquivo existe; antes da migração gravá-lo, a
@@ -552,6 +596,11 @@ cmd_secrets() {
   # AGENT_STORAGE_KEY do agente de custódia (ADR-069 dec. 4) — numa instalação existente quem a
   # gera é o `up` (ensure_agent_secrets), porque este comando aborta com secrets já presentes.
   ensure_agent_secrets
+  ensure_push_secrets
+  ensure_org_secrets
+  local org_client_secret org_mas_admin_secret
+  org_client_secret="$(extract_live_value "ORG_CLIENT_SECRET" "$ORG_ENV" "ORG_CLIENT_SECRET=" "")"
+  org_mas_admin_secret="$(extract_live_value "ORG_MAS_ADMIN_CLIENT_SECRET" "$ORG_ENV" "ORG_MAS_ADMIN_CLIENT_SECRET=" "")"
 
   # Conta de serviço `system` (dona do canal #all) NÃO usa senha (ADR-048, passwords
   # desabilitado) — arquivo mantido por compatibilidade de fluxo, vestigial (ver
@@ -562,6 +611,8 @@ cmd_secrets() {
   printf '%s\n' "$dex_client_secret" > "$DEX_CLIENT_SECRET_FILE"
   # The postgres service reads it once, when the volume is created; stays 0600 (its entrypoint reads it as root).
   printf '%s\n' "$pg_password" > "$PG_PASSWORD_FILE"
+  # Key that signs the data half of every ./deploy.sh backup (HMAC-SHA256 of data/MANIFEST).
+  ensure_backup_key
   # Senha de login do admin de bootstrap no Dex — ESTA é a credencial do dogfood. Anote-a; o
   # hash é re-derivável dela no `render`, mas a senha em claro só existe aqui.
   printf '%s\n' "$admin_password" > "$BOOTSTRAP_ADMIN_PASSWORD_FILE"
@@ -590,6 +641,7 @@ cmd_secrets() {
       -e "s|__FORM_SECRET__|$form_secret|g" \
       -e "s|__MAS_SHARED_SECRET__|$mas_shared|g" \
       -e "s|__POSTGRES_PASSWORD__|$pg_password|g" \
+      -e "s|__PUSH_IP__|$PUSH_IP|g" \
       "$SCRIPT_DIR/synapse/homeserver.yaml.tmpl" > "$RENDERED_DIR/homeserver.yaml"
 
   # MAS: o provider Dex (ADR-048) recebe o client secret do seam — sem credencial externa
@@ -598,6 +650,8 @@ cmd_secrets() {
       -e "s|__MAS_SHARED_SECRET__|$mas_shared|g" \
       -e "s|__ESCROW_INTROSPECTION_SECRET__|$escrow_client_secret|g" \
       -e "s|__ESCROW_MAS_ADMIN_SECRET__|$escrow_mas_admin_secret|g" \
+      -e "s|__ORG_INTROSPECTION_SECRET__|$org_client_secret|g" \
+      -e "s|__ORG_MAS_ADMIN_SECRET__|$org_mas_admin_secret|g" \
       -e "s|__DEX_CLIENT_SECRET__|$dex_client_secret|g" \
       -e "s|__GOOGLE_CLIENT_ID__|$GOOGLE_CLIENT_ID|g" \
       -e "s|__GOOGLE_CLIENT_SECRET__|$GOOGLE_CLIENT_SECRET|g" \
@@ -638,8 +692,9 @@ cmd_secrets() {
     - volume escrowdata    (4S deposits and session keys)
     - Postgres             (accounts, rooms; ./deploy.sh up dumps both databases into secrets/backups/)
     - volume synapsedata   (uploaded files and the server signing key)
-  Keep the backups of secrets/ and escrowdata in SEPARATE places. Commands and the restore
-  procedure: SELF-HOSTING.md, the self-hosting guide at the repository root.
+  ./deploy.sh backup copies all four, in two halves: keep them in SEPARATE places (secrets/ and
+  escrowdata together decrypt everything). Restore: ./deploy.sh restore. Steps 11 and 12 of
+  SELF-HOSTING.md, the self-hosting guide at the repository root.
 
   BOOTSTRAP ADMIN LOGIN: the Dex login password is in secrets/bootstrap-admin.password.
   Keep it; the user is BOOTSTRAP_ADMIN_EMAIL (login at the deployment's IdP).
@@ -661,12 +716,19 @@ EOF
 # Custo aceito: ~8s de `ci` em todo `build`. Determinismo vale mais que o segundo economizado
 # num comando que roda raramente — por isso a instalação é incondicional, sem cache por hash.
 cmd_build() {
+  # The push public key is baked into the client (the subscription's applicationServerKey): it is
+  # generated here on an installation that predates it, and changing it needs a rebuild.
+  ensure_push_secrets
+  ensure_org_secrets
+  local push_public
+  push_public="$(sed -n 's|^PUSH_VAPID_PUBLIC_KEY=||p' "$PUSH_ENV")"
   # engine-strict exige npm ≥ 12; o host/a imagem trazem o 10 — npx resolve sem estado.
   ( cd "$REPO_ROOT/client" && \
     npx -y npm@12.2.1 ci && \
     VITE_SERVER_URL="https://matrix.$TAYET_DOMAIN" \
     VITE_OIDC_CLIENT_ID=000000000000000000000TAYET \
     VITE_ESCROW_URL=/escrow \
+    VITE_PUSH_PUBLIC_KEY="$push_public" \
     npm run build )
   install_agent_deps
 }
@@ -684,9 +746,10 @@ install_agent_deps() {
 # Re-renderiza OS TRÊS templates (synapse/mas/dex) a partir dos secrets vivos — fecho
 # operacional do F9/F10 (PLANO-CRIPTO-COBERTURA §8.7): "mudou um template → git pull →
 # ./deploy.sh render → restart do serviço afetado". Fontes de valor:
-#   - persistidos pelo `secrets`: dex-client.secret, bootstrap-admin.password (hash
-#     re-derivado), bootstrap-admin.env (identidade do admin de bootstrap, também usada no
-#     diretório renderizado), ESCROW_CLIENT_SECRET e ESCROW_MAS_ADMIN_CLIENT_SECRET (deploy.env);
+#   - kept by `secrets`: dex-client.secret, bootstrap-admin.password (hash derived again),
+#     bootstrap-admin.env (identity of the bootstrap admin, also used in the rendered
+#     directory), ESCROW_CLIENT_SECRET and ESCROW_MAS_ADMIN_CLIENT_SECRET (deploy.env),
+#     ORG_CLIENT_SECRET and ORG_MAS_ADMIN_CLIENT_SECRET (org.env, generated by render itself);
 #   - extraídos do RENDER VIVO por anchor inequívoco (nunca foram persistidos):
 #     registration_shared_secret, macaroon_secret_key, form_secret e o shared secret
 #     MAS↔Synapse — os quatro têm linha única no homeserver.yaml vivo.
@@ -779,6 +842,10 @@ stage_renders() {
       exit 1
     fi
   done
+  if [[ ! -f "$ORG_ENV" ]]; then
+    echo "ERROR: $ORG_ENV missing — run ./deploy.sh render (it generates the org service's client secrets once)." >&2
+    exit 1
+  fi
 
   # Persistidos.
   local dex_client_secret admin_hash escrow_client_secret escrow_mas_admin_secret
@@ -791,6 +858,9 @@ stage_renders() {
   admin_hash="$(bcrypt_hash "$(cat "$BOOTSTRAP_ADMIN_PASSWORD_FILE")")"
   escrow_client_secret="$(extract_live_value "ESCROW_CLIENT_SECRET" "$DEPLOY_ENV" "ESCROW_CLIENT_SECRET=" "")"
   escrow_mas_admin_secret="$(extract_live_value "ESCROW_MAS_ADMIN_CLIENT_SECRET" "$DEPLOY_ENV" "ESCROW_MAS_ADMIN_CLIENT_SECRET=" "")"
+  local org_client_secret org_mas_admin_secret
+  org_client_secret="$(extract_live_value "ORG_CLIENT_SECRET" "$ORG_ENV" "ORG_CLIENT_SECRET=" "")"
+  org_mas_admin_secret="$(extract_live_value "ORG_MAS_ADMIN_CLIENT_SECRET" "$ORG_ENV" "ORG_MAS_ADMIN_CLIENT_SECRET=" "")"
 
   # Extraídos do render vivo do homeserver. `^  secret: "` (2 espaços + aspas) é a linha
   # do bloco matrix_authentication_service — a única indentada com essa forma; as demais
@@ -809,12 +879,15 @@ stage_renders() {
       -e "s|__FORM_SECRET__|$form_secret|g" \
       -e "s|__MAS_SHARED_SECRET__|$mas_shared|g" \
       -e "s|__POSTGRES_PASSWORD__|$pg_password|g" \
+      -e "s|__PUSH_IP__|$PUSH_IP|g" \
       "$SCRIPT_DIR/synapse/homeserver.yaml.tmpl" > "$new_hs"
 
   sed -e "s|__TAYET_DOMAIN__|$TAYET_DOMAIN|g" \
       -e "s|__MAS_SHARED_SECRET__|$mas_shared|g" \
       -e "s|__ESCROW_INTROSPECTION_SECRET__|$escrow_client_secret|g" \
       -e "s|__ESCROW_MAS_ADMIN_SECRET__|$escrow_mas_admin_secret|g" \
+      -e "s|__ORG_INTROSPECTION_SECRET__|$org_client_secret|g" \
+      -e "s|__ORG_MAS_ADMIN_SECRET__|$org_mas_admin_secret|g" \
       -e "s|__DEX_CLIENT_SECRET__|$dex_client_secret|g" \
       -e "s|__GOOGLE_CLIENT_ID__|$GOOGLE_CLIENT_ID|g" \
       -e "s|__GOOGLE_CLIENT_SECRET__|$GOOGLE_CLIENT_SECRET|g" \
@@ -985,6 +1058,9 @@ cmd_render() {
   # Before anything that writes (the legacy file migration, the staging directory).
   read_postgres_password >/dev/null
   migrate_bootstrap_password_file
+  # Before the secrets are read for the MAS template: an installation older than the org service gets
+  # its client secrets here, so render → build → up brings the service up with no manual step.
+  ensure_org_secrets
 
   local live_hs="$RENDERED_DIR/homeserver.yaml"
   local live_mas="$RENDERED_DIR/mas-config.yaml"
@@ -1056,7 +1132,7 @@ list_pg_backups() {
 # o migrate do MAS é forward-only (PLANO-RELEASE-PUBLICA §8.13 achado 3), então o estado
 # anterior a ele só existe se for guardado aqui. Roda em TODO `up`, mesmo sem migração
 # pendente — barato, e é o que o ADR-047 pede: backup antes de qualquer gesto no estado
-# crítico. Cobre só `pgdata`; `secrets/` e `escrowdata` seguem manuais (README).
+# crítico. Covers only `pgdata`; the full backup is `./deploy.sh backup`.
 # Falha em qualquer dump → aborta o up ANTES de migrar.
 backup_postgres_before_migrate() {
   local ts dir partial db f
@@ -1207,8 +1283,10 @@ wait_for_synapse() {
 
 # Provisiona um usuário quando ausente. Idempotência por "User already exists" (mesmo
 # padrão do dev-stack): o up rotineiro não cunha nada; só o up criador provisiona.
+# Sets USER_CREATED: 1 when this call created the account, 0 when it already existed.
 provision_user() {
   local user="$1" email="${2:-}" out mas_cid
+  USER_CREATED=0
   mas_cid="$(compose ps -q mas)"
   if [[ -z "$mas_cid" ]]; then
     echo "ERROR: MAS container is not up — cannot provision $user." >&2
@@ -1222,6 +1300,7 @@ provision_user() {
   if out=$(docker exec "$mas_cid" mas-cli "${MAS_CONFIG_ARGS[@]}" manage register-user \
       --yes ${email:+--email "$email"} "$user" 2>&1); then
     echo "User $user provisioned ✅"
+    USER_CREATED=1
   elif grep -q "User already exists" <<<"$out"; then
     echo "User $user already exists — skip."
   else
@@ -1695,6 +1774,46 @@ ensure_agent_secrets() {
   ( umask 077; printf 'AGENT_STORAGE_KEY=%s\n' "$(openssl rand -base64 32)" > "$AGENT_ENV" )
 }
 
+# Generates the push key pair once (P-256, openssl): the raw private scalar and the uncompressed public
+# point, base64url, cut from the 121-byte SEC1 DER of the key. Idempotent: a present pair is never
+# replaced (the subscriptions are bound to the public key, and the client has it baked in).
+b64url_stdin() { base64 | tr -d '\n=' | tr '+/' '-_'; }
+ensure_push_secrets() {
+  if [[ -f "$PUSH_ENV" ]] && grep -q '^PUSH_VAPID_PRIVATE_KEY=' "$PUSH_ENV" && grep -q '^PUSH_VAPID_PUBLIC_KEY=' "$PUSH_ENV"; then
+    return 0
+  fi
+  echo "Generating the push key pair (once) in $PUSH_ENV…"
+  local der size
+  der="$(umask 077 && mktemp "$SECRETS_DIR/.push-key.XXXXXX")"
+  openssl ecparam -name prime256v1 -genkey -noout -outform DER > "$der"
+  size="$(wc -c < "$der" | tr -d ' ')"
+  if [[ "$size" != "121" ]]; then
+    rm -f "$der"
+    echo "ERROR: openssl did not produce a 121-byte P-256 SEC1 key ($size bytes) — nothing was written." >&2
+    exit 1
+  fi
+  ( umask 077
+    printf 'PUSH_VAPID_PRIVATE_KEY=%s\n' "$(head -c 39 "$der" | tail -c 32 | b64url_stdin)"
+    printf 'PUSH_VAPID_PUBLIC_KEY=%s\n' "$(tail -c 65 "$der" | b64url_stdin)" ) > "$PUSH_ENV.tmp"
+  rm -f "$der"
+  chmod 600 "$PUSH_ENV.tmp"
+  mv "$PUSH_ENV.tmp" "$PUSH_ENV"
+}
+
+# Generates the org service's two MAS client secrets once (hex, sed-delimiter-safe). Idempotent: a file
+# with both is never touched; the MAS gets the same values from the render.
+ensure_org_secrets() {
+  if [[ -f "$ORG_ENV" ]] && grep -q '^ORG_CLIENT_SECRET=' "$ORG_ENV" && grep -q '^ORG_MAS_ADMIN_CLIENT_SECRET=' "$ORG_ENV"; then
+    return 0
+  fi
+  echo "Generating the org service's client secrets (once) in $ORG_ENV…"
+  ( umask 077
+    printf 'ORG_CLIENT_SECRET=%s\n' "$(openssl rand -hex 32)"
+    printf 'ORG_MAS_ADMIN_CLIENT_SECRET=%s\n' "$(openssl rand -hex 32)" ) > "$ORG_ENV.tmp"
+  chmod 600 "$ORG_ENV.tmp"
+  mv "$ORG_ENV.tmp" "$ORG_ENV"
+}
+
 agent_volume_exists() { docker volume inspect "$AGENT_VOLUME" >/dev/null 2>&1; }
 
 # Shell efêmero sobre o volume do agente, na imagem pinada. Só com o volume existente: `docker run`
@@ -1959,6 +2078,8 @@ cmd_up() {
   persist_migrated_domain
   # ANTES de qualquer compose: o env_file do agente precisa existir (ver compose()).
   ensure_agent_secrets
+  ensure_push_secrets
+  ensure_org_secrets
   warn_stale_client_dist
   # Revoga a credencial de serviço em TODA saída do up — sucesso, exit 1 e SIGINT/TERM.
   # Por que trap e não última linha de cmd_up: sob `set -e`, o exit 1 de um pré-check anômalo ou
@@ -1977,7 +2098,7 @@ cmd_up() {
   # FASE 1 — tudo MENOS o agente (lista explícita; serviço novo entra aqui): o token do cofre nasce
   # do MAS, que precisa estar de pé antes do mint, e o bind de agent-token.secret precisa do arquivo
   # existente antes do container (senão o docker cria um diretório no lugar).
-  compose up -d postgres synapse mas dex escrow caddy
+  compose up -d postgres synapse mas dex escrow org push caddy
   restart_caddy_if_config_changed
   # Escrow e agente rodam da FONTE por bind mount (../../escrow, ../../agent): o `up -d` só recria
   # um container quando a config do compose muda, e um `git pull` não muda config nenhuma. Sem o
@@ -1985,7 +2106,7 @@ cmd_up() {
   # §8.34): o veto de retrieve do cofre só valeu depois de um `restart escrow` manual. Seguro com a
   # stack de pé: o store do escrow só publica arquivo completo (tmp + link/rename). O agente é
   # recriado na fase 2 (start_agent).
-  compose up -d --force-recreate escrow
+  compose up -d --force-recreate escrow org push
   wait_for_synapse
   provision_user system
   # A política fecha o cadastro (ADR-083 dec. 1): o bootstrap admin nasce aqui, e o 1º login pelo Dex
@@ -1993,7 +2114,9 @@ cmd_up() {
   # `manage add-email`, para o skip cobrir os dois.
   load_bootstrap_admin
   provision_user "$BOOTSTRAP_ADMIN_USERNAME" "$BOOTSTRAP_ADMIN_EMAIL"
-  promote_org_admin "$BOOTSTRAP_ADMIN_USERNAME"
+  # Only an account this up just created: a demotion made in the app survives the next deploy, and
+  # ./deploy.sh promote-admin is the way back.
+  if [[ "$USER_CREATED" == "1" ]]; then promote_org_admin "$BOOTSTRAP_ADMIN_USERNAME"; fi
   seed_org_channel
   sync_org_membership
   sync_org_directory
@@ -2003,6 +2126,26 @@ cmd_up() {
   start_agent
   echo
   echo "Production stack up. Run ./deploy.sh check for the read-only state."
+}
+
+# ── promote-admin ───────────────────────────────────────────────────────────────────────
+# The org service's own command, inside its container, with the rules of the app's promote verb and no
+# caller to check: finds the active account by email and refuses one that is not a live member of #all.
+# This script reads neither the MAS admin API nor its database, and mints no token. The exit status is
+# the command's.
+cmd_promote_admin() {
+  if [[ $# -ne 1 || -z "$1" ]]; then
+    echo "usage: $0 promote-admin EMAIL" >&2
+    exit 1
+  fi
+  require_secrets
+  local cid
+  cid="$(compose ps -q --status running org 2>/dev/null)" || true
+  if [[ -z "$cid" ]]; then
+    echo "ERROR: the org service is not running — run ./deploy.sh up first." >&2
+    exit 1
+  fi
+  compose exec -T org node --experimental-strip-types src/cli.ts promote-admin "$1"
 }
 
 # ── db-password ──────────────────────────────────────────────────────────────────────────
@@ -2106,6 +2249,418 @@ cmd_down() {
   echo "Stack down (volumes PRESERVED — down -v does not exist here, by design)."
 }
 
+# ── backup / restore ─────────────────────────────────────────────────────────────────────
+# `backup [DIR]` writes DIR/<UTC>/keys/ (secrets.tgz) and DIR/<UTC>/data/ (the two database dumps and the
+# synapsedata, escrowdata and orgdata volumes), each half with its own MANIFEST: format line, backup id (the UTC
+# timestamp, shared by both halves), part, code commit, and one `file <name> <bytes> <sha256>` line per
+# file. Never contents. The halves exist so they can be kept in different places: together, secrets/
+# and escrowdata decrypt everything held in custody. The stack stays up: dumps are consistent per
+# database, and the escrow publishes only complete files (tmp + link/rename, escrow/src/store.ts).
+# agentdata is left out on purpose (an old agent store breaks custody, ADR-069 dec. 5).
+#
+# `restore KEYS_DIR DATA_DIR` checks both manifests (every checksum, the same backup id), refuses to
+# write over an existing secrets/ or with any container of the project running, and then puts secrets/
+# back, recreates and restores both databases, refills the volumes and empties agentdata, so the
+# next `up` re-mints custody (F8). It does not start the stack. It is not a `reset`: it never removes
+# secrets/ and only touches the volumes of the project named in the restored deployment.env.
+# Format 2 adds the org service's volume (orgdata.tgz). restore also takes format 1, which has no
+# orgdata.tgz, and leaves orgdata empty: a backup older than the org service has no org audit.
+BACKUP_FORMAT="tayet-backup 2"
+BACKUP_FORMAT_1="tayet-backup 1"
+BACKUP_DEFAULT_ROOT="${HOME:-}/tayet-backup"
+BACKUP_ID_RE='^[0-9]{8}T[0-9]{6}Z$'
+BACKUP_KEYS_FILES=(secrets.tgz)
+BACKUP_DATA_FILES=(synapse.dump mas.dump synapsedata.tgz escrowdata.tgz orgdata.tgz)
+BACKUP_VOLUMES=(synapsedata escrowdata orgdata)
+BACKUP_DATA_FILES_1=(synapse.dump mas.dump synapsedata.tgz escrowdata.tgz)
+BACKUP_VOLUMES_1=(synapsedata escrowdata)
+# Written at the end of a successful `backup`: "<epoch seconds> <backup id>". `check` warns when it is
+# missing or older than BACKUP_STALE_DAYS. Kept out of secrets.tgz, like secrets/backups.
+LAST_BACKUP_FILE="$SECRETS_DIR/last-backup"
+BACKUP_STALE_DAYS=7
+# Signs data/MANIFEST (HMAC-SHA256, signature in data/MANIFEST.sig): 64 hex, mode 600, made by `secrets` or
+# by the first `backup`. It travels inside secrets.tgz, so the signature ties the data half to the keys half:
+# a data/ changed and re-manifested without this key is refused. It encrypts nothing.
+BACKUP_KEY_FILE="$SECRETS_DIR/backup-manifest.key"
+BACKUP_SIG_NAME="MANIFEST.sig"
+
+ensure_backup_key() {
+  if [[ -s "$BACKUP_KEY_FILE" ]]; then return 0; fi
+  ( umask 077 && openssl rand -hex 32 > "$BACKUP_KEY_FILE" )
+}
+
+# sha256 (hex) of stdin; sha256sum on Linux, shasum on macOS — the tools sha256_of already uses.
+sha256_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1
+  else shasum -a 256 | cut -d' ' -f1; fi
+}
+
+# HMAC-SHA256 (RFC 2104) of <file> under the 64-hex key in <key file>, as hex. Only bash builtins touch the
+# key: it is read with $(<…) and the padded blocks are written with printf, so it is never an argument of a
+# process (no openssl -hmac on a command line) and needs no tool the script did not already use.
+hmac_sha256_file() { # <key file> <file>
+  local key i b x ipad="" opad="" inner inner_esc=""
+  key="$(< "$1")"
+  if [[ ! "$key" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: $1 is not 64 lowercase hex characters." >&2
+    return 1
+  fi
+  for (( i = 0; i < 64; i++ )); do
+    if (( i < 32 )); then b=$(( 16#${key:2*i:2} )); else b=0; fi
+    printf -v x '\\x%02x' $(( b ^ 0x36 )); ipad+="$x"
+    printf -v x '\\x%02x' $(( b ^ 0x5c )); opad+="$x"
+  done
+  key=""
+  # shellcheck disable=SC2059 # the format strings are \xHH escapes built above
+  inner="$( { printf "$ipad"; cat "$2"; } | sha256_stdin )"
+  for (( i = 0; i < 64; i += 2 )); do inner_esc+="\\x${inner:i:2}"; done
+  # shellcheck disable=SC2059
+  { printf "$opad"; printf "$inner_esc"; } | sha256_stdin
+}
+
+# Commit of this checkout, or `unknown` when REPO_ROOT is not the top of a git work tree (an extracted
+# tree inside some other repository must not report that repository's commit).
+code_commit() {
+  local top
+  top="$(git -C "$REPO_ROOT" rev-parse --show-toplevel 2>/dev/null)" || { echo unknown; return 0; }
+  if [[ "$(cd "$top" && pwd -P)" != "$(cd "$REPO_ROOT" && pwd -P)" ]]; then echo unknown; return 0; fi
+  git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown
+}
+
+# Absolute path with the existing part resolved (symlinks included) and the missing tail appended.
+# A `.` or `..` in the missing tail is refused: it cannot be resolved before the directory exists.
+physical_path() {
+  local p="$1" rest="" part
+  [[ "$p" == /* ]] || p="$PWD/$p"
+  while [[ "$p" == */ && "$p" != / ]]; do p="${p%/}"; done
+  while [[ ! -d "$p" ]]; do
+    part="${p##*/}"
+    if [[ "$part" == "." || "$part" == ".." ]]; then return 1; fi
+    if [[ -n "$part" ]]; then rest="/$part$rest"; fi
+    p="${p%/*}"
+    [[ -n "$p" ]] || p=/
+  done
+  p="$(cd "$p" && pwd -P)"
+  [[ "$p" == / ]] && p=""
+  echo "$p$rest"
+}
+
+write_manifest() { # <dir> <part> <backup id> <commit> <file…>
+  local dir="$1" part="$2" id="$3" commit="$4" f
+  shift 4
+  {
+    echo "$BACKUP_FORMAT"
+    echo "backup $id"
+    echo "part $part"
+    echo "commit $commit"
+    for f in "$@"; do
+      echo "file $f $(wc -c < "$dir/$f" | tr -d ' ') $(sha256_of "$dir/$f")"
+    done
+  } > "$dir/MANIFEST"
+}
+
+cmd_backup() {
+  require_secrets
+  if (( $# > 1 )); then
+    echo "usage: $0 backup [DIR]   (default DIR: $BACKUP_DEFAULT_ROOT)" >&2
+    exit 1
+  fi
+  local root="${1:-$BACKUP_DEFAULT_ROOT}" target secrets_real id out partial keys data commit db v f
+  if [[ -z "$root" ]] || ! target="$(physical_path "$root")"; then
+    echo "ERROR: cannot resolve the backup directory ('$root'); nothing was written." >&2
+    exit 1
+  fi
+  secrets_real="$(cd "$SECRETS_DIR" && pwd -P)"
+  if [[ "$target" == "$secrets_real" || "$target" == "$secrets_real"/* ]]; then
+    echo "ERROR: the backup directory ($target) is inside $SECRETS_DIR — a backup must leave the place it protects; nothing was written." >&2
+    exit 1
+  fi
+  if [[ -z "$(running_cid postgres)" ]]; then
+    echo "ERROR: postgres is not running — backup dumps the databases from the running stack (./deploy.sh up); nothing was written." >&2
+    exit 1
+  fi
+  for v in "${BACKUP_VOLUMES[@]}"; do
+    if ! docker volume inspect "${PROJECT}_$v" >/dev/null 2>&1; then
+      echo "ERROR: volume ${PROJECT}_$v does not exist — nothing was written." >&2
+      exit 1
+    fi
+  done
+
+  id="$(date -u +%Y%m%dT%H%M%SZ)"
+  out="$target/$id"
+  partial="$out.partial"
+  if [[ -e "$out" || -e "$partial" ]]; then
+    echo "ERROR: $out already exists — nothing was written." >&2
+    exit 1
+  fi
+  commit="$(code_commit)"
+  umask 077
+  mkdir -p "$target"
+  mkdir -m 700 "$partial"
+  # Any failure from here on removes the half-written directory; nothing else was written yet.
+  trap 'rm -rf "$partial"; echo "ERROR: backup failed — $partial removed, no backup was recorded." >&2' EXIT
+  keys="$partial/keys"
+  data="$partial/data"
+  mkdir -m 700 "$keys" "$data"
+
+  # Databases first, then the volumes, then secrets/ (the runbook's order).
+  echo "Backup $id: pg_dump of ${PG_BACKUP_DBS[*]}…"
+  for db in "${PG_BACKUP_DBS[@]}"; do
+    compose exec -T postgres pg_dump -U synapse -Fc "$db" > "$data/$db.dump"
+    [[ -s "$data/$db.dump" ]] || { echo "ERROR: empty dump of $db." >&2; exit 1; }
+  done
+  echo "Backup $id: volumes ${BACKUP_VOLUMES[*]}…"
+  for v in "${BACKUP_VOLUMES[@]}"; do
+    # Through stdout: the archive is created by this user, under umask 077, not by root in the container.
+    docker run --rm -v "${PROJECT}_$v:/data:ro" "$AGENT_IMAGE" tar czf - --numeric-owner -C /data . > "$data/$v.tgz"
+    [[ -s "$data/$v.tgz" ]] || { echo "ERROR: empty archive of ${PROJECT}_$v." >&2; exit 1; }
+  done
+  echo "Backup $id: secrets/…"
+  # Before secrets.tgz: the key that signs data/MANIFEST must travel in it.
+  ensure_backup_key
+  tar czf "$keys/secrets.tgz" --exclude=secrets/backups --exclude=secrets/last-backup -C "$SCRIPT_DIR" secrets
+  write_manifest "$keys" keys "$id" "$commit" "${BACKUP_KEYS_FILES[@]}"
+  write_manifest "$data" data "$id" "$commit" "${BACKUP_DATA_FILES[@]}"
+  hmac_sha256_file "$BACKUP_KEY_FILE" "$data/MANIFEST" > "$data/$BACKUP_SIG_NAME"
+  mv "$partial" "$out"
+  trap - EXIT
+  printf '%s %s\n' "$(date +%s)" "$id" > "$LAST_BACKUP_FILE"
+
+  echo "Backup: $out (commit $commit)"
+  for f in "${BACKUP_KEYS_FILES[@]}"; do echo "  keys/$f  $(du -h "$out/keys/$f" | cut -f1)"; done
+  for f in "${BACKUP_DATA_FILES[@]}"; do echo "  data/$f  $(du -h "$out/data/$f" | cut -f1)"; done
+  echo "Copy $out/keys to one place and $out/data to a different one, both off this server; then remove $out."
+}
+
+# Reads <dir>/MANIFEST and checks every listed file (exactly the expected set, size and sha256). Sets
+# MANIFEST_ID and MANIFEST_COMMIT. Reads only; exit 1 on any mismatch.
+MANIFEST_ID=""
+MANIFEST_COMMIT=""
+MANIFEST_FORMAT=""
+# Format line of <dir>/MANIFEST, or empty when there is none. Reads only.
+manifest_format() { if [[ -f "$1/MANIFEST" ]]; then head -n 1 "$1/MANIFEST"; fi; }
+verify_manifest() { # <dir> <part> <expected file…>
+  local dir="$1" part="$2" m kind a b c extra n=0 got_part="" seen=" " want
+  shift 2
+  m="$dir/MANIFEST"
+  MANIFEST_ID=""; MANIFEST_COMMIT=""; MANIFEST_FORMAT=""
+  if [[ ! -d "$dir" || ! -f "$m" ]]; then
+    echo "ERROR: $m not found — nothing was written." >&2
+    exit 1
+  fi
+  MANIFEST_FORMAT="$(head -n 1 "$m")"
+  if [[ "$MANIFEST_FORMAT" != "$BACKUP_FORMAT" && "$MANIFEST_FORMAT" != "$BACKUP_FORMAT_1" ]]; then
+    echo "ERROR: $m is not a '$BACKUP_FORMAT' or '$BACKUP_FORMAT_1' manifest — nothing was written." >&2
+    exit 1
+  fi
+  while read -r kind a b c extra; do
+    n=$((n + 1))
+    (( n == 1 )) && continue
+    case "$kind" in
+      backup) MANIFEST_ID="$a";;
+      part) got_part="$a";;
+      commit) MANIFEST_COMMIT="$a";;
+      file)
+        case " $* " in *" $a "*) ;; *)
+          echo "ERROR: $m lists an unexpected file ('$a') — nothing was written." >&2; exit 1;;
+        esac
+        case "$seen" in *" $a "*)
+          echo "ERROR: $m lists $a twice — nothing was written." >&2; exit 1;;
+        esac
+        seen="$seen$a "
+        if [[ ! -f "$dir/$a" ]]; then
+          echo "ERROR: $dir/$a is missing — nothing was written." >&2; exit 1
+        fi
+        if [[ "$(wc -c < "$dir/$a" | tr -d ' ')" != "$b" || "$(sha256_of "$dir/$a")" != "$c" || -n "$extra" ]]; then
+          echo "ERROR: $dir/$a does not match its manifest (size or sha256) — nothing was written." >&2; exit 1
+        fi;;
+      *) echo "ERROR: $m has an unknown line ('$kind') — nothing was written." >&2; exit 1;;
+    esac
+  done < "$m"
+  for want in "$@"; do
+    case "$seen" in *" $want "*) ;; *)
+      echo "ERROR: $m does not list $want — nothing was written." >&2; exit 1;;
+    esac
+  done
+  if [[ "$got_part" != "$part" ]]; then
+    echo "ERROR: $m is the '$got_part' half, expected '$part' — nothing was written." >&2
+    exit 1
+  fi
+  if [[ ! "$MANIFEST_ID" =~ $BACKUP_ID_RE || -z "$MANIFEST_COMMIT" ]]; then
+    echo "ERROR: $m has no valid backup id or commit — nothing was written." >&2
+    exit 1
+  fi
+}
+
+cmd_restore() {
+  if (( $# != 2 )); then
+    echo "usage: $0 restore KEYS_DIR DATA_DIR   (the keys/ and data/ halves of one backup)" >&2
+    exit 1
+  fi
+  local keys_dir="$1" data_dir="$2" keys_id keys_format stage members bad here db v f live_secrets live_env sig_file key_file mac stored_mac
+  local data_files=("${BACKUP_DATA_FILES[@]}") volumes=("${BACKUP_VOLUMES[@]}")
+  if [[ -e "$SECRETS_DIR" || -L "$SECRETS_DIR" ]]; then
+    echo "ERROR: $SECRETS_DIR already exists — restore never writes over it." >&2
+    echo "       Stop the stack (./deploy.sh down) and move it aside (mv secrets secrets.before-restore); nothing was written." >&2
+    exit 1
+  fi
+  verify_manifest "$keys_dir" keys "${BACKUP_KEYS_FILES[@]}"
+  keys_id="$MANIFEST_ID"
+  keys_format="$MANIFEST_FORMAT"
+  # Format 1 (before the org service): the data half has no orgdata.tgz, and orgdata is left empty.
+  if [[ "$(manifest_format "$data_dir")" == "$BACKUP_FORMAT_1" ]]; then
+    data_files=("${BACKUP_DATA_FILES_1[@]}")
+    volumes=("${BACKUP_VOLUMES_1[@]}")
+  fi
+  verify_manifest "$data_dir" data "${data_files[@]}"
+  if [[ "$keys_id" != "$MANIFEST_ID" ]]; then
+    echo "ERROR: the halves come from different backups (keys $keys_id, data $MANIFEST_ID) — nothing was written." >&2
+    exit 1
+  fi
+  if [[ "$keys_format" != "$MANIFEST_FORMAT" ]]; then
+    echo "ERROR: the halves have different formats (keys '$keys_format', data '$MANIFEST_FORMAT') — nothing was written." >&2
+    exit 1
+  fi
+  here="$(code_commit)"
+  if [[ "$MANIFEST_COMMIT" != "$here" ]]; then
+    echo "WARNING: backup $keys_id was made with code at commit $MANIFEST_COMMIT; this checkout is at $here." >&2
+    echo "         Restore with the release that made the backup, then update (runbook step 13)." >&2
+  fi
+  # Only secrets/ may come out of the archive: no other top-level entry, no absolute path, no `..`.
+  # (Captured, not piped into grep -q: under pipefail an early grep exit fails the pipe.)
+  members="$(tar tzf "$keys_dir/secrets.tgz")"
+  bad="$(printf '%s\n' "$members" | grep -v -e '^secrets$' -e '^secrets/' || true)"
+  bad="$bad$(printf '%s\n' "$members" | grep -e '^/' -e '/\.\./' -e '/\.\.$' || true)"
+  if [[ -n "$bad" ]]; then
+    echo "ERROR: $keys_dir/secrets.tgz holds entries outside secrets/ — nothing was written." >&2
+    exit 1
+  fi
+
+  stage="$SCRIPT_DIR/.restore.partial"
+  if [[ -e "$stage" ]]; then
+    echo "ERROR: $stage exists (an interrupted restore?) — remove it and run again; nothing was written." >&2
+    exit 1
+  fi
+  mkdir -m 700 "$stage"
+  trap 'rm -rf "$stage"' EXIT
+  tar xzf "$keys_dir/secrets.tgz" -C "$stage"
+  # Project, ports and domain come from the restored deployment.env (and must agree with any TAYET_*
+  # in the environment), so the checks below and every volume touched are that deployment's.
+  live_secrets="$SECRETS_DIR"; live_env="$DEPLOYMENT_ENV"
+  SECRETS_DIR="$stage/secrets"; DEPLOYMENT_ENV="$SECRETS_DIR/deployment.env"
+  resolve_domain
+  resolve_params
+  derive_push_addresses
+  for f in "$DEPLOY_ENV" "$AGENT_ENV" "$PG_PASSWORD_FILE" "$MAS_SECRETS"; do
+    if [[ ! -f "$SECRETS_DIR/${f##*/}" ]]; then
+      echo "ERROR: the restored secrets have no ${f##*/} — nothing was written." >&2
+      exit 1
+    fi
+  done
+  # The data half must be signed with the key that came in the keys half, before any database or volume.
+  sig_file="$data_dir/$BACKUP_SIG_NAME"
+  key_file="$SECRETS_DIR/${BACKUP_KEY_FILE##*/}"
+  if [[ ! -s "$key_file" || ! -f "$sig_file" ]]; then
+    echo "ERROR: $( [[ -s "$key_file" ]] && echo "$sig_file is missing" || echo "the keys half has no ${BACKUP_KEY_FILE##*/}") — the data half cannot be tied to the keys half." >&2
+    echo "       Use both halves of one backup made by ./deploy.sh backup, unchanged; nothing was written." >&2
+    exit 1
+  fi
+  # Computed into a variable: a failure inside $(…) in a test would yield "" and compare equal to an empty
+  # signature. Both values must be 64 lowercase hex before they are compared.
+  if ! mac="$(hmac_sha256_file "$key_file" "$data_dir/MANIFEST")" || [[ ! "$mac" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: could not compute the signature of $data_dir/MANIFEST with the key in the keys half — nothing was written." >&2
+    exit 1
+  fi
+  stored_mac="$(tr -d '[:space:]' < "$sig_file")"
+  if [[ ! "$stored_mac" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: $sig_file is not a signature (64 lowercase hex characters) — use an unchanged copy of data/ from the same backup;" >&2
+    echo "       nothing was written." >&2
+    exit 1
+  fi
+  if [[ "$mac" != "$stored_mac" ]]; then
+    echo "ERROR: the signature of $data_dir/MANIFEST does not match the key in the keys half — the data half was changed" >&2
+    echo "       or belongs to another installation. Use an unchanged copy of data/ from the same backup; nothing was written." >&2
+    exit 1
+  fi
+  SECRETS_DIR="$live_secrets"; DEPLOYMENT_ENV="$live_env"
+  PROJECT="${TAYET_COMPOSE_PROJECT:-tayet}"
+  AGENT_VOLUME="${PROJECT}_agentdata"
+  HS_URL="http://127.0.0.1:${TAYET_HS_PORT:-8008}"
+  if [[ -n "$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT")" ]]; then
+    echo "ERROR: containers of project $PROJECT are running — stop them first (./deploy.sh down with the old secrets/, or docker compose -p $PROJECT down); nothing was written." >&2
+    exit 1
+  fi
+
+  mv "$stage/secrets" "$SECRETS_DIR"
+  rmdir "$stage"
+  # A backup older than the push service has no key pair: a new one is made (the clients subscribe again).
+  ensure_push_secrets
+  # A backup older than the org service has no client secrets for it: new ones are made, and the render
+  # of the update (runbook step 13) puts them in the MAS.
+  ensure_org_secrets
+  trap 'echo "ERROR: restore failed midway — secrets/ is back but the data is not. Move secrets/ aside and run restore again." >&2' EXIT
+  read_postgres_password >/dev/null
+  echo "Restore $keys_id into project $PROJECT (domain $TAYET_DOMAIN)…"
+
+  compose up -d --wait postgres
+  # Dumps do not carry the role's password, and an existing pgdata keeps the one it had: set the
+  # restored one (the socket inside the container is `trust`).
+  alter_postgres_password "$(read_postgres_password)"
+  # Each database is recreated, not cleaned: `pg_restore --clean` only drops what the dump holds, and
+  # whatever a later release added would stay behind (README, Synapse upgrade and rollback).
+  for db in "${PG_BACKUP_DBS[@]}"; do
+    compose exec -T postgres psql -U synapse -d postgres -v ON_ERROR_STOP=1 -q \
+      -c "DROP DATABASE IF EXISTS $db" \
+      -c "CREATE DATABASE $db OWNER synapse ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0"
+    compose exec -T postgres pg_restore -U synapse -d "$db" --exit-on-error < "$data_dir/$db.dump"
+    echo "  database $db restored"
+  done
+
+  # Volumes created by Compose (with its labels) before they are filled.
+  compose up --no-start synapse escrow org >/dev/null
+  for v in "${volumes[@]}"; do
+    docker run --rm -i -v "${PROJECT}_$v:/data" "$AGENT_IMAGE" \
+      sh -c 'find /data -mindepth 1 -delete && tar xzf - --numeric-owner -C /data' < "$data_dir/$v.tgz"
+    echo "  volume ${PROJECT}_$v restored"
+  done
+  if [[ "$MANIFEST_FORMAT" == "$BACKUP_FORMAT_1" ]]; then
+    docker run --rm -v "${PROJECT}_orgdata:/data" "$AGENT_IMAGE" find /data -mindepth 1 -delete
+    echo "  volume ${PROJECT}_orgdata emptied: a '$BACKUP_FORMAT_1' backup has no org audit"
+  fi
+  # An agent store newer than the restored databases would be reused with a live token and keys the
+  # server no longer matches. Emptied, the next `up` takes the F8 path (ADR-069 dec. 5).
+  if agent_volume_exists; then
+    agent_data_sh rw 'find /data -mindepth 1 -delete'
+    echo "  volume $AGENT_VOLUME emptied: the next up re-mints the custody agent"
+  fi
+  compose stop >/dev/null
+  trap - EXIT
+
+  echo "Restored backup $keys_id. The stack is stopped."
+  echo "Next: ./deploy.sh up, then ./deploy.sh check (on a checkout that was never built, ./deploy.sh build first)."
+}
+
+# Warning only (never changes the exit status): no `backup` recorded, or the last one older than
+# BACKUP_STALE_DAYS. Epoch arithmetic, no date parsing (BSD and GNU differ).
+check_last_backup() {
+  local epoch="" id="" age
+  if [[ ! -f "$LAST_BACKUP_FILE" ]]; then
+    echo "WARNING: no ./deploy.sh backup recorded on this installation — run ./deploy.sh backup and copy it off the server." >&2
+    return 0
+  fi
+  read -r epoch id < "$LAST_BACKUP_FILE" || true
+  if [[ ! "$epoch" =~ ^[0-9]+$ ]]; then
+    echo "WARNING: $LAST_BACKUP_FILE is unreadable — run ./deploy.sh backup." >&2
+    return 0
+  fi
+  age=$(( $(date +%s) - epoch ))
+  if (( age > BACKUP_STALE_DAYS * 86400 )); then
+    echo "WARNING: the last ./deploy.sh backup ($id) is $(( age / 86400 )) days old, more than $BACKUP_STALE_DAYS — run it again." >&2
+  else
+    echo "Latest ./deploy.sh backup: $id (UTC), $(( age / 86400 )) days old ✅"
+  fi
+}
+
 # ── check ──────────────────────────────────────────────────────────────────────────────────
 # Há quanto tempo o container de um serviço que roda da fonte está de pé: StartedAt (UTC) + o
 # Status do docker ("Up 3 minutes"). Sem parse de data no shell (BSD/GNU divergem).
@@ -2172,8 +2727,26 @@ cmd_check() {
   else
     echo "WARNING: escrow did not respond on /healthz (internal loopback)." >&2
   fi
-  # Escrow e agente rodam da fonte (ver cmd_up): de pé desde ANTES do último deploy = código antigo.
+  local org_cid
+  org_cid="$(compose ps -q org)"
+  if [[ -n "$org_cid" ]] && docker exec "$org_cid" \
+      node -e "fetch('http://localhost:8091/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then
+    echo "Org /healthz: OK ✅"
+  else
+    echo "WARNING: org did not respond on /healthz (internal loopback)." >&2
+  fi
+  local push_cid
+  push_cid="$(compose ps -q push)"
+  if [[ -n "$push_cid" ]] && docker exec "$push_cid" \
+      node -e "fetch('http://localhost:8095/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then
+    echo "Push /healthz: OK ✅"
+  else
+    echo "WARNING: push did not respond on /healthz (internal loopback)." >&2
+  fi
+  # Escrow, org, push and the agent run from source (see cmd_up): up since BEFORE the last deploy = old code.
   show_started_at escrow "Escrow"
+  show_started_at org "Org"
+  show_started_at push "Push"
   show_started_at agent "Custody agent"
 
   local latest db sizes=""
@@ -2186,6 +2759,7 @@ cmd_check() {
   else
     echo "WARNING: no Postgres backup in $BACKUPS_DIR — the next ./deploy.sh up creates one." >&2
   fi
+  check_last_backup
 
   check_agent
 
@@ -2204,5 +2778,8 @@ case "${1:-}" in
   up)      shift; cmd_up "$@";;
   down)    shift; cmd_down "$@";;
   check)   shift; cmd_check "$@";;
-  *) echo "usage: $0 {secrets|render|db-password|build|up|down|check}" >&2; exit 1;;
+  backup)  shift; cmd_backup "$@";;
+  restore) shift; cmd_restore "$@";;
+  promote-admin) shift; cmd_promote_admin "$@";;
+  *) echo "usage: $0 {secrets|render|db-password|build|up|down|check|backup|restore|promote-admin}" >&2; exit 1;;
 esac

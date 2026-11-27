@@ -15,25 +15,28 @@ import { channelRow, send } from './support/workspace'
 // "Canal privado" instead of the '#' in the list and the header, on both sides; bel never accepts
 // anything (ADR-044); the server says it is encrypted, invite-only, with ari at 100 and bel at 0.
 // The new name reaches bel without a reload (the topic: its own test, #245). Admin ↔ Member moves the power level (50 / 0) and the
-// roster of both. bel, a member, trying to change ari's role meets the server's honest refusal inline
-// (ADR-026: the refusal is correct, not a bug) and nothing changes; her own row offers no mutation
-// (ADR-081). Removed, the channel leaves bel's
-// list; added again, it comes back and new messages are readable. In a second (public) channel bel
-// leaves: it leaves her list and ari's roster. Archiving is archive.spec's. P1 at every step.
+// roster of both. The picker (channel-management.md §9 items 4–6) has the ✕ and the filter, and stays open
+// after adding. bel, an admin for a moment (PL 50), is offered no role control — the server refuses every role
+// change at PL 50 (ADR-026 addendum, ADR-115) — and, trying to remove ari, the channel's creator, meets the
+// server's honest refusal (ADR-115 dec. 3) and nothing changes; back to member of this private channel, she is
+// offered only "+ Adicionar" (the server accepts her invite), and her own row offers no mutation (ADR-081).
+// Removed, the channel leaves bel's list; added again, it comes back and new messages are readable. In a second
+// (public) channel bel, a member, is offered no control, and leaves: it leaves her list and ari's roster.
+// Archiving is archive.spec's. P1 at every step.
 
 // Display names as the MAS imported them from the Dex `name` claim (see conversation.spec.ts).
 const ARI_NAME = 'ari'
 const BEL_NAME = 'bel'
 
-// A member changing someone's role is refused by the server (power level): Chromium logs the 403 of
-// the state write.
-const MEMBER_ROLE_CHANGE_403 = {
-  url: `${HS_URL}/_matrix/client/v3/rooms/*/state/m.room.power_levels/`,
-  pattern: new RegExp(`^${escapeRegExp(HS_URL)}\\/_matrix\\/client\\/v3\\/rooms\\/[^/?]+\\/state\\/m\\.room\\.power_levels\\/?$`),
+// An admin removing the channel's creator is refused by the server (power level): Chromium logs the 403
+// of the kick.
+const ADMIN_REMOVES_CREATOR_403 = {
+  url: `${HS_URL}/_matrix/client/v3/rooms/*/kick`,
+  pattern: new RegExp(`^${escapeRegExp(HS_URL)}\\/_matrix\\/client\\/v3\\/rooms\\/[^/?]+\\/kick$`),
   status: 403,
   max: 1,
   per: 'page' as const,
-  why: "bel (member, PL 0) tries to change ari's role: the server refuses honestly (ADR-026)",
+  why: 'bel (admin, PL 50) tries to remove ari (PL 100), the creator: the server refuses honestly (ADR-115 dec. 3)',
 }
 
 // A member's level as the server applies it: the explicit entry, or the room default.
@@ -82,7 +85,27 @@ test('channel lifecycle: private, rename, roles, honest refusal, remove and re-a
       await liftSendLimit('bel')
       await createChannel(pageA, { name: channelName, kind: 'private' })
       await openManage(pageA, channelName, 'private')
-      await addMember(pageA, BEL_NAME)
+      // The picker (§9 items 4–6): the compose casca with the ✕, the filter by name, and adding keeps it open.
+      const add = pageA.getByRole('dialog', { name: MANAGE.addMember })
+      const bel = add.getByRole('button', { name: BEL_NAME, exact: true })
+      await expect(async () => {
+        if ((await add.count()) > 0) await pageA.keyboard.press('Escape')
+        await pageA.getByRole('button', { name: MANAGE.addMember }).click()
+        await expect(bel).toBeVisible({ timeout: 5_000 })
+      }).toPass({ timeout: 60_000 })
+      await expect(add).toHaveClass(/compose-dialog/)
+      const filter = add.getByRole('textbox', { name: MANAGE.filter })
+      await filter.fill('zz')
+      await expect(add.getByText(MANAGE.noResults('zz'))).toBeVisible()
+      await add.getByRole('button', { name: MANAGE.clearFilter }).click()
+      await filter.fill(BEL_NAME.slice(0, 2))
+      await bel.click()
+      await expect(bel).toHaveCount(0, { timeout: 30_000 })
+      await expect(add).toBeVisible()
+      // The ✕ of the casca goes back to the main view.
+      await add.getByRole('button', { name: MANAGE.closePicker }).first().click()
+      await expect(add).toHaveCount(0)
+      await expect(roster(pageA)).toContainText(BEL_NAME)
       await pageA.getByRole('button', { name: MANAGE.close }).click()
       // The invite is auto-joined on bel's side (ADR-044): the row just appears.
       await expect(channelRow(pageB, channelName)).toBeVisible({ timeout: 60_000 })
@@ -114,7 +137,7 @@ test('channel lifecycle: private, rename, roles, honest refusal, remove and re-a
       await expectNoProtocolLeak(pageA, pageB)
     })
 
-    await test.step('3. ari makes bel Admin (PL 50), then Member again (PL 0): the roster of both follows', async () => {
+    await test.step('3. ari makes bel Admin (PL 50): no role control for her; she tries to remove ari, the creator: refused honestly (ADR-115)', async () => {
       await openManage(pageB, renamed, 'private')
       await setRole(pageA, BEL_NAME, MANAGE.admin)
       await expect(roleOf(pageA, BEL_NAME)).toHaveValue('admin', { timeout: 30_000 })
@@ -122,23 +145,43 @@ test('channel lifecycle: private, rename, roles, honest refusal, remove and re-a
       expect(levelOf(await channelFacts(renamed), 'bel')).toBe(50)
       await expectNoProtocolLeak(pageA, pageB)
 
+      // ADR-115 dec. 5: bel's panel re-reads the answers on her own member.changed. A promoted admin may rename,
+      // add, remove and archive, and never change a role (ADR-026 addendum): no role control on any row.
+      await expect(pageB.getByRole('button', { name: MANAGE.remove(ARI_NAME), exact: true })).toBeVisible({ timeout: 30_000 })
+      await expect(pageB.getByLabel(MANAGE.name, { exact: true })).toBeVisible()
+      await expect(pageB.getByRole('button', { name: MANAGE.addMember })).toBeVisible()
+      await expect(pageB.getByRole('button', { name: MANAGE.archive })).toBeVisible()
+      await expect(roster(pageB).getByRole('combobox')).toHaveCount(0)
+      await expect(rowOf(pageB, ARI_NAME)).toContainText(MANAGE.admin)
+
+      // ari is at 100: the server refuses a kick from 50. The refusal shows where the verb ran, the confirm,
+      // which stays open; nothing changes.
+      const before = await channelFacts(renamed)
+      consoleB.allow([ADMIN_REMOVES_CREATOR_403])
+      await pageB.getByRole('button', { name: MANAGE.remove(ARI_NAME), exact: true }).click()
+      const confirm = pageB.getByRole('dialog', { name: MANAGE.removeTitle })
+      await confirm.getByRole('button', { name: MANAGE.confirmRemove, exact: true }).click()
+      await expect(confirm.getByRole('alert')).toHaveText(MANAGE.failed, { timeout: 30_000 })
+      await expect(confirm).toBeVisible()
+      await confirm.getByRole('button', { name: MANAGE.cancel, exact: true }).click()
+      await expect(rowOf(pageB, ARI_NAME)).toBeVisible()
+      await expect(rowOf(pageA, ARI_NAME)).toContainText(MANAGE.admin)
+      expect(await channelFacts(renamed)).toEqual(before)
+      await expectNoProtocolLeak(pageA, pageB)
+    })
+
+    await test.step('4. ari makes bel Member again (PL 0): in this private channel bel is offered only "+ Adicionar" (ADR-115)', async () => {
       await setRole(pageA, BEL_NAME, MANAGE.member)
       await expect(roleOf(pageA, BEL_NAME)).toHaveValue('member', { timeout: 30_000 })
       await expect(rowOf(pageB, BEL_NAME)).toContainText(MANAGE.member, { timeout: 30_000 })
       expect(levelOf(await channelFacts(renamed), 'bel')).toBe(0)
-      await expectNoProtocolLeak(pageA, pageB)
-    })
-
-    await test.step("4. bel, a member, tries to change ari's role: refused honestly inline, nothing changes (ADR-026)", async () => {
-      const before = await channelFacts(renamed)
-      consoleB.allow([MEMBER_ROLE_CHANGE_403])
-      // ari created the channel, so she is already Admin: the change that reaches the server is the demotion.
-      await setRole(pageB, ARI_NAME, MANAGE.member)
-      await expect(roster(pageB).getByRole('alert')).toHaveText(MANAGE.roleRefused, { timeout: 30_000 })
-      // The controlled select reverts to the role the server holds.
-      await expect(roleOf(pageB, ARI_NAME)).toHaveValue('admin')
-      await expect(rowOf(pageA, ARI_NAME)).toContainText(MANAGE.admin)
-      expect(await channelFacts(renamed)).toEqual(before)
+      await expect(pageB.getByRole('button', { name: MANAGE.remove(ARI_NAME), exact: true })).toHaveCount(0, { timeout: 30_000 })
+      await expect(pageB.getByRole('button', { name: MANAGE.addMember })).toBeVisible()
+      await expect(roster(pageB).getByRole('combobox')).toHaveCount(0)
+      await expect(pageB.getByRole('button', { name: MANAGE.archive })).toHaveCount(0)
+      await expect(pageB.getByLabel(MANAGE.name, { exact: true })).toHaveCount(0)
+      await expect(pageB.getByRole('button', { name: MANAGE.leave })).toBeVisible()
+      await expect(roster(pageB).getByRole('button', { name: PROFILE.open(ARI_NAME), exact: true })).toBeVisible()
       await expectNoProtocolLeak(pageA, pageB)
     })
 
@@ -177,7 +220,15 @@ test('channel lifecycle: private, rename, roles, honest refusal, remove and re-a
       await expect(channelRow(pageB, leaveName)).toBeVisible({ timeout: 60_000 })
       expect((await channelFacts(leaveName)).membership['bel']).toBe('join')
 
+      // A member of a public channel is offered no control (ADR-115): name and topic as text, no add, no role
+      // control, no Remove, no archive; leaving stays.
       await openManage(pageB, leaveName)
+      await expect(roster(pageB).getByRole('button', { name: PROFILE.open(ARI_NAME), exact: true })).toBeVisible({ timeout: 30_000 })
+      await expect(pageB.getByRole('button', { name: MANAGE.addMember })).toHaveCount(0)
+      await expect(roster(pageB).getByRole('combobox')).toHaveCount(0)
+      await expect(pageB.getByRole('button', { name: MANAGE.remove(ARI_NAME), exact: true })).toHaveCount(0)
+      await expect(pageB.getByRole('button', { name: MANAGE.archive })).toHaveCount(0)
+      await expect(pageB.getByLabel(MANAGE.name, { exact: true })).toHaveCount(0)
       await leaveChannel(pageB)
       await expect(channelRow(pageB, leaveName)).toHaveCount(0, { timeout: 30_000 })
       // ari's panel is still open on the channel: bel's row goes from the roster without a reload.

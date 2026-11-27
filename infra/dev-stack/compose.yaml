@@ -43,6 +43,13 @@ services:
     ports:
       # Por projeto (fase 2, §8.R2); default = spike.
       - "${TAYET_HS_PORT:-8008}:8008"
+    # The push network (ADR-117 dec. 7) next to the default one, at a fixed address. The subnet and both
+    # addresses are per project, exported by dev-stack.sh; homeserver.yaml allows the push address of
+    # each project.
+    networks:
+      default:
+      push:
+        ipv4_address: ${TAYET_PUSH_SYNAPSE_IP:-10.213.78.2}
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8008/health').read()==b'OK' else 1)\""]
       interval: 5s
@@ -114,27 +121,69 @@ services:
       ESCROW_MAS_ADMIN_URL: http://mas:8081
       ESCROW_MAS_ADMIN_CLIENT_ID: "000000000000000000ESCADM1N"
       ESCROW_MAS_ADMIN_CLIENT_SECRET: tayet-dev-stack-throwaway-escrow-mas-admin
-      # ADR-083: Synapse pela rede interna; o provider do vínculo é o Dex (o de `subject = email`
-      # para simular o Google é da P3).
-      ESCROW_HS_URL: http://synapse:8008
-      ESCROW_SERVER_NAME: tayet.local
-      ESCROW_PEOPLE_PROVIDER_ID: 01HFS6S2SVAR7Y7QYMZJ53ZG00
       # Org key interpolada do --env-file passado SÓ no `up` (ADR-021). Sem env_file: evita
       # o `required:` (que exigiria Compose >=2.24; a máquina é v2.12.2). ps/status (sem
       # --env-file) interpolam vazio → escrow falha-no-boot limpo (envOrThrow) e o
       # check_escrow reporta unhealthy. NUNCA commitar a key (gitignored).
       ESCROW_ORG_KEY: "${ESCROW_ORG_KEY:-}"
-    ports:
-      # Publicada SÓ no loopback do host (ADR-021): o Vite no host alcança; a LAN não.
-      # Combina com ESCROW_BIND=0.0.0.0 no container (DNAT host-loopback → 0.0.0.0:8090).
-      # Por projeto (fase 2, §8.R2); default = spike.
-      - "127.0.0.1:${TAYET_ESCROW_PORT:-8090}:8090"
+    # No published port: the host reaches it through the router below, on the escrow's port. The
+    # custody agent still talks to escrow:8090 directly.
     healthcheck:
       # /healthz é dep-free (server.ts). Liveness pura, no loopback DO CONTAINER.
       test: ["CMD", "node", "-e", "fetch('http://localhost:8090/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 5s
       retries: 20
+
+  org:
+    # Organization service: people and agents, out of the escrow's process. Same regime as the
+    # escrow: from source, same pinned image. No published port: the host reaches it only through the
+    # router, under the same paths as production.
+    image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee  # node:22-bookworm-slim
+    depends_on:
+      mas:
+        condition: service_started
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "src/server.ts"]
+    # SIGTERM drains the requests in flight (server.ts, 5 s cap); the grace period stays above the cap.
+    stop_grace_period: 10s
+    volumes:
+      - ../../org:/app:ro
+      - orgdata:/data             # the org audit; reset (down -v) removes it
+    environment:
+      ORG_PORT: "8091"
+      ORG_BIND: 0.0.0.0
+      ORG_STORE_DIR: /data
+      ORG_INTROSPECTION_URL: http://mas:8080/oauth2/introspect
+      ORG_CLIENT_ID: "00000000000000000000RG1NTR"
+      ORG_CLIENT_SECRET: tayet-dev-stack-throwaway-org-introspection
+      ORG_MAS_ADMIN_URL: http://mas:8081
+      ORG_MAS_ADMIN_CLIENT_ID: "0000000000000000000RGADM1N"
+      ORG_MAS_ADMIN_CLIENT_SECRET: tayet-dev-stack-throwaway-org-mas-admin
+      # The provider of the login link is Dex here.
+      ORG_HS_URL: http://synapse:8008
+      ORG_SERVER_NAME: tayet.local
+      ORG_PEOPLE_PROVIDER_ID: 01HFS6S2SVAR7Y7QYMZJ53ZG00
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8091/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  router:
+    # The production split of /escrow (infra/deploy/Caddyfile) without the prefix: people, agents and
+    # org go to the org service, the rest (/healthz included) to the escrow. Published on the escrow's
+    # port, so TAYET_ESCROW_URL and the /escrow key of client/vite.config.ts reach both unchanged.
+    # caddy:2 — same digest as infra/deploy/compose.yaml.
+    image: caddy@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d  # caddy:2
+    depends_on:
+      - escrow
+      - org
+    volumes:
+      - ./router/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      # Loopback only (ADR-021): the Vite on the host reaches it, the LAN does not. Per project.
+      - "127.0.0.1:${TAYET_ESCROW_PORT:-8090}:8090"
 
   agent:
     # Tayet PR-3 (ADR-057 dec. 5) — agente de custódia `cofre`. Mesmo regime do escrow:
@@ -178,7 +227,49 @@ services:
       # (fail-closed do loadConfig). NUNCA commitar (gitignored).
       AGENT_STORAGE_KEY: "${AGENT_STORAGE_KEY:-}"
 
+  push:
+    # Push gateway (ADR-117), same regime as the escrow: from source, same pinned image, no state.
+    # Only on the push network, so it reaches the homeserver and the outside, never the database or MAS.
+    image: node@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee  # node:22-bookworm-slim
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "src/server.ts"]
+    # SIGTERM drains the requests in flight (server.ts, 5 s cap); the grace period stays above the cap.
+    stop_grace_period: 10s
+    volumes:
+      - ../../push:/app:ro
+    environment:
+      PUSH_PORT: "8095"
+      PUSH_BIND: 0.0.0.0
+      # Throwaway VAPID pair, generated once into push.secret.env (gitignored) and interpolated only by
+      # the `up` (like ESCROW_ORG_KEY): ps/status interpolate empty and a recreate without it fails at
+      # boot, naming the variable. Production generates its own per installation (deploy.sh).
+      PUSH_VAPID_PRIVATE_KEY: "${PUSH_VAPID_PRIVATE_KEY:-}"
+      PUSH_VAPID_PUBLIC_KEY: "${PUSH_VAPID_PUBLIC_KEY:-}"
+      PUSH_VAPID_SUBJECT: https://chat.tayet.local
+      # The vendor list plus the local test receiver on the host, in plain http.
+      PUSH_ALLOWED_ENDPOINTS: fcm.googleapis.com,*.push.apple.com,updates.push.services.mozilla.com,*.notify.windows.com,http://host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      push:
+        ipv4_address: ${TAYET_PUSH_IP:-10.213.78.3}
+    ports:
+      # Only /healthz is of use from the host: published on loopback, per project.
+      - "127.0.0.1:${TAYET_PUSH_PORT:-8095}:8095"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8095/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+networks:
+  push:
+    ipam:
+      config:
+        - subnet: ${TAYET_PUSH_SUBNET:-10.213.78.0/29}
+
 volumes:
   pgdata:
   escrowdata:
+  orgdata:
   agentdata:

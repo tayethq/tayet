@@ -33,6 +33,11 @@ Duas regras para quem roda os comandos, pessoa ou agente:
 Um servidor Linux com IP público e as portas 80 e 443 alcançáveis pela internet. Os certificados
 TLS são emitidos automaticamente.
 
+Para que as notificações cheguem aos aparelhos com o Tayet fechado, o servidor também precisa de
+saída HTTPS (porta 443) para os serviços de push dos navegadores e dos celulares:
+`fcm.googleapis.com`, `*.push.apple.com`, `updates.push.services.mozilla.com` e
+`*.notify.windows.com`. O Tayet não envia notificações para nenhum outro host.
+
 No servidor:
 
 - `git`
@@ -130,6 +135,21 @@ Esperado: `2`.
 
 ## 7. Gere os segredos (uma vez)
 
+O servidor de chat e o serviço de push conversam numa rede Docker só deles, na sub-rede
+`10.213.77.0/29`. Primeiro veja quais sub-redes as redes Docker do host usam:
+
+```bash
+docker network inspect $(docker network ls -q) --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}'
+```
+
+Se uma delas se sobrepõe a `10.213.77.0/29`, escolha outra sub-rede e defina-a no shell em que você
+roda o `./deploy.sh secrets` abaixo. Ela tem de ser uma /29 IPv4 começando num múltiplo de 8
+(a.b.c.N/29), sem uso por nenhuma outra rede Docker do host. Por exemplo:
+
+```bash
+export TAYET_PUSH_SUBNET=10.213.77.8/29
+```
+
 Defina o domínio base e o primeiro administrador e gere:
 
 ```bash
@@ -169,6 +189,7 @@ Synapse config = host render ✅
 MAS config = render ✅
 Org channel #all: OK ✅
 Escrow /healthz: OK ✅
+Push /healthz: OK ✅
 cofre token: whoami OK ✅
 Encrypted rooms without the cofre: none ✅
 ```
@@ -204,7 +225,7 @@ Você cai no app, no canal `#all`. Você é o administrador da organização.
 
 ## 11. Backup
 
-Quatro coisas guardam o estado da sua organização. Faça backup das quatro.
+Cinco coisas guardam o estado da sua organização. O `./deploy.sh backup` copia as cinco.
 
 | O quê | Guarda | Se perder |
 |---|---|---|
@@ -212,6 +233,7 @@ Quatro coisas guardam o estado da sua organização. Faça backup das quatro.
 | Volume `escrowdata` | Depósitos de chaves | As pessoas não recuperam o histórico num dispositivo novo |
 | Postgres (bancos `synapse` e `mas`) | Contas, canais, mensagens | Tudo |
 | Volume `synapsedata` | Arquivos enviados e a chave de assinatura do servidor | Anexos |
+| Volume `orgdata` | A auditoria de convites, remoções e agentes | Essa auditoria |
 
 Regras:
 
@@ -219,94 +241,92 @@ Regras:
 - **Copie o backup para fora do servidor.** Backup no mesmo disco não é backup.
 - **Cifrar o disco do servidor e os arquivos de backup é recomendado.** O backup contém chaves e, no banco, mensagens de canal não cifradas. Como cifrar é decisão sua.
 - O volume `agentdata` fica de fora de propósito: restaurar uma cópia antiga quebraria a custódia de chaves. Os certificados TLS também ficam de fora: eles são emitidos de novo.
+- O `secrets/` também guarda o par de chaves do serviço de push, `secrets/push.env`, então o backup já o leva. Ele é gerado uma vez e nunca trocado: as inscrições de notificação ficam presas à chave pública dele, que o `build` põe no app web.
 
-Rode, em `infra/deploy`, com um usuário que possa rodar Docker:
-
-```bash
-P=$(sed -n 's/^TAYET_COMPOSE_PROJECT=//p' secrets/deployment.env); P=${P:-tayet}
-DC="docker compose -p $P --env-file secrets/deployment.env -f compose.yaml"
-IMG=$(sed -n 's/^AGENT_IMAGE="\(.*\)"$/\1/p' deploy.sh)
-OUT=$HOME/tayet-backup/$(date -u +%Y%m%dT%H%M%SZ)
-( umask 077; mkdir -p "$OUT" )
-```
-
-Primeiro o banco, depois os volumes, nesta ordem:
+Rode, em `infra/deploy`, com um usuário que possa rodar Docker, com a stack de pé:
 
 ```bash
-for db in synapse mas; do
-  $DC exec -T postgres pg_dump -U synapse -Fc "$db" > "$OUT/$db.dump"
-done
-for v in synapsedata escrowdata; do
-  docker run --rm -v "${P}_$v:/data:ro" -v "$OUT:/out" "$IMG" \
-    tar czf "/out/$v.tgz" --numeric-owner -C /data .
-done
-tar czf "$OUT/secrets.tgz" --exclude=secrets/backups secrets
-ls -l "$OUT"
+./deploy.sh backup
 ```
 
-Esperado: cinco arquivos, nenhum vazio: `synapse.dump`, `mas.dump`, `synapsedata.tgz`,
-`escrowdata.tgz`, `secrets.tgz`.
+Ele grava um diretório por backup, com o nome da hora em UTC, em duas metades:
 
-Depois copie `secrets.tgz` para um lugar e `escrowdata.tgz` para outro, diferente, copie os outros
-três arquivos para qualquer um dos dois e apague o diretório do servidor:
-
-```bash
-rm -rf "$OUT"
+```
+$HOME/tayet-backup/<UTC>/keys/   secrets.tgz, MANIFEST
+$HOME/tayet-backup/<UTC>/data/   synapse.dump, mas.dump, synapsedata.tgz, escrowdata.tgz, orgdata.tgz, MANIFEST
 ```
 
-A stack pode ficar de pé durante o backup. O `./deploy.sh up` também faz o dump dos dois bancos em
+`keys/` guarda o `secrets/`; `data/` guarda os bancos e os três volumes. Cada `MANIFEST` lista o
+backup, o commit do código e o tamanho e o checksum de cada arquivo. O `MANIFEST` de `data/` também
+é assinado, em `data/MANIFEST.sig`, com uma chave que mora no `secrets/` e por isso viaja em `keys/`:
+o `restore` recusa um `data/` que foi alterado ou que vem de outra instalação. A assinatura prova de
+onde o `data/` veio; ela não cifra nada. Para gravar em outro lugar, passe o diretório:
+`./deploy.sh backup /path/to/dir`. Ele recusa um diretório dentro de `secrets/`.
+
+Depois copie `keys/` para um lugar e `data/` para outro, diferente, e apague o diretório do
+servidor. O comando imprime o caminho.
+
+A stack fica de pé durante o backup. O `./deploy.sh up` também faz o dump dos dois bancos em
 `secrets/backups/` toda vez que roda e mantém os cinco mais recentes; esses dumps são tão recentes
-quanto o seu último `up`.
+quanto o seu último `up` e não substituem este backup.
+
+O `./deploy.sh check` imprime um aviso quando nenhum backup foi feito nesta instalação ou quando o
+último tem mais de 7 dias. O aviso não muda o status de saída.
+
+**Agende.** Por exemplo, um script que faz o backup e copia cada metade para o seu destino
+(troque os dois destinos pelos seus):
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+cd /path/to/tayet/infra/deploy
+./deploy.sh backup
+B=$(ls -d "$HOME"/tayet-backup/*Z | tail -n 1)
+rsync -a "$B/keys/" "keys-host.example:tayet-keys/${B##*/}/"
+rsync -a "$B/data/" "data-host.example:tayet-data/${B##*/}/"
+rm -rf "$B"
+```
+
+e uma linha de crontab que o roda toda noite:
+
+```
+30 3 * * * /path/to/tayet-backup.sh >> "$HOME/tayet-backup.log" 2>&1
+```
 
 Ensaie o restore uma vez antes de depender dele.
 
 ## 12. Restore
 
-Use isto num servidor novo, ou no mesmo servidor depois de perder dados. Você precisa dos cinco
-arquivos de backup num diretório, do servidor preparado como no passo 1, dos registros DNS
-apontando para ele e da mesma versão do código que estava rodando quando o backup foi feito
+Use isto num servidor novo, ou no mesmo servidor depois de perder dados. Você precisa das duas
+metades do mesmo backup (`keys/` e `data/`), do servidor preparado como no passo 1, dos registros
+DNS apontando para ele e da mesma versão do código que estava rodando quando o backup foi feito
 (passo 5).
 
-Se `infra/deploy/secrets/` já existe, pare a stack e mova-o para o lado. Não o apague.
+Se `infra/deploy/secrets/` já existe, pare a stack e mova-o para o lado. Não o apague. O `restore`
+recusa rodar enquanto `secrets/` existir ou com a stack de pé.
 
 ```bash
 ./deploy.sh down
 mv secrets secrets.before-restore
 ```
 
-Restaure os segredos e compile:
+Restaure:
 
 ```bash
-IN=/path/to/backup
-tar xzf "$IN/secrets.tgz"
-P=$(sed -n 's/^TAYET_COMPOSE_PROJECT=//p' secrets/deployment.env); P=${P:-tayet}
-DC="docker compose -p $P --env-file secrets/deployment.env -f compose.yaml"
-IMG=$(sed -n 's/^AGENT_IMAGE="\(.*\)"$/\1/p' deploy.sh)
+./deploy.sh restore /path/to/<UTC>/keys /path/to/<UTC>/data
+```
+
+Ele confere os dois manifestos antes de tudo e recusa se falta ou mudou um arquivo, ou se as duas
+metades são de backups diferentes. Avisa quando o backup foi feito com outro commit do código.
+Depois põe o `secrets/` de volta, restaura os dois bancos e os volumes e esvazia o
+`agentdata`. Deixa a stack parada. Um backup feito antes de o volume `orgdata` existir não tem
+`orgdata.tgz`: o `restore` o aceita e deixa o `orgdata` vazio. Com um backup assim, rode
+`./deploy.sh render` antes do `build`.
+
+Compile (num servidor novo) e suba:
+
+```bash
 ./deploy.sh build
-```
-
-Restaure os bancos:
-
-```bash
-$DC up -d --wait postgres
-for db in synapse mas; do
-  $DC exec -T postgres pg_restore -U synapse -d "$db" --clean --if-exists < "$IN/$db.dump"
-done
-```
-
-Restaure os dois volumes:
-
-```bash
-$DC up --no-start synapse escrow
-for v in synapsedata escrowdata; do
-  docker run --rm -v "${P}_$v:/data" -v "$IN:/in:ro" "$IMG" \
-    sh -c "find /data -mindepth 1 -delete && tar xzf /in/$v.tgz --numeric-owner -C /data"
-done
-```
-
-Suba e confira:
-
-```bash
 ./deploy.sh up
 ./deploy.sh check
 ```
@@ -323,7 +343,15 @@ depositado está no `escrowdata`.
 
 O `check` tem de sair com status 0. Depois entre e confirme que os canais e as mensagens estão lá.
 
-O que um restore não traz de volta: tudo o que foi escrito depois que o backup foi feito.
+**Um restore devolve o estado do backup.** Revise-o antes de as pessoas voltarem a usar o servidor:
+
+- Tudo o que foi escrito depois do backup some: mensagens, arquivos, canais, contas.
+- Os logins feitos depois do backup deixam de funcionar. Esses navegadores mostram que o acesso foi
+  encerrado, e as pessoas entram de novo; o histórico volta pela custódia de chaves.
+- Os logins que existiam quando o backup foi feito voltam a funcionar sem novo login, mesmo os
+  encerrados depois dele. As pessoas removidas e os papéis mudados depois do backup também voltam
+  como estavam. Encerre esses logins de novo, remova essas pessoas de novo e corrija esses papéis
+  antes de liberar o uso do servidor.
 
 ## 13. Atualização
 
@@ -348,6 +376,32 @@ linha `hash:` mudada; isso não é mudança. Se ele mostrar qualquer outra difer
 rode o comando de restart do `dex` que o `render` imprime.
 
 O `up` faz o dump dos dois bancos antes de aplicar qualquer coisa.
+
+**Vindo de uma versão sem o serviço de push.** Os mesmos quatro comandos o trazem, sem `down`: o
+`render` deixa o servidor de chat alcançar o serviço de push, o `build` gera o par de chaves do push
+em `secrets/push.env` e põe a chave pública dele no app web, o `up` cria a rede do push e o contêiner
+`push` e recria o `synapse` nas duas redes. Depois o `check` tem de sair com status 0 e imprimir:
+
+```
+Push /healthz: OK ✅
+```
+
+Se outra rede Docker do host se sobrepõe a `10.213.77.0/29` (o passo 7 mostra como ver), acrescente a
+linha `TAYET_PUSH_SUBNET=<subnet>` ao `secrets/deployment.env` antes do `render`, com uma sub-rede que
+siga a regra do passo 7.
+
+**Se ninguém consegue administrar a organização.** O app não deixa rebaixar nem remover o último
+admin. Se ninguém mais consegue administrar a organização, por exemplo porque o único admin perdeu o
+acesso, torne um membro admin de novo, com a stack de pé:
+
+```bash
+./deploy.sh promote-admin maria@example.com
+```
+
+Ele escreve o username e se a conta foi promovida ou já era admin. Recusa, com status diferente de
+zero, um email sem conta, uma conta desativada ou travada, um convidado, uma pessoa removida e um
+agente. O `up` só torna admin o admin de bootstrap quando cria a conta, então a próxima atualização
+não desfaz um papel mudado no app.
 
 ## Para onde ir depois
 

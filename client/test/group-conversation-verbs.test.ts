@@ -3,6 +3,7 @@ import { MatrixGateway } from '../src/acl/internal/matrix-client'
 import { brandChannelId, brandUserId } from '@tayet/shared/internal'
 import { GROUP_MAX_OTHERS } from '../src/acl'
 import type { AclTelemetry, UserId } from '../src/acl'
+import { directInviteHttp } from './support/direct-invite'
 
 // ADR-094 (Proposto) dec. 6 to 9 and 13 — PR-2, the verbs (PLANO-CONVERSAS §0.3.2). Fake-client idiom of
 // open-direct-message.test.ts and own-agent.test.ts: the state is what the sync would deliver.
@@ -111,7 +112,8 @@ function harness(rooms: unknown[] = []) {
     getAccountData: () => undefined,
     setAccountData: vi.fn(async () => ({})),
     createRoom,
-    invite: vi.fn(async () => {
+    // The ACL invites by a direct call (ADR-057, addendum of 24/Nov/2026).
+    http: directInviteHttp(async () => {
       writes.push('invite')
       return {}
     }),

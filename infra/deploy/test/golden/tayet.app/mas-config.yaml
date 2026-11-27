@@ -161,9 +161,10 @@ upstream_oauth2:
 
 policy:
   data:
-    # ADR-082 dec. 3: só este client pode pedir urn:mas:admin (a policy padrão do MAS recusa os demais).
+    # Only these clients (escrow and org) may request urn:mas:admin (the MAS default policy refuses the others).
     admin_clients:
       - 000000000000000000ESCADM1N
+      - 0000000000000000000RGADM1N
     # Fecha o cadastro: só entra quem o escrow pré-criou (PLANO-PESSOAS §0 D, linha "Gate"; ADR-083
     # dec. 1). A admin API ignora a política. Conta nova pelo Dex também para aqui. O caminho é
     # `registration.`: na raiz de `data` a política ignora a chave em silêncio (PLANO-PESSOAS §8.2).
@@ -183,6 +184,14 @@ clients:
   - client_id: 000000000000000000ESCADM1N
     client_auth_method: client_secret_basic
     client_secret: fake-escrow-admin-0000000000000
+  # The org service's own introspection and admin clients. The secrets match
+  # ORG_CLIENT_SECRET and ORG_MAS_ADMIN_CLIENT_SECRET of secrets/org.env.
+  - client_id: 00000000000000000000RG1NTR
+    client_auth_method: client_secret_basic
+    client_secret: fake-org-client-000000000000000000
+  - client_id: 0000000000000000000RGADM1N
+    client_auth_method: client_secret_basic
+    client_secret: fake-org-admin-0000000000000000000
   # SPA (web) — público, authorization_code + PKCE, sem secret (ADR-032 §Decisão 1).
   # Mesmo id do dev, instância DISTINTA de MAS. redirect_uri = origin de produção do SPA
   # (o callback é detectado no Boot, sem router — ADR-032 §Decisão 3).

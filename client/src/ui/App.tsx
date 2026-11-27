@@ -3,7 +3,7 @@ import type { Acl, MessageId } from '@tayet/client'
 import { useChat } from './useChat'
 import { useTheme } from './useTheme'
 import { useLanguage } from './useLanguage'
-import { useNotificationsPrompt } from './useNotificationsPrompt'
+import { useDeviceNotifications } from './useDeviceNotifications'
 import { useSearch } from './useSearch'
 import { useAgentForm } from './useAgentForm'
 import { useAwaitingApprovals, useAwaitingScreen } from './useAwaiting'
@@ -79,7 +79,8 @@ function Shell({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
   }, [narrow, searchOpen, jumpFailed, popTo])
   const { theme, setTheme } = useTheme()
   const language = useLanguage(acl)
-  const notifications = useNotificationsPrompt()
+  // ADR-117, addendum of 26/Nov/2026 (F1): the list's prompt and the row of "Your account" have one owner.
+  const notifications = useDeviceNotifications(acl)
   const agentForm = useAgentForm(acl)
   return (
     <MediaProvider resolve={(ref, variant) => acl.resolveMedia(ref, variant)}>
@@ -116,6 +117,7 @@ function Shell({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
         onSendThreadAttachment={chat.sendThreadAttachment}
         managing={chat.managing}
         members={chat.members}
+        channelAbilities={chat.channelAbilities}
         onManageChannel={chat.manageChannel}
         onCloseManage={chat.closeManage}
         onUpdateChannel={chat.updateChannel}
@@ -134,6 +136,8 @@ function Shell({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
         accesses={chat.accesses}
         orgAdmin={chat.orgAdmin}
         people={chat.people}
+        onGetOrgAccess={chat.getOrgAccess}
+        onSetOrgAdmin={chat.setOrgAdmin}
         onInvitePerson={chat.invitePerson}
         onRemovePerson={chat.removePerson}
         onCreateAgent={chat.createAgent}
@@ -155,9 +159,8 @@ function Shell({ acl, onSignOut }: { acl: Acl; onSignOut: () => void }) {
         theme={theme}
         onThemeChange={setTheme}
         language={language}
-        notificationsPrompt={
-          notifications.prompt ? { onEnable: notifications.enable, onDismiss: notifications.dismiss } : undefined
-        }
+        notifications={notifications.row}
+        notificationsPrompt={notifications.prompt}
         newAccesses={chat.newAccesses}
         onDismissAccess={chat.dismissAccess}
         attentionNeeded={chat.attentionNeeded}

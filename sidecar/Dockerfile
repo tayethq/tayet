@@ -9,7 +9,13 @@ ENV NODE_ENV=production
 COPY tayet-agent.tgz /tmp/tayet-agent.tgz
 # The agent never calls npm, npx or corepack at runtime: once the tarball is installed, the package
 # managers leave the image, so the npm bundled in the base is not shipped (nor scanned) with the agent.
-RUN npm install -g /tmp/tayet-agent.tgz \
+# The Debian -slim base lags behind Debian's -security channel, so the build applies the fixes already
+# published there (the base's own apt sources include it). The release SBOM records the exact version of
+# every package in the image.
+RUN apt-get update \
+  && apt-get -y --no-install-recommends upgrade \
+  && rm -rf /var/lib/apt/lists/* \
+  && npm install -g /tmp/tayet-agent.tgz \
   && rm /tmp/tayet-agent.tgz \
   && npm cache clean --force \
   && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \

@@ -92,7 +92,7 @@ describe('NewConversationDialog — group multi-select (new-conversation.md §10
     fireEvent.click(rowOf(first, 'Carol Dias'))
     expect(cta(first).disabled).toBe(false)
     fireEvent.click(cta(first))
-    await waitFor(() => expect(onOpenDirectMessage).toHaveBeenCalledWith(carol.id))
+    await waitFor(() => expect(onOpenDirectMessage).toHaveBeenCalledWith(carol.id, expect.any(Function)))
     expect(onOpenGroupConversation).not.toHaveBeenCalled()
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
     cleanup()
@@ -103,7 +103,7 @@ describe('NewConversationDialog — group multi-select (new-conversation.md §10
     fireEvent.click(rowOf(second, 'Éma Luz'))
     fireEvent.click(rowOf(second, 'Carol Dias'))
     fireEvent.click(cta(second))
-    await waitFor(() => expect(onOpenGroupConversation).toHaveBeenCalledWith([ema.id, carol.id]))
+    await waitFor(() => expect(onOpenGroupConversation).toHaveBeenCalledWith([ema.id, carol.id], expect.any(Function)))
     expect(onOpenDirectMessage).not.toHaveBeenCalled()
   })
 
@@ -144,7 +144,7 @@ describe('NewConversationDialog — group multi-select (new-conversation.md §10
     expect(rowOf(r, many[GROUP_MAX_OTHERS - 1]!.displayName).disabled).toBe(true)
     fireEvent.click(cta(r))
     await waitFor(() =>
-      expect(onOpenGroupConversation).toHaveBeenCalledWith([agent.id, ...many.slice(0, GROUP_MAX_OTHERS - 1).map((u) => u.id)]),
+      expect(onOpenGroupConversation).toHaveBeenCalledWith([agent.id, ...many.slice(0, GROUP_MAX_OTHERS - 1).map((u) => u.id)], expect.any(Function)),
     )
   })
 
@@ -206,7 +206,7 @@ describe('NewConversationDialog — group multi-select (new-conversation.md §10
     expect(r.getByRole('button', { name: chipRemove('Éma Luz') })).toBeTruthy()
     fireEvent.change(r.getByLabelText(copy.newConversation.name), { target: { value: 'launch' } })
     fireEvent.click(r.getByRole('button', { name: copy.newConversation.createChannel }))
-    await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'launch', kind: 'public', members: [ema.id] }))
+    await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'launch', kind: 'public', members: [ema.id] }, expect.any(Function)))
     expect(onOpenGroupConversation).not.toHaveBeenCalled()
   })
 

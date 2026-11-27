@@ -25,6 +25,8 @@ function fakeAcl(emitRef: { emit?: (e: DomainEvent) => void }): Acl {
     getThreadUnread: async () => ({ unread: false }),
     getTimeline: async () => ({ items: [], nextCursor: undefined }),
     getPresence: () => 'offline' as const,
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     subscribe: (handler: (e: DomainEvent) => void) => {
       emitRef.emit = handler
       return noopUnsub

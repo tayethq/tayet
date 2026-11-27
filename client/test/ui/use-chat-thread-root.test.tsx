@@ -47,6 +47,8 @@ function fakeAcl(items: Message[]) {
     getThreadUnread: async () => ({ unread: false }),
     getTimeline,
     getPresence: () => 'offline' as const,
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     subscribe: () => () => {},
     subscribeChannel: (_id: ChannelId, h: (e: DomainEvent) => void) => {
       handlers.add(h)

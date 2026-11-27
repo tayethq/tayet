@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { MatrixError } from 'matrix-js-sdk'
 import { MatrixGateway } from '../src/acl/internal/matrix-client'
 import type { AclTelemetry, ChannelId, UserId } from '../src/acl'
+import { directInviteHttp } from './support/direct-invite'
 
 // ADR-112 (Proposto), unit side: the custody invite does not depend on the DM map, and opening an
 // encrypted conversation without the custody repairs it. Fake-client idiom of custody-birth.test.ts,
@@ -120,7 +121,8 @@ function harness() {
       addRoom(script.created, opts.is_direct ? 'private' : 'group')
       return Promise.resolve({ room_id: script.created })
     },
-    invite: async (id: string, userId: string) => {
+    // The ACL invites by a direct call (ADR-057, addendum of 24/Nov/2026).
+    http: directInviteHttp(async (id: string, userId: string) => {
       if (userId !== COFRE) return
       steps.push(`invite ${id}`)
       const outcome = script.invite.shift()
@@ -128,20 +130,19 @@ function harness() {
       await outcome
       serverMembership.set(id, 'invite')
       setTimeout(() => syncCustody(id, 'invite'), 5)
-    },
+    }, [], async (content: Record<string, string[]>) => {
+      steps.push('map')
+      const outcome = script.mapWrite.shift()
+      if (outcome instanceof Error) throw outcome
+      await outcome
+      accountData.direct = content
+    }),
     getStateEvent: async (id: string, _type: string, userId: string) => {
       const membership = userId === COFRE ? serverMembership.get(id) : undefined
       if (!membership) throw new MatrixError({ errcode: 'M_NOT_FOUND', error: 'Event not found.' }, 404)
       return { membership }
     },
     getAccountData: (type: string) => (type === 'm.direct' ? { getContent: () => accountData.direct } : undefined),
-    setAccountData: async (_type: string, content: Record<string, string[]>) => {
-      steps.push('map')
-      const outcome = script.mapWrite.shift()
-      if (outcome instanceof Error) throw outcome
-      await outcome
-      accountData.direct = content
-    },
     getCrypto: () => ({
       forceDiscardSession: async (id: string) => {
         steps.push(`discard ${id}`)

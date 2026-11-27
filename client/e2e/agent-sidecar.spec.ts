@@ -1,11 +1,11 @@
 import { test, expect, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import { TAI, UGO } from './fixtures/users'
-import { accountSettings } from './support/account'
+import { adminNav, openAdmin, personRow, rowAction } from './support/admin'
 import { expectNoProtocolLeak, expectReadableWithin } from './support/assertions'
 import { BACKUP_LOOKUPS_WHY, backupLookupsCap, AFTER_RELOGIN_404, ConsoleLedger, FIRST_LOGIN_404, recognizedSet404 } from './support/console'
-import { AGENTS, LIST, MANAGE, NEW_CONVERSATION, PEOPLE, THREAD, TIMELINE } from './support/labels'
+import { ADMIN, AGENTS, LIST, MANAGE, NEW_CONVERSATION, THREAD, TIMELINE } from './support/labels'
 import { signIn } from './support/login'
-import { addMember, createChannel, deleteSharedRooms, openManage } from './support/rooms'
+import { addMember, closePicker, createChannel, deleteSharedRooms, openManage } from './support/rooms'
 import { EXIT_REVOKED, startSidecar, type SidecarRun } from './support/sidecar'
 import { channelRow, conversations, messages, row, send, threadPanel } from './support/workspace'
 
@@ -33,8 +33,7 @@ const suffix = Math.random().toString(36).slice(2, 8)
 const NAME = `Assistente ${suffix}`
 const CHANNEL = `sidecar-${suffix}`
 
-const peoplePanel = (page: Page): Locator => page.getByRole('dialog', { name: PEOPLE.title })
-const agentRow = (page: Page): Locator => peoplePanel(page).getByRole('listitem').filter({ hasText: NAME })
+const agentRow = (page: Page): Locator => personRow(page, NAME)
 
 // The whole command, read from the dialog as the admin would copy it (agents.spec.ts readCredential):
 // `npx tayet-agent --server <the page's origin> --token <credential>`, the credential shown once.
@@ -121,17 +120,13 @@ test('agent sidecar: one command and one token, end to end', async ({ browser },
       await expect(channelRow(pageB, CHANNEL)).toBeVisible({ timeout: 60_000 })
     })
 
-    const openPeople = async (): Promise<void> => {
-      const account = await accountSettings(pageA)
-      await expect(account.getByText(PEOPLE.section)).toBeVisible({ timeout: 30_000 })
-      await account.getByRole('button', { name: new RegExp(`^${PEOPLE.title}`) }).click()
-      await expect(peoplePanel(pageA)).toBeVisible()
-    }
+    // Slice 1c: "Pessoas" lives in the Admin, opened from "Sua conta".
+    const openPeople = (): Promise<void> => openAdmin(pageA)
 
     let first = { command: '', credential: '' }
     await test.step('2. tai creates the agent; the dialog shows the whole command once', async () => {
       await openPeople()
-      await peoplePanel(pageA).getByRole('button', { name: AGENTS.add }).click()
+      await pageA.getByRole('button', { name: AGENTS.add }).click()
       const dialog = pageA.getByRole('dialog', { name: AGENTS.createTitle })
       await dialog.getByLabel(AGENTS.fieldName).fill(NAME)
       await dialog.getByRole('button', { name: AGENTS.create }).click()
@@ -153,11 +148,9 @@ test('agent sidecar: one command and one token, end to end', async ({ browser },
 
     let conv = ''
     await test.step('4. tai, the operator, adds the agent through the UI; it enters; ugo is not offered it', async () => {
-      // Leave the People panel and "Sua conta" (Escape steps back through the drill-in until none is open).
-      await expect(async () => {
-        if ((await pageA.getByRole('dialog').count()) > 0) await pageA.keyboard.press('Escape')
-        await expect(pageA.getByRole('dialog')).toHaveCount(0, { timeout: 1_000 })
-      }).toPass({ timeout: 15_000 })
+      // Leave the Admin: back to the conversations.
+      await pageA.getByRole('button', { name: ADMIN.back }).click()
+      await expect(adminNav(pageA)).toHaveCount(0)
       // ADR-090: tai operates the agent, so it is among her candidates, marked (agents.spec.ts step 6).
       await openManage(pageA, CHANNEL, 'private')
       const add = pageA.getByRole('dialog', { name: MANAGE.addMember })
@@ -167,6 +160,7 @@ test('agent sidecar: one command and one token, end to end', async ({ browser },
       await expect(candidate.locator('[data-agent-avatar]')).toHaveCount(1)
       const clicked = Date.now()
       await candidate.click()
+      await closePicker(pageA, candidate)
       // The real sidecar accepts (the invite is the operator's): the roster row loses the "awaiting the
       // first connection" chip — joined, not only invited. The row is seen first (no empty negative).
       const member = pageA.getByRole('region', { name: MANAGE.members }).getByRole('listitem').filter({ hasText: NAME })
@@ -252,8 +246,8 @@ test('agent sidecar: one command and one token, end to end', async ({ browser },
 
     let second = { command: '', credential: '' }
     await test.step('8. Reemitir: the old process exits 78; the new command posts again; ugo sees it', async () => {
-      if ((await peoplePanel(pageA).count()) === 0) await openPeople()
-      await agentRow(pageA).getByRole('button', { name: AGENTS.edit(NAME) }).click()
+      await openPeople()
+      await rowAction(pageA, NAME, AGENTS.editItem)
       await pageA.getByRole('dialog', { name: AGENTS.editTitle }).getByRole('button', { name: AGENTS.reissueCredential }).click()
       const clicked = Date.now()
       await pageA.getByRole('alertdialog').getByRole('button', { name: AGENTS.reissue, exact: true }).click()
@@ -278,7 +272,7 @@ test('agent sidecar: one command and one token, end to end', async ({ browser },
     })
 
     await test.step('9. Remover: the process exits 78; the history stays, with the name and the mark', async () => {
-      await agentRow(pageA).getByRole('button', { name: AGENTS.remove(NAME) }).click()
+      await rowAction(pageA, NAME, AGENTS.removeItem)
       const clicked = Date.now()
       await pageA.getByRole('alertdialog').getByRole('button', { name: AGENTS.removeConfirm, exact: true }).click()
       await expect(agentRow(pageA)).toHaveCount(0, { timeout: 60_000 })

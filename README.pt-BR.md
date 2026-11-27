@@ -11,10 +11,12 @@ mantida pela organização. Você hospeda o stack inteiro.
 ## O que há neste repositório
 
 - `client/` — o cliente web: uma SPA React que só alcança o servidor através de uma Anti-Corruption Layer.
-- `escrow/` — o serviço de custódia por organização: guarda os depósitos de backup de chaves e escreve um log de auditoria append-only.
+- `escrow/` — o serviço de custódia por organização: guarda os depósitos de backup de chaves e as chaves de sessão depositadas pelo agente de custódia, e escreve um log de auditoria append-only. Guarda a chave da organização e nada além disso.
+- `org/` — o serviço de organização: convida e remove pessoas e cria e gerencia agentes, junto ao provedor de identidade e ao canal da organização. Não guarda a chave da organização.
 - `agent/` — o agente de custódia `cofre`: membro de toda sala criptografada, deposita as chaves de sessão da sala no escrow.
 - `shared/` — a biblioteca compartilhada: tipos de domínio, a tradução de protocolo para domínio e o scanner de vazamento de protocolo. O cliente e o sidecar de agente a consomem como `@tayet/shared`.
 - `sidecar/` — o sidecar de agente `tayet-agent`: roda um agente na máquina do operador e serve a ele uma API local; publicado no npm e como imagem de container.
+- `push/` — o gateway de push: transforma os avisos de push do homeserver em Web Push para os serviços de push dos navegadores.
 - `infra/deploy/` — o deploy de produção: stack Compose, Caddy, templates de configuração e `deploy.sh`.
 - `infra/dev-stack/` — o stack local de desenvolvimento contra o qual os pacotes rodam integrados.
 
@@ -40,14 +42,14 @@ O passo a passo, do DNS e do OAuth client do Google até o backup e o restore, e
 
 ## Desenvolvimento
 
-Você precisa de Node 22+. Rode `npm ci` dentro de `client/`, `escrow/`, `agent/`, `shared/` ou
-`sidecar/`. `escrow/` e `agent/` são independentes; `client/` e `sidecar/` ligam `shared/` do mesmo
+Você precisa de Node 22+. Rode `npm ci` dentro de `client/`, `escrow/`, `agent/`, `shared/`,
+`sidecar/`, `push/` ou `org/`. `escrow/`, `agent/`, `push/` e `org/` são independentes; `client/` e `sidecar/` ligam `shared/` do mesmo
 checkout (`file:../shared`), então clone a árvore inteira. `infra/dev-stack/` sobe o stack local
 para o trabalho de integração; sem ele, as suítes de integração são puladas.
 
 Os detalhes de cada pacote estão em [`client/README.md`](client/README.md),
-[`escrow/README.md`](escrow/README.md), [`agent/README.md`](agent/README.md) e
-[`sidecar/README.md`](sidecar/README.md), em inglês.
+[`escrow/README.md`](escrow/README.md), [`agent/README.md`](agent/README.md),
+[`sidecar/README.md`](sidecar/README.md), [`push/README.md`](push/README.md) e [`org/README.md`](org/README.md), em inglês.
 
 ## Decisões
 

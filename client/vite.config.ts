@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
-import type { Plugin } from 'vite'
+import { build, type Plugin } from 'vite'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
@@ -31,11 +32,40 @@ function agentDiscovery(): Plugin {
   }
 }
 
+// ADR-117 dec. 5: the service worker, built on its own after the app as one classic script with a fixed name at the
+// root of dist/ (/sw.js) — no chunk shared with the app, so nothing of the SDK, and no module worker to require.
+// The nested build has no config file, so it does not run this plugin again.
+export const SERVICE_WORKER_ENTRY = fileURLToPath(new URL('./src/sw/sw.ts', import.meta.url))
+
+function serviceWorker(): Plugin {
+  let outDir = 'dist'
+  return {
+    name: 'tayet-service-worker',
+    apply: 'build',
+    configResolved: (c) => {
+      outDir = resolve(c.root, c.build.outDir)
+    },
+    closeBundle: async () => {
+      await build({
+        configFile: false,
+        logLevel: 'warn',
+        publicDir: false,
+        build: {
+          outDir,
+          emptyOutDir: false,
+          target: 'es2022',
+          lib: { entry: SERVICE_WORKER_ENTRY, formats: ['iife'], name: 'tayetServiceWorker', fileName: () => 'sw.js' },
+        },
+      })
+    },
+  }
+}
+
 // Single config for both the app (Vite dev/build) and the tests (Vitest). The React plugin
 // gives the automatic JSX runtime (React 19) to both. Boundary lint still governs src/** — the
 // UI can only import the acl barrel, never matrix-js-sdk (ADR-007).
 export default defineConfig({
-  plugins: [react(), agentDiscovery()],
+  plugins: [react(), agentDiscovery(), serviceWorker()],
   // Proxy de DEV apenas (ADR-021): o app de browser alcança o escrow same-origin via
   // /escrow, sem CORS no serviço. CORS = origem permitida = ❓2 (modelo de hosting),
   // deferida. Consumo real no app é fatia à parte. Aponta para o escrow do compose,

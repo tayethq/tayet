@@ -210,11 +210,14 @@ test('search index survives a reload with history blocked (ADR-074 D3)', async (
         [],
         [{ text: 'Failed to load resource: net::ERR_FAILED', at: HISTORY, max: CONVERSATIONS, why: 'history request aborted by the spec' }],
       )
-      // Aborted requests per conversation, keyed by the conversation's path segment (kept in memory only).
-      const blocked = new Map<string, number>()
+      // Aborted requests per conversation, keyed by the conversation's path segment (kept in memory only), each
+      // with its endpoint and its limit: the log says who asked, never the conversation's id or a token.
+      const blocked = new Map<string, Array<{ kind: string; limit: string | null }>>()
       await pageB.route(HISTORY, (route) => {
-        const key = new URL(route.request().url()).pathname.split('/')[5] ?? ''
-        blocked.set(key, (blocked.get(key) ?? 0) + 1)
+        const url = new URL(route.request().url())
+        const segments = url.pathname.split('/')
+        const key = segments[5] ?? ''
+        blocked.set(key, [...(blocked.get(key) ?? []), { kind: segments[6] ?? '', limit: url.searchParams.get('limit') }])
         return route.abort()
       })
       await pageB.reload()
@@ -225,9 +228,15 @@ test('search index survives a reload with history blocked (ADR-074 D3)', async (
       await expect(results.getByRole('button', { name: `${RITA_NAME}: ${target}` })).toBeVisible()
       await expectNoProtocolLeak(pageB)
       await pageB.unroute(HISTORY)
-      const counts = [...blocked.values()]
+      const counts = [...blocked.values()].map((reqs) => reqs.length)
       const total = counts.reduce((a, b) => a + b, 0)
       console.log(`[e2e] history requests aborted after the reload: ${total} in ${counts.length} conversation(s)`)
+      const perConversation = [...blocked.values()].map((reqs) => ({
+        messages: reqs.filter((r) => r.kind === 'messages').length,
+        context: reqs.filter((r) => r.kind === 'context').length,
+        limits: reqs.map((r) => `${r.kind}:${r.limit ?? '-'}`),
+      }))
+      console.log(`[e2e] aborted history requests per conversation: ${JSON.stringify(perConversation)}`)
       // The client does not retry a failed history request, and only quim's conversations ask for history.
       expect(Math.max(0, ...counts), `aborted requests per conversation: ${JSON.stringify(counts)}`).toBeLessThanOrEqual(1)
       expect(counts.length, `conversations with an aborted request: ${counts.length}`).toBeLessThanOrEqual(CONVERSATIONS)

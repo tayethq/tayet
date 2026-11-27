@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { GROUP_MAX_OTHERS } from '@tayet/client'
 import type { NewChannel, Presence, User, UserId } from '@tayet/client'
 import { Avatar, Button, Dialog, Field, ScreenHeader, Segmented } from '../primitives'
-import { Close, Search } from '../icons'
 import { AgentAvatar, agentColorOf } from './AgentAvatar'
+import { PeopleFilter, matchesName } from './PeopleFilter'
 import { t, GLYPH } from '../i18n'
 
 // New-conversation dialog (Track U/U3, ADR-029). The first CREATION surface in the UI, mounted at
@@ -38,13 +38,11 @@ import { t, GLYPH } from '../i18n'
 type Mode = 'channel' | 'dm'
 
 // The send lock (PLANO-MOBILE M6 N2, T1): while a verb is in flight no path closes the surface, for at most this
-// long. The three verbs have no deadline of their own (issue #421); past the cap the paths close again and the
-// verb keeps running.
+// long. Past the cap the paths close again ("Cancelar" on the wide screen too) and the verb keeps running until
+// the session's HTTP deadline settles it (issue #421, F2); a late success then adds the conversation to the list
+// without taking the selection (F4: each verb gets `wanted`, false once the surface is gone).
 export const SUBMIT_LOCK_MS = 10_000
 type Kind = NewChannel['kind'] // 'public' | 'private'
-
-// The filter matches the name without accents and without case (§9 item 10).
-const fold = (s: string): string => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
 
 export function NewConversationDialog({
   onCreateChannel,
@@ -57,9 +55,9 @@ export function NewConversationDialog({
   narrow = false,
   onLockChange,
 }: {
-  onCreateChannel: (input: NewChannel) => Promise<void>
-  onOpenDirectMessage: (user: UserId) => Promise<void>
-  onOpenGroupConversation: (users: UserId[]) => Promise<void>
+  onCreateChannel: (input: NewChannel, wanted?: () => boolean) => Promise<void>
+  onOpenDirectMessage: (user: UserId, wanted?: () => boolean) => Promise<void>
+  onOpenGroupConversation: (users: UserId[], wanted?: () => boolean) => Promise<void>
   loadKnownContacts: () => Promise<User[]>
   onClose: () => void
   // Compose intent seeded by the ChannelList "+" (Track U/U3, F3): which mode the dialog opens in.
@@ -186,8 +184,7 @@ export function NewConversationDialog({
     setSubmitError(false)
   }
 
-  const term = fold(filter.trim())
-  const matches = (user: User) => term.length === 0 || fold(user.displayName).includes(term)
+  const matches = matchesName(filter)
   const suggestions = contacts.filter((user) => !members.some((member) => member.id === user.id) && matches(user))
   const rows = contacts.filter(matches)
   const full = selected.length >= GROUP_MAX_OTHERS
@@ -201,17 +198,19 @@ export function NewConversationDialog({
     setSubmitting(true)
     setSubmitError(false)
     lock(true)
+    // Closed past the cap, the surface is gone: a late success must not select (F4).
+    const wanted = () => mounted.current
     try {
       if (mode === 'channel') {
         const input: NewChannel = { name: trimmedName, kind }
         const trimmedTopic = topic.trim()
         if (trimmedTopic.length > 0) input.topic = trimmedTopic
         if (members.length > 0) input.members = members.map((user) => user.id)
-        await onCreateChannel(input)
+        await onCreateChannel(input, wanted)
       } else if (selected.length === 1) {
-        await onOpenDirectMessage(selected[0]!.id)
+        await onOpenDirectMessage(selected[0]!.id, wanted)
       } else {
-        await onOpenGroupConversation(selected.map((user) => user.id))
+        await onOpenGroupConversation(selected.map((user) => user.id), wanted)
       }
       // Closed past the cap: nothing to close again, no state to write.
       if (!mounted.current) return
@@ -380,7 +379,7 @@ export function NewConversationDialog({
                         </button>
                       ))}
                     </div>
-                    {term.length > 0 && suggestions.length === 0 && !contactsLoading && (
+                    {filter.trim().length > 0 && suggestions.length === 0 && !contactsLoading && (
                       <p className="compose-dialog__no-results">{t('people.noResults', { term: filter.trim() })}</p>
                     )}
                   </>
@@ -429,7 +428,7 @@ export function NewConversationDialog({
 
         <div className={narrow ? 'compose-screen__footer' : 'ui-dialog__footer'}>
           {!narrow && (
-            <Button variant="secondary" onClick={onClose} disabled={submitting}>
+            <Button variant="secondary" onClick={close} disabled={locked}>
               {t('newConversation.cancel')}
             </Button>
           )}
@@ -516,39 +515,6 @@ function PersonChip({ user, onRemove, whole = false }: { user: User; onRemove: (
   )
 }
 
-// The local name filter (§6.2, §9 items 10–11): the idiom of the People filter. Enter never submits
-// the form from here.
-function PeopleFilter({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  return (
-    <label className="compose-dialog__filter">
-      <span className="compose-dialog__filter-icon" aria-hidden="true">
-        <Search />
-      </span>
-      <input
-        className="compose-dialog__filter-input"
-        type="text"
-        aria-label={t('newConversation.filterPeople')}
-        placeholder={t('newConversation.filterPeople')}
-        autoComplete="off"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.preventDefault()
-        }}
-      />
-      {value.length > 0 && (
-        <button
-          type="button"
-          className="compose-dialog__filter-clear"
-          aria-label={t('people.clearFilter')}
-          onClick={() => onChange('')}
-        >
-          <Close />
-        </button>
-      )}
-    </label>
-  )
-}
 
 // The selected row's check (§10.2): 14, accent, aria-hidden — the state is the row's aria-pressed.
 function CheckMark() {

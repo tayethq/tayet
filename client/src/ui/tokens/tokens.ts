@@ -75,7 +75,9 @@ export const tokens = {
     "scrim": "var(--color-scrim)",
     "surface": "var(--color-surface)",
     "surface-raised": "var(--color-surface-raised)",
-    "text": "var(--color-text)"
+    "text": "var(--color-text)",
+    "warning": "var(--color-warning)",
+    "warning-wash": "var(--color-warning-wash)"
   },
   "density": {
     "cotidiano": {

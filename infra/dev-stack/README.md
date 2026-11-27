@@ -17,12 +17,12 @@ integração deixam de auto-skipar quando a stack está up.
 
 ## Uso
 ```bash
-./dev-stack.sh up          # sobe, gera+injeta a org key, espera Synapse + escrow, semeia alice/bob/system + canal da org; alice é a admin da org (flag do MAS)
-./dev-stack.sh status      # estado dos containers + probe Synapse + escrow + seed (read-only)
+./dev-stack.sh up          # sobe, gera+injeta a org key, espera Synapse + escrow + org, semeia alice/bob/system + canal da org; alice é a admin da org (flag do MAS)
+./dev-stack.sh status      # estado dos containers + probe Synapse + escrow + org + router + seed (read-only)
 ./dev-stack.sh token alice # emite um compat token p/ conferência manual
 ./dev-stack.sh test        # roda a suíte do client/ com a stack up
 ./dev-stack.sh down        # derruba PRESERVANDO volumes (alice/bob e depósitos sobrevivem)
-./dev-stack.sh reset       # derruba COM -v: APAGA o Postgres e o escrowdata (footgun de estado sujo)
+./dev-stack.sh reset       # derruba COM -v: APAGA o Postgres, o escrowdata e o orgdata (footgun de estado sujo)
 ```
 
 > **Efeito colateral do `up` sobre tokens de `system` (ADR-054 dec. 5).** O `up` revoga, ao
@@ -126,9 +126,8 @@ não é o único caminho de criação de usuário.
 O serviço de escrow (`escrow/` na raiz do repo) **é um serviço do compose** desde a fatia
 `dev-stack-escrow` (ADR-021): roda da fonte (`node --experimental-strip-types
 src/server.ts`, zero build, volume read-only), com store persistente no volume nomeado
-`escrowdata` e porta publicada **só no loopback do host** (`127.0.0.1:8090:8090`). Dentro
-do container o bind é `0.0.0.0` (`ESCROW_BIND`) — bind em loopback do container não
-responderia via porta publicada; o default do serviço continua `127.0.0.1`.
+`escrowdata`, **sem porta publicada**: o host o alcança pelo `router` (abaixo). Dentro
+do container o bind é `0.0.0.0` (`ESCROW_BIND`); o default do serviço continua `127.0.0.1`.
 
 - **Org key gitignored, gerada uma vez.** O `up` gera `escrow.secret.env`
   (`openssl rand -base64 32`) se ausente e a injeta no `compose up` via `--env-file`
@@ -139,12 +138,30 @@ responderia via porta publicada; o default do serviço continua `127.0.0.1`.
   `client/test/support/escrow-harness.ts`) continua spawnando o **seu próprio** escrow
   efêmero (porta efêmera, storeDir por-run — "mundo virgem" do C2). Coexistem.
 - **Browser → escrow via proxy de dev.** O app de browser alcança o escrow same-origin
-  por `/escrow` (proxy do Vite → `:8090`), sem CORS no serviço. Ver ADR-021.
+  por `/escrow` (proxy do Vite → `:8090`, o `router`), sem CORS no serviço. Ver ADR-021.
 
 O cliente de introspecção RFC 7662 em `mas/config.yaml` (`clients:`, id `…ESCR0W`, segredo
 throwaway classe deste README) é absorvido pelo `config sync --prune` que o `up` já roda.
 O client admin do escrow (id `…ESCADM1N`, ADR-082 dec. 3) segue o mesmo regime; a admin API do MAS
 fica no listener interno (`mas:8081`), sem porta no host.
+
+### Serviço `org` e o `router` (ADR-118)
+Pessoas e agentes (`/v1/people*`, `/v1/agents*`) são do serviço `org` (`org/` na raiz do repo),
+no mesmo regime do escrow: da fonte, volume `orgdata` (só o `audit.jsonl` dele), clients próprios
+no MAS (`…RG1NTR` de introspecção e `…RGADM1N` admin, segredos throwaway inline no compose).
+**Sem porta publicada.**
+
+O `router` (Caddy, mesmo digest da produção, `router/Caddyfile`) é quem publica
+`127.0.0.1:${TAYET_ESCROW_PORT:-8090}`. Ele repete o corte por caminho do `Caddyfile` de produção,
+sem o prefixo `/escrow` (o proxy do Vite e o harness já o tiram): `/v1/people`, `/v1/people/*`,
+`/v1/agents`, `/v1/agents/*` e `/v1/org/*` vão ao `org:8091`; o resto, `/healthz` inclusive, ao
+`escrow:8090`. Por isso `TAYET_ESCROW_URL` e a chave `/escrow` de `client/vite.config.ts` não
+mudam. Mudou o matcher de um lado, mude o do outro. O agente de custódia segue falando direto com
+`escrow:8090`.
+
+**Troca de checkout entre topologias.** Numa branch anterior ao `org`, o escrow publica a 8090
+ele mesmo. Ao voltar o checkout principal para ela, `docker rm -f spike-router-1 spike-org-1`
+antes do `up`: sem isso o `router` órfão segura a porta e o escrow não sobe.
 
 ### Agente de custódia `cofre` (PR-3, ADR-057 dec. 5)
 O agente (`agent/` na raiz do repo) é um serviço do compose no mesmo regime do escrow:
@@ -177,12 +194,12 @@ numa stack já de pé, `docker restart spike-dex-1`. A exceção é `mel` (e `ra
 
 **Provider simulado (ADR-083, `people.spec.ts`).** "Google (simulado)" é um segundo provider do MAS sobre o
 mesmo Dex, com o mapeamento do Google de produção: `subject` = email, `localpart: ignore`, `email: require`.
-`ESCROW_PEOPLE_PROVIDER_ID` aponta para ele, e é assim que o vínculo pré-criado pelo escrow casa com o login.
+`ORG_PEOPLE_PROVIDER_ID` aponta para ele, e é assim que o vínculo pré-criado pelo serviço `org` casa com o login.
 Uma stack de pé pega o par assim: `config sync` do MAS e restart dele (é o que o `up` faz), mais
 `docker restart spike-dex-1`.
 
-**O `up` não recria o escrow.** O serviço roda da fonte por bind mount e o container sobrevive ao `up`: depois
-de mudar `escrow/src`, `docker restart spike-escrow-1`.
+**O `up` não recria o escrow nem o `org`.** Os dois rodam da fonte por bind mount e o container sobrevive ao `up`:
+depois de mudar `escrow/src`, `docker restart spike-escrow-1`; depois de mudar `org/src`, `docker restart spike-org-1`.
 
 **O `conversation.spec.ts` assume stack limpa.** Localmente, antes de rodar o tier:
 
@@ -235,7 +252,7 @@ compartilhado — aceitável na prova local; o CI usa checkout próprio.
   `docker exec spike-mas-1` por default. O `compose.yaml` tem `name: ${TAYET_COMPOSE_PROJECT:-spike}`
   e o script passa `-p` do mesmo valor (que vence). Mudar o nome exige mudar
   `TAYET_MAS_CONTAINER` no ambiente de teste junto — o `dev-stack.sh test` já exporta.
-- **`reset` apaga o Postgres, o `escrowdata` e o `agentdata`** (`down -v`). Usuários
+- **`reset` apaga o Postgres, o `escrowdata`, o `orgdata` e o `agentdata`** (`down -v`). Usuários
   alice/bob, tokens, depósitos do escrow e o store do agente NÃO sobrevivem →
   re-provisionar depois. `up`/`down` preservam. A org key (`escrow.secret.env`), a storage
   key do agente (`agent.secret.env`) e o token do cofre (`agent-token.secret`) persistem no

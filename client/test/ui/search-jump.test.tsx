@@ -59,6 +59,8 @@ function fakeAcl(pages: Pages, opts: { root?: Message | undefined } = {}) {
     getThreadUnread: async () => ({ unread: false }),
     getTimeline,
     getMessage,
+    getConnectionState: () => 'connecting' as const,
+    getChannelAbilities: () => ({ rename: false, editTopic: false, addPeople: false, removePeople: false, setRoles: false, archive: false }),
     subscribe: () => noop,
     subscribeChannel: () => noop,
     markRead: async () => {},

@@ -32,14 +32,24 @@ chat.{$TAYET_DOMAIN} {
 
     # Escrow same-origin (ADR-046/047). handle_path STRIPPA /escrow — espelho exato
     # do rewrite do proxy de dev do Vite (§0.4). NUNCA trocar por `handle`.
+    # Inside it, people, agents and org go to the org service; the rest to the
+    # escrow. Same split as infra/dev-stack/router/Caddyfile.
     handle_path /escrow/* {
-        reverse_proxy escrow:8090
+        @org path /v1/people /v1/people/* /v1/agents /v1/agents/* /v1/org/*
+        handle @org {
+            reverse_proxy org:8091
+        }
+        handle {
+            reverse_proxy escrow:8090
+        }
     }
     # ADR-087 dec. 2: descoberta do sidecar pela URL do produto. JSON inline, estático.
     handle /.well-known/tayet/agent {
         header Content-Type application/json
         respond `{"server": "https://matrix.{$TAYET_DOMAIN}", "account": "/escrow"}` 200
     }
+    # Service worker (ADR-117): nome fixo, então o navegador revalida a cada checagem — só ele.
+    header /sw.js Cache-Control no-cache
     handle {
         root * /srv/app
         try_files {path} /index.html

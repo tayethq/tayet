@@ -19,8 +19,10 @@ import type {
   AwaitingApproval,
   Person,
   PersonInvite,
+  OrgAccess,
   Presence,
   RosterEntry,
+  ChannelAbilities,
   ThreadUnread,
   User,
   UserId,
@@ -49,6 +51,7 @@ import { ChannelManagementPanel } from './ChannelManagementPanel'
 import { GroupDetailsPanel } from './GroupDetailsPanel'
 import { NewConversationDialog } from './NewConversationDialog'
 import { AccountSettings, type KnownAccess } from './AccountSettings'
+import { OrgAdmin } from './OrgAdmin'
 import type { DataExportVerb } from '../useDataExport'
 import { UserProfileDialog } from './UserProfileDialog'
 import { AgentFormDialog } from './AgentFormDialog'
@@ -64,6 +67,7 @@ import { isCoarseOrNarrow } from '../narrow'
 import { useStackBack, useStackDialog } from '../stack'
 import type { Theme } from '../theme'
 import type { LanguageState } from '../useLanguage'
+import type { DeviceNotificationsRow } from '../useDeviceNotifications'
 import { t, APP_NAME, GLYPH } from '../i18n'
 
 // workspace.md §13 item 2: at rest (`connected`) the sidebar says nothing.
@@ -145,6 +149,7 @@ export function Workspace({
   onSendThreadAttachment,
   managing,
   members,
+  channelAbilities,
   onManageChannel,
   onCloseManage,
   onUpdateChannel,
@@ -163,6 +168,8 @@ export function Workspace({
   accesses,
   orgAdmin,
   people,
+  onGetOrgAccess,
+  onSetOrgAdmin,
   onInvitePerson,
   onRemovePerson,
   onCreateAgent,
@@ -184,6 +191,7 @@ export function Workspace({
   theme,
   onThemeChange,
   language,
+  notifications,
   notificationsPrompt,
   search,
   awaiting,
@@ -229,6 +237,8 @@ export function Workspace({
   // roster from `members` (defaulting to []) and the interactive controls only when the handlers are
   // wired. App always wires them; the render-scan harness mounts the panel bare.
   members?: RosterEntry[]
+  // ADR-115 (Proposto): what the session may do in the managed channel. Absent = not read: read-only.
+  channelAbilities?: ChannelAbilities
   onManageChannel?: (channel: Channel) => void
   onCloseManage?: () => void
   onUpdateChannel?: (id: ChannelId, patch: ChannelPatch) => Promise<void>
@@ -243,9 +253,9 @@ export function Workspace({
   // Compose sub-slice (Track U/U3, ADR-029). All optional, mirroring the management props: the
   // "New conversation" entry + dialog mount only when wired. App always wires them; the render-scan
   // harness mounts the dialog directly (not via Workspace).
-  onCreateChannel?: (input: NewChannel) => Promise<void>
-  onOpenDirectMessage?: (user: UserId) => Promise<void>
-  onOpenGroupConversation?: (users: UserId[]) => Promise<void>
+  onCreateChannel?: (input: NewChannel, wanted?: () => boolean) => Promise<void>
+  onOpenDirectMessage?: (user: UserId, wanted?: () => boolean) => Promise<void>
+  onOpenGroupConversation?: (users: UserId[], wanted?: () => boolean) => Promise<void>
   loadKnownContacts?: () => Promise<User[]>
   // ADR-090 (Proposto) dec. 3: the DM CTA on an agent's profile only for its operator. Absent (bare
   // harness) → no agent is own: fail-closed, the CTA never shows on an agent.
@@ -256,6 +266,9 @@ export function Workspace({
   // ADR-083: a seção "Organização" de "Sua conta". Ausente (harness bare) = operador sem a seção.
   orgAdmin?: boolean
   people?: Person[]
+  // ADR-118 (fatia 1c): the Admin, opened from "Sua conta" on the wide window. Absent → no Admin row.
+  onGetOrgAccess?: () => Promise<OrgAccess>
+  onSetOrgAdmin?: (user: UserId, admin: boolean) => Promise<void>
   onInvitePerson?: (person: NewPerson) => Promise<PersonInvite>
   onRemovePerson?: (user: UserId) => Promise<void>
   onCreateAgent?: (name: string, color: AgentColor) => Promise<NewAgent>
@@ -296,6 +309,9 @@ export function Workspace({
   onThemeChange?: (theme: Theme) => void
   // The language row of "Your account" (app-side, like the theme). Optional for the same reason.
   language?: LanguageState
+  // ADR-117, addendum of 26/Nov/2026 (F1): the "Notifications" row of "Your account" (app-side, like the language),
+  // owned by useDeviceNotifications in App. Optional: the bare harness omits it and the row is not drawn.
+  notifications?: DeviceNotificationsRow
   // ADR-073 dec. 6 (app-side, como o tema): o aviso de permissão de notificações na lista de
   // conversas. App o liga só enquanto deve aparecer; o harness o omite.
   notificationsPrompt?: { onEnable: () => void; onDismiss: () => void }
@@ -347,6 +363,10 @@ export function Workspace({
   // mode the dialog opens in. Channel "+" → 'channel', DM "+" → 'dm'.
   const [composeMode, setComposeMode] = useState<'channel' | 'dm'>('channel')
   const [accountOpen, setAccountOpen] = useState(false)
+  // The Admin (organization-admin.md §2.1; C2, C7): full screen in place of the workspace, wide window only, for
+  // an admin only. It closes on going back, when the role drops (R6) and when the window narrows below 728px.
+  const [adminOpen, setAdminOpen] = useState(false)
+  const accountButton = useRef<HTMLButtonElement>(null)
   // Drill-in de perfil-de-outro (ADR-043): qual perfil está aberto (UserId opaco) ou null. Espelha
   // o padrão de estado local de `composing`/`accountOpen`. Gated por onLoadUserProfile (App liga; o
   // harness bare omite → a sub-tela nunca monta). Os entry points o setam no Commit 3.
@@ -432,11 +452,17 @@ export function Workspace({
   const composeScreen = narrow && composing && canCompose
   // So is "Sua conta", with the screens above it (account-access.md §13.2; PLANO-MOBILE M7 H1).
   const accountScreen = narrow && accountOpen && canAccount
-  // So are a group's details, someone's profile over them and the agent's form over both (PLANO-MOBILE M8).
+  // So are a group's details, someone's profile over them and the agent's form over both (PLANO-MOBILE M8),
+  // and a channel's details (channel-management.md §13.2).
   const groupScreen = narrow && managing?.kind === 'group' && Boolean(onCloseManage && onLeaveChannel && onConvertToChannel)
+  const channelScreen =
+    narrow &&
+    managing !== undefined &&
+    managing.kind !== 'group' &&
+    Boolean(onCloseManage && onUpdateChannel && onArchiveChannel && onLeaveChannel && onAddMember && onRemoveMember && onSetRole && loadCandidates)
   const profileScreen = narrow && openProfile !== null && Boolean(onLoadUserProfile)
   const formScreen = narrow && Boolean(agentForm?.form)
-  const screenOver = composeScreen || accountScreen || groupScreen || profileScreen || formScreen
+  const screenOver = composeScreen || accountScreen || groupScreen || channelScreen || profileScreen || formScreen
   const stackProps = (of: Screen) =>
     screen !== undefined && (screen !== of || screenOver) ? { 'data-stack-covered': '', inert: true } : {}
   const backToList = useStackBack(() => onBackToList?.())
@@ -587,8 +613,22 @@ export function Workspace({
       current.topic
     ) : undefined
 
+  const canAdmin = Boolean(orgAdmin && onGetOrgAccess && onSetOrgAdmin && onInvitePerson && onRemovePerson)
+  const adminShown = adminOpen && canAdmin && !narrow
+  useEffect(() => {
+    if (adminOpen && !adminShown) {
+      setAdminOpen(false)
+      accountButton.current?.focus()
+    }
+  }, [adminOpen, adminShown])
+  const closeAdmin = () => {
+    setAdminOpen(false)
+    // Back from the Admin, the focus returns to the account button that led there.
+    requestAnimationFrame(() => accountButton.current?.focus())
+  }
+
   const shell = (
-    <div className="workspace" data-stack={screen}>
+    <div className="workspace" data-stack={screen} hidden={adminShown || undefined}>
       <aside className="sidebar" {...stackProps('list')}>
         <div className="sidebar__brand">
           <span className="sidebar__brand-tile" aria-hidden="true">
@@ -684,6 +724,7 @@ export function Workspace({
         )}
         {canAccount && (
           <button
+            ref={accountButton}
             type="button"
             className="sidebar__footer"
             aria-label={t('shell.account')}
@@ -753,8 +794,8 @@ export function Workspace({
       )}
       <main className="main" {...stackProps('chat')}>
         {narrow ? (
-          // The screen header — back, the kind's heading, and only a group's "⋯" (a
-          // channel's management is not part of the narrow shell).
+          // The screen header — back, the kind's heading, and the "⋯" of a group or a channel (workspace.md
+          // §37 item 1); a direct message has none.
           <ScreenHeader
             className="channel-screen-header"
             onBack={backToList}
@@ -764,13 +805,13 @@ export function Workspace({
             titleClassName={groupAlone ? 'channel-header__name--alone' : undefined}
             subtitle={headerSubtitle}
             action={
-              headerGroup && onManageChannel ? (
+              current && current.kind !== 'dm' && onManageChannel ? (
                 <button
                   type="button"
                   className="ui-screen-header__action"
-                  onClick={() => onManageChannel(headerGroup)}
-                  aria-label={manageLabel(headerGroup)}
-                  title={manageLabel(headerGroup)}
+                  onClick={() => onManageChannel(current)}
+                  aria-label={manageLabel(current)}
+                  title={manageLabel(current)}
                 >
                   <More size={20} />
                 </button>
@@ -942,6 +983,7 @@ export function Workspace({
           key={managing.id}
           channel={managing}
           members={members ?? []}
+          abilities={channelAbilities}
           onUpdateChannel={onUpdateChannel}
           onArchiveChannel={onArchiveChannel}
           onLeaveChannel={onLeaveChannel}
@@ -952,6 +994,8 @@ export function Workspace({
           onOpenProfile={onLoadUserProfile ? (u) => setOpenProfile(u) : undefined}
           presenceOf={presenceOf}
           onClose={onCloseManage}
+          narrow={narrow}
+          covered={profileScreen || formScreen}
         />
       )}
       {composing && canCompose && (
@@ -975,13 +1019,7 @@ export function Workspace({
           accesses={accesses ?? []}
           orgAdmin={orgAdmin}
           people={people}
-          inviteChannels={channels}
-          onInvitePerson={onInvitePerson}
-          onRemovePerson={onRemovePerson}
-          onCreateAgent={onCreateAgent}
-          onUpdateAgent={onUpdateAgent}
-          onReissueAgent={onReissueAgent}
-          onRemoveAgent={onRemoveAgent}
+          onOpenAdmin={canAdmin ? () => setAdminOpen(true) : undefined}
           displayName={currentUser?.displayName}
           avatarUrl={accountAvatar}
           presence={selfPresence}
@@ -996,6 +1034,7 @@ export function Workspace({
           theme={theme!}
           onThemeChange={onThemeChange!}
           language={language!}
+          notifications={notifications}
           narrow={narrow}
           onClose={() => setAccountOpen(false)}
         />
@@ -1016,7 +1055,7 @@ export function Workspace({
           onSubscribePresence={onSubscribePresence}
           onOpenDirectMessage={canDm ? onOpenDirectMessage : undefined}
           onClose={() => setOpenProfile(null)}
-          onNavigated={groupScreen ? onCloseManage : undefined}
+          onNavigated={groupScreen || channelScreen ? onCloseManage : undefined}
           narrow={narrow}
           covered={formScreen}
         />
@@ -1053,7 +1092,27 @@ export function Workspace({
     </div>
   )
   // Thumbnails in the timeline and in the thread open the viewer through this (§25.2; §23.12, thread).
-  return <OpenImageContext.Provider value={setImage}>{shell}</OpenImageContext.Provider>
+  return (
+    <OpenImageContext.Provider value={setImage}>
+      {adminShown && (
+        <OrgAdmin
+          people={people ?? []}
+          inviteChannels={channels}
+          displayName={currentUser?.displayName}
+          onBack={closeAdmin}
+          onGetOrgAccess={onGetOrgAccess!}
+          onSetOrgAdmin={onSetOrgAdmin!}
+          onInvitePerson={onInvitePerson!}
+          onRemovePerson={onRemovePerson!}
+          onCreateAgent={onCreateAgent}
+          onUpdateAgent={onUpdateAgent}
+          onReissueAgent={onReissueAgent}
+          onRemoveAgent={onRemoveAgent}
+        />
+      )}
+      {shell}
+    </OpenImageContext.Provider>
+  )
 }
 
 // The held row (§23.8 item 7, PLANO-MOBILE R3): its scroller moves it to sit just above the sheet (a row taller

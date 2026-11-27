@@ -363,7 +363,7 @@ describe('the notifier never sees a panel', () => {
       setTimeout: () => 1,
       clearTimeout: () => {},
     }
-    const notifier = createNotifier({ getChannel: () => undefined, getSelectedId: () => undefined, select: () => {}, getMembers: async () => [] }, env)
+    const notifier = createNotifier({ getChannel: () => undefined, getSelectedId: () => undefined, select: () => {}, jumpTo: () => {}, getMembers: async () => [] }, env)
     notifier.handle({ t: 'panels.changed', channelId: CH, panels: [P_A] })
     expect(notify).not.toHaveBeenCalled()
   })

@@ -1,3 +1,4 @@
+import { refusePushSubscription } from './push'
 import type { BrowserContext, Page } from '@playwright/test'
 
 // window.Notification as the browser E2E tier drives it (ADR-073). The system notification and the
@@ -91,6 +92,17 @@ const NOTIFICATION_STUB = ({ initial, binding }: { initial: Permission; binding:
   ;(window as unknown as { __e2eNotifications: StubControl }).__e2eNotifications = control
 }
 
+// The device's notifications preference as the app writes it (src/ui/notifications-pref.ts; e2e imports nothing from
+// src). Only when the page has none: a sign-out clears it, and the next page starts on again.
+export const NOTIFICATIONS_PREF_KEY = 'tayet.notifications'
+export function seedNotificationsOn(): void {
+  try {
+    if (localStorage.getItem('tayet.notifications') === null) localStorage.setItem('tayet.notifications', 'on')
+  } catch {
+    // an origin without storage (about:blank)
+  }
+}
+
 export class NotificationStub {
   readonly shown: Shown[] = []
   requests = 0
@@ -103,6 +115,11 @@ export class NotificationStub {
     const stub = new NotificationStub()
     await context.exposeFunction(BINDING, (e: StubEvent) => stub.record(e))
     await context.addInitScript(NOTIFICATION_STUB, { initial, binding: BINDING })
+    // The push subscription is not these specs' subject: it refuses quietly (support/push.ts).
+    await context.addInitScript(refusePushSubscription)
+    // Already granted: the person turned them on before (ADR-117, addendum of 26/Nov/2026, F4 — the live tab notifies
+    // only with the device's preference on). The gesture is notifications.spec.ts's subject, which starts at default.
+    if (initial === 'granted') await context.addInitScript(seedNotificationsOn)
     return stub
   }
 

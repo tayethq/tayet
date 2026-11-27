@@ -1,6 +1,6 @@
 import { test, expect, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import { MEL, NIC } from './fixtures/users'
-import { accountSettings } from './support/account'
+import { openAdmin, peopleTable, personRow, rowAction } from './support/admin'
 import { expectNoProtocolLeak } from './support/assertions'
 import {
   AFTER_REVOCATION_401,
@@ -9,7 +9,7 @@ import {
   FIRST_LOGIN_404,
   recognizedSet404,
 } from './support/console'
-import { ACCOUNT, LIST, MANAGE, PEOPLE, SESSION } from './support/labels'
+import { ACCOUNT, ADMIN, LIST, MANAGE, PEOPLE, SESSION } from './support/labels'
 import { APP, signIn } from './support/login'
 import { createChannel, openManage } from './support/rooms'
 import { channelRow, orgChannel } from './support/workspace'
@@ -36,15 +36,11 @@ async function watchOpaqueLocalpart(context: BrowserContext): Promise<void> {
   })
 }
 
-const peoplePanel = (page: Page): Locator => page.getByRole('dialog', { name: PEOPLE.title })
-const personRow = (page: Page, name: string): Locator =>
-  peoplePanel(page).getByRole('listitem').filter({ hasText: name })
-
 async function invite(
   page: Page,
   { name, email, guestIn }: { name: string; email: string; guestIn?: string },
 ): Promise<Locator> {
-  await peoplePanel(page).getByRole('button', { name: PEOPLE.invite }).click()
+  await page.getByRole('button', { name: PEOPLE.invite }).click()
   const dialog = page.getByRole('dialog', { name: PEOPLE.invite })
   await dialog.getByLabel(PEOPLE.fieldName).fill(name)
   await dialog.getByLabel(PEOPLE.fieldEmail).fill(email)
@@ -83,11 +79,9 @@ test('people: invite, guest through the simulated Google, cancel and remove', as
       await createChannel(pageA, { name: channel, kind: 'private' })
     })
 
-    await test.step('2. Sua conta → Organização → Pessoas', async () => {
-      const account = await accountSettings(pageA)
-      await expect(account.getByText(PEOPLE.section)).toBeVisible({ timeout: 30_000 })
-      await account.getByRole('button', { name: new RegExp(`^${PEOPLE.title}`) }).click()
-      await expect(peoplePanel(pageA)).toBeVisible()
+    await test.step('2. Sua conta → Organização → Administrar organização (Pessoas)', async () => {
+      await openAdmin(pageA)
+      await expect(peopleTable(pageA)).toBeVisible()
     })
 
     await test.step('3. nic is invited as a guest: the instructions name the host and the email', async () => {
@@ -102,7 +96,7 @@ test('people: invite, guest through the simulated Google, cancel and remove', as
     await test.step('4. gho is invited and the invite is cancelled', async () => {
       await closeInvite(await invite(pageA, { name: GHO_NAME, email: GHO_EMAIL }))
       await expect(personRow(pageA, GHO_NAME)).toContainText(PEOPLE.pending, { timeout: 30_000 })
-      await personRow(pageA, GHO_NAME).getByRole('button', { name: PEOPLE.cancelInviteOf(GHO_NAME) }).click()
+      await rowAction(pageA, GHO_NAME, PEOPLE.cancelInvite)
       const confirm = pageA.getByRole('alertdialog', { name: PEOPLE.cancelInviteOf(GHO_NAME) })
       await confirm.getByRole('button', { name: PEOPLE.cancelInvite, exact: true }).click()
       await expect(personRow(pageA, GHO_NAME)).toHaveCount(0, { timeout: 30_000 })
@@ -127,7 +121,8 @@ test('people: invite, guest through the simulated Google, cancel and remove', as
 
     await test.step('6. back on A, nic is no longer pending', async () => {
       await expect(personRow(pageA, NIC_NAME)).not.toContainText(PEOPLE.pending, { timeout: 60_000 })
-      await expect(personRow(pageA, NIC_NAME)).toContainText(`${NIC_EMAIL} · ${PEOPLE.kindGuest}`)
+      await expect(personRow(pageA, NIC_NAME)).toContainText(NIC_EMAIL)
+      await expect(personRow(pageA, NIC_NAME)).toContainText(PEOPLE.kindGuest)
     })
 
     await test.step('7. P1: no protocol id on either screen', async () => {
@@ -145,7 +140,7 @@ test('people: invite, guest through the simulated Google, cancel and remove', as
           why: 'refresh of the deactivated account rejected by the MAS (ADR-059)',
         },
       ])
-      await personRow(pageA, NIC_NAME).getByRole('button', { name: PEOPLE.remove(NIC_NAME) }).click()
+      await rowAction(pageA, NIC_NAME, ADMIN.removeFromOrg)
       const confirm = pageA.getByRole('alertdialog', { name: PEOPLE.remove(NIC_NAME) })
       await confirm.getByRole('button', { name: PEOPLE.removeConfirm, exact: true }).click()
       await expect(personRow(pageA, NIC_NAME)).toHaveCount(0, { timeout: 30_000 })

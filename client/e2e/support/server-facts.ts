@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { registerUser } from '../../test/support/escrow-harness'
 import { createRoom, HOMESERVER, invite, mintToken } from '../../test/support/synapse'
 import { killSessionsOrThrow, liftMessageRatelimit, mintAdminToken, PROBE_USER } from '../../test/support/synapse-admin'
+import { mintOidcSession } from '../../test/support/mint-oidc'
+import { ESCROW_URL } from '../../test/support/stack-env'
 
 // Protocol facts of the browser E2E tier, asserted BY THE SERVER (ADR-060 D3): "is this conversation
 // encrypted?" has no affordance in the UI by P1, so the tier asks Synapse through the admin API.
@@ -127,6 +129,18 @@ export async function currentDeviceIds(localpart: string): Promise<string[]> {
       `/_synapse/admin/v2/users/${encodeURIComponent(mxid(localpart))}/devices`,
     )
     return devices.map((d) => d.device_id)
+  })
+}
+
+// The user's push subscriptions as the server holds them (admin API; ADR-117 dec. 6), reduced to what a spec compares:
+// the app id and the endpoint the subscription points at. Never logged: the endpoint is the spec's own receiver.
+export async function pushersOf(localpart: string): Promise<Array<{ appId: string; endpoint?: string }>> {
+  return withAdmin(async (token) => {
+    const { pushers } = await admin<{ pushers: Array<{ app_id: string; data?: { endpoint?: string } }> }>(
+      token,
+      `/_synapse/admin/v1/users/${encodeURIComponent(mxid(localpart))}/pushers`,
+    )
+    return pushers.map((p) => ({ appId: p.app_id, endpoint: p.data?.endpoint }))
   })
 }
 
@@ -474,5 +488,30 @@ export async function countedInDirectMessage(person: string, peer: string): Prom
     return { server: { notifications: u.notification_count ?? 0, highlights: u.highlight_count ?? 0 }, counted, timeline }
   } finally {
     await fetch(`${HOMESERVER}/_matrix/client/v3/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => undefined)
+  }
+}
+
+// org-admin.spec.ts (PLANO-ADMIN slice 1c): puts the trio's admin role back as `up` leaves it — `admin` an admin,
+// `members` not — through the org service's own verbs (ADR-118 dec. 5), with headless OIDC sessions minted only
+// here, after the browsers are closed (a minted session of a signed-in person would be a new access on their
+// screen). The admin role is given back first by whoever holds it now, so the last-admin lock never refuses the
+// demotions. Two logins at most (the MAS login burst).
+export async function restoreOrgAdmins(admin: { user: string; password: string }, members: Array<{ user: string; password: string }>): Promise<void> {
+  const call = (token: string, method: 'PUT' | 'DELETE', who: string): Promise<Response> =>
+    fetch(`${ESCROW_URL}/v1/people/${encodeURIComponent(mxid(who))}/admin`, {
+      method,
+      headers: { Authorization: `Bearer ${token}` },
+    })
+  const adminToken = (await mintOidcSession(admin.user, admin.password)).accessToken
+  let given = (await call(adminToken, 'PUT', admin.user)).status === 200
+  for (const m of members) {
+    if (given) break
+    const token = (await mintOidcSession(m.user, m.password)).accessToken
+    given = (await call(token, 'PUT', admin.user)).status === 200
+  }
+  if (!given) throw new Error(`restoreOrgAdmins: nobody could give ${admin.user} the admin role back`)
+  for (const m of members) {
+    const status = (await call(adminToken, 'DELETE', m.user)).status
+    if (status !== 200) throw new Error(`restoreOrgAdmins: demoting ${m.user} answered ${status}`)
   }
 }
